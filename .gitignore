@@ -1,0 +1,6 @@
+*.img
+*.apk
+*.dtb
+*.tar.gz
+out/
+src/

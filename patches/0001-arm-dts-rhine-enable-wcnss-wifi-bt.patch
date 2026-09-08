@@ -1,0 +1,97 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine.dtsi
+@@ -96,12 +96,22 @@
+ 		#size-cells = <0>;
+ 
+ 		vdd-supply = <&pm8941_l22>;
+-		vio-supply = <&pm8941_lvs3>;
++		/*
++		 * Downstream (touch_vio-supply) uses the 1.8V S3 rail here,
++		 * not LVS3. With LVS3 the controller never answers on i2c
++		 * and rmi_set_page fails with -ENXIO.
++		 */
++		vio-supply = <&pm8941_s3>;
+ 
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&ts_int_pin>;
+ 
+-		syna,startup-delay-ms = <10>;
++		/*
++		 * Downstream waits 200ms (delay_after_hw_reset) before talking
++		 * to the controller; 10ms is not enough here and the first
++		 * page-select transfer fails with -ENXIO.
++		 */
++		syna,startup-delay-ms = <200>;
+ 
+ 		rmi4-f01@1 {
+ 			reg = <0x1>;
+@@ -110,7 +120,6 @@
+ 
+ 		rmi4-f11@11 {
+ 			reg = <0x11>;
+-			touchscreen-inverted-x;
+ 			syna,sensor-type = <1>;
+ 		};
+ 	};
+@@ -203,6 +212,36 @@
+ 	qcom,num-strings = <2>;
+ };
+ 
++&pronto {
++	status = "okay";
++
++	vddmx-supply = <&pm8841_s1>;
++	vddpx-supply = <&pm8941_s3>;
++
++	firmware-name = "postmarketos/wcnss.mdt";
++
++	pinctrl-names = "default";
++	pinctrl-0 = <&wcnss_pin_a>;
++
++	iris {
++		vddxo-supply = <&pm8941_l6>;
++		vddrfa-supply = <&pm8941_l11>;
++		vddpa-supply = <&pm8941_l19>;
++		vdddig-supply = <&pm8941_s3>;
++	};
++
++	smd-edge {
++		qcom,remote-pid = <4>;
++		label = "pronto";
++
++		wcnss {
++			status = "okay";
++
++			firmware-name = "postmarketos/wlan/prima/WCNSS_qcom_wlan_nv.bin";
++		};
++	};
++};
++
+ &remoteproc_adsp {
+ 	status = "okay";
+ };
+@@ -437,6 +476,24 @@
+ };
+ 
+ &tlmm {
++	wcnss_pin_a: wcnss-pin-active-state {
++		wlan-pins {
++			pins = "gpio36", "gpio37", "gpio38", "gpio39", "gpio40";
++			function = "wlan";
++
++			drive-strength = <6>;
++			bias-pull-down;
++		};
++
++		bt-pins {
++			pins = "gpio35", "gpio43", "gpio44";
++			function = "bt";
++
++			drive-strength = <2>;
++			bias-pull-down;
++		};
++	};
++
+ 	ts_int_pin: touch-int-state {
+ 		pins = "gpio61";
+ 		function = "gpio";

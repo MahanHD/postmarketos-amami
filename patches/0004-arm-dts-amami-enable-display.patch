@@ -1,0 +1,85 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -1,5 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0
+ #include "qcom-msm8974-sony-xperia-rhine.dtsi"
++#include <dt-bindings/gpio/gpio.h>
+ 
+ / {
+ 	model = "Sony Xperia Z1 Compact";
+@@ -23,6 +24,75 @@
+ 	};
+ };
+ 
++&gpu {
++	status = "okay";
++};
++
++&mdss {
++	status = "okay";
++};
++
++&mdss_dsi0 {
++	status = "okay";
++
++	vdda-supply = <&pm8941_l2>;
++	vdd-supply = <&pm8941_lvs3>;
++	vddio-supply = <&pm8941_l12>;
++
++	panel: panel@0 {
++		compatible = "sony,amami-novatek";
++		reg = <0>;
++
++		backlight = <&pm8941_wled>;
++
++		/* downstream qcom,platform-reset-gpio / -enable-gpio */
++		reset-gpios = <&pm8941_gpios 19 GPIO_ACTIVE_LOW>;
++		enable-gpios = <&tlmm 58 GPIO_ACTIVE_HIGH>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&panel_reset_pin>, <&panel_te_pin>;
++
++		port {
++			panel_in: endpoint {
++				remote-endpoint = <&mdss_dsi0_out>;
++			};
++		};
++	};
++};
++
++&mdss_dsi0_out {
++	remote-endpoint = <&panel_in>;
++	data-lanes = <0 1 2 3>;
++};
++
++&mdss_dsi0_phy {
++	status = "okay";
++
++	vddio-supply = <&pm8941_l12>;
++};
++
++&pm8941_gpios {
++	panel_reset_pin: panel-reset-state {
++		pins = "gpio19";
++		function = "normal";
++
++		bias-disable;
++		power-source = <PM8941_GPIO_S3>;
++		qcom,drive-strength = <PMIC_GPIO_STRENGTH_LOW>;
++	};
++};
++
++&tlmm {
++	/* TE / mdp_vsync line, downstream qcom,platform-te-gpio = <&msmgpio 12> */
++	panel_te_pin: panel-te-state {
++		pins = "gpio12";
++		function = "mdp_vsync";
++
++		drive-strength = <2>;
++		bias-disable;
++	};
++};
++
+ &smbb {
+ 	qcom,fast-charge-safe-current = <1300000>;
+ 	qcom,fast-charge-current-limit = <1300000>;
