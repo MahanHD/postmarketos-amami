@@ -10,11 +10,10 @@ doesn't contain a single display node, so the panel had to be written from
 scratch using Sony's downstream device tree as reference.
 
 What works now: the 720x1280 panel, the touchscreen, Xfce with GPU acceleration
-through freedreno on the Adreno 330, Bluetooth, charging, battery percentage,
-USB networking and SSH.
+through freedreno on the Adreno 330, WiFi, Bluetooth, charging, battery
+percentage, USB networking and SSH.
 
-What doesn't: audio (the `adsp.mdt` firmware isn't available), and WiFi only
-half works. The radio comes up and scans, then the WCNSS firmware crashes. One
+What doesn't: audio, though the `adsp` firmware is now in hand and untried. One
 side of the screen is also slightly dimmer than the other, which as far as I can
 tell is the backlight itself rather than anything software can reach.
 
@@ -28,7 +27,8 @@ two touchscreen problems (wrong I/O rail, far too short a startup delay). `0002`
 adds a `scan_offload` module parameter to wcn36xx. `0003` is the panel driver,
 about 2000 lines, most of it generated. `0004` wires up the display in amami's
 device tree and adds the battery profile. `0005` gives the charger a voltage
-reading and a battery percentage.
+reading and a battery percentage. `0006` stops the driver sending a scan message
+this firmware doesn't implement.
 
 Patches 1 and 2 touch shared files, so they should help the Z1 (`honami`) and
 Z Ultra (`togari`) too, though I haven't tested either.
@@ -137,10 +137,53 @@ of Linux, so that still works. Flash a known-good boot image and read the failed
 boot with `journalctl -b -1`. Identify boots by the `#NN` build number in
 `Linux version`: this device's RTC is wrong, so the timestamps lie to you.
 
-**Broken WiFi costs about 110 seconds of desktop startup.** NetworkManager
-auto-connects at boot, the firmware crashes partway through, and the session sits
-waiting behind it. `xfce4-session` came up at 169s with the radio on and 59s with
-it off. Until the firmware situation improves, turn it off.
+**WiFi needs power save disabled, and nothing else.** This cost me a long time
+because every symptom pointed somewhere more exotic. The firmware loads and runs;
+it reports its version and capabilities happily. Authentication and association
+both succeed, `RX AssocResp ... status=0 aid=1`. Then the phone immediately
+deauthenticates itself, `Reason: 3=DEAUTH_LEAVING`, by local choice.
+
+What actually happens is that `hal_enter_bmps` (the power save entry) never gets a
+reply, times out after ten seconds, and wedges the firmware badly enough that
+mac80211 gives up on the link. Turning power save off avoids the message
+altogether:
+
+    # /etc/NetworkManager/conf.d/98-wifi-powersave.conf
+    [connection]
+    wifi.powersave = 2
+
+With that it associates, gets a lease, and holds 0% loss at about 7ms. It also
+connects at boot with no delay, which is worth saying because I previously blamed
+roughly 110 seconds of slow startup on having the radio enabled. That was wrong.
+The delay was WiFi *failing*, not WiFi being on, and it went away once it worked.
+
+Two smaller things are needed alongside it. The firmware advertises the
+SCAN_OFFLOAD capability but never answers `START_SCAN_OFFLOAD` (request 204), so
+offloaded scanning has to be turned off and the software path used instead:
+
+    # /etc/modprobe.d/wcn36xx.conf
+    options wcn36xx scan_offload=0
+
+And `0006` stops the driver sending `UPDATE_CHANNEL_LIST`, which this firmware also
+doesn't implement, and which the driver was sending unconditionally despite
+having a capability bit for it. Confirmed absent by
+`/sys/kernel/debug/ieee80211/phy0/wcn36xx/firmware_feat_caps`, which needs
+`CONFIG_WCN36XX_DEBUGFS=y`.
+
+`hal_start_scan response failed err=5` still appears per channel during software
+scans. It is harmless; the scan completes and returns every network.
+
+Two traps worth knowing. Any HAL operation that times out wedges the driver so
+thoroughly that it cannot re-probe, failing with `-ENXIO: IRQ tx not found`, and
+only a reboot brings `wlan0` back. And do not set NetworkManager's
+`cloned-mac-address=permanent`: this device has no valid permanent MAC in its NV
+data, so the interface then refuses to come up at all with `EADDRNOTAVAIL`. The
+random locally-administered MAC isn't cosmetic, it's required.
+
+The firmware itself was never the problem. postmarketOS already ships the correct
+Sony blobs through `firmware-sony-rhine`, and I wasted time assuming otherwise.
+LineageOS 18.1 carries a slightly newer build, CRM 39164 against 39150, which
+loads cleanly and changes nothing.
 
 ## Debugging notes
 

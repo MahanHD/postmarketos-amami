@@ -1,0 +1,21 @@
+--- a/drivers/net/wireless/ath/wcn36xx/main.c
++++ b/drivers/net/wireless/ath/wcn36xx/main.c
+@@ -665,7 +665,17 @@
+ 
+ 	mutex_unlock(&wcn->scan_lock);
+ 
+-	wcn36xx_smd_update_channel_list(wcn, &hw_req->req);
++	/*
++	 * Only send the channel list to firmware that says it understands it.
++	 * Older builds - the Xperia Z1 Compact ships CRM 39150 - never answer
++	 * WCN36XX_HAL_UPDATE_CHANNEL_LIST_REQ at all, and the resulting 10s SMD
++	 * timeout leaves the firmware wedged for every scan that follows.
++	 */
++	if (wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, UPDATE_CHANNEL_LIST))
++		wcn36xx_smd_update_channel_list(wcn, &hw_req->req);
++	else
++		wcn36xx_warn("firmware lacks UPDATE_CHANNEL_LIST, not sending it\n");
++
+ 	return wcn36xx_smd_start_hw_scan(wcn, vif, &hw_req->req);
+ }
+ 

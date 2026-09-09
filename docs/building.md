@@ -64,13 +64,22 @@ msm.allow_vram_carveout=1` and build the image yourself.
 
 ## Afterwards
 
-One workaround is still needed for a usable system:
+WiFi needs two settings, both explained in the README:
 
-    nmcli radio wifi off
-    systemctl mask NetworkManager-wait-online.service
+    # /etc/NetworkManager/conf.d/98-wifi-powersave.conf
+    [connection]
+    wifi.powersave = 2
 
-That saves roughly 110 seconds of desktop startup otherwise spent waiting on WiFi
-firmware that's going to crash anyway.
+    # /etc/modprobe.d/wcn36xx.conf
+    options wcn36xx scan_offload=0
+
+Without the first it associates and then immediately drops the link; without the
+second every scan times out. `CONFIG_WCN36XX_DEBUGFS=y` is worth adding to the
+kernel config too, since it exposes the firmware capability list that explains
+why `0006` is needed.
+
+Masking `NetworkManager-wait-online.service` used to be necessary here. It isn't
+any more, now that WiFi actually connects.
 
 The UPower workaround that used to live here is no longer needed. With `0005` the
 battery reports a real percentage, so `/etc/UPower/UPower.conf` can stay at its
