@@ -13,11 +13,9 @@ What works now: the 720x1280 panel, the touchscreen, Xfce with GPU acceleration
 through freedreno on the Adreno 330, WiFi, Bluetooth, charging, battery
 percentage, USB networking and SSH.
 
-What doesn't: audio. The `adsp` firmware is in hand and the remoteproc fails
-only for want of the files, but there is nothing above it to reach - mainline
-has no `qcom,apr` node on any msm8974 board, no SLIMbus node in the SoC dtsi and
-no WCD9320 codec driver at all - so that is a project rather than a missing
-blob. One side of the screen is also slightly dimmer than the other, which as
+What doesn't: audio, and sensors. The DSP itself now boots, which turns out to
+be the interesting part - see below - but there is no codec driver above it, and
+the sensors need a registry file that only an Android install can produce. One side of the screen is also slightly dimmer than the other, which as
 far as I can tell is the backlight itself rather than anything software can
 reach.
 
@@ -257,6 +255,42 @@ named connection and leaves the rest randomised:
     sudo amami-factory-macs wlan "Mahan"
 
 Worth knowing that this changes the DHCP lease, since it is a different MAC.
+
+**The DSP boots, and it is the road to sensors rather than to audio.** The adsp
+remoteproc was failing at probe with `Direct firmware load for adsp.mdt failed
+with error -2`, purely because the files were not there. LineageOS 18.1 carries
+them, and dropping `adsp.mdt` with `adsp.b00` to `adsp.b11` into
+`/lib/firmware` is the whole fix; it boots on its own at every boot after that.
+
+No sound comes of it, for the reasons above. What appears instead is more
+interesting. The APR channels turn up,
+
+    remoteproc2:smd-edge.apr_audio_svc
+    remoteproc2:smd-edge.apr_apps2
+
+so the audio service is live and the missing half really is only the codec. And
+the sensor stack wakes up, which is the part worth chasing. amami's sensors are
+not on any application processor I2C bus at all: they hang off the DSP's
+Snapdragon Sensor Core, and Android reaches them over QMI, which is why the
+LineageOS sensor HAL is full of `sns_smgr_*` messages. This kernel already
+carries the mainline drivers for exactly that - `qcom_smgr`, with IIO front ends
+for accelerometer, gyroscope, magnetometer, proximity and pressure, and
+`qcom_sns_reg`, which stands in for Android's sensor daemon. With the DSP
+running, both probe and get one step further:
+
+    qcom_sns_reg: Failed to load fw from: qcom/sensors/sns.reg*
+    qcom_smgr 5-6: Failed to get available sensors: -ETIMEDOUT
+
+`sns.reg` is the sensor registry, a flat binary the driver serves back to the
+DSP in groups at fixed offsets, running to about 25 KB. Android generates it at
+`/data/misc/sensors/sns.reg` on first boot, so it is not shipped in any ROM. It
+is not in TA either - unit 2500 is exactly 64 KiB and looked promising, but it
+turns out to be a SQLite key store - and pmaports packages registries only for
+sdm845-era devices. The one realistic source is an Android install on this
+phone: boot it once and copy the file out.
+
+Worth noting that `qcom,msm8974` appears in that driver's supported list marked
+`/* untested */`, so this does not look to have been done on this SoC before.
 
 ## Debugging notes
 
