@@ -1,0 +1,12 @@
+[Unit]
+Description=Set the Bluetooth address from the Sony TA partition
+Documentation=https://github.com/MahanHD/postmarketos-amami
+ConditionPathExists=/dev/disk/by-partlabel/TA
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/amami-bt-bdaddr
+
+[Install]
+WantedBy=multi-user.target

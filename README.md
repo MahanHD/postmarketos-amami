@@ -13,9 +13,13 @@ What works now: the 720x1280 panel, the touchscreen, Xfce with GPU acceleration
 through freedreno on the Adreno 330, WiFi, Bluetooth, charging, battery
 percentage, USB networking and SSH.
 
-What doesn't: audio, though the `adsp` firmware is now in hand and untried. One
-side of the screen is also slightly dimmer than the other, which as far as I can
-tell is the backlight itself rather than anything software can reach.
+What doesn't: audio. The `adsp` firmware is in hand and the remoteproc fails
+only for want of the files, but there is nothing above it to reach - mainline
+has no `qcom,apr` node on any msm8974 board, no SLIMbus node in the SoC dtsi and
+no WCD9320 codec driver at all - so that is a project rather than a missing
+blob. One side of the screen is also slightly dimmer than the other, which as
+far as I can tell is the backlight itself rather than anything software can
+reach.
 
 ## Patches
 
@@ -184,6 +188,56 @@ The firmware itself was never the problem. postmarketOS already ships the correc
 Sony blobs through `firmware-sony-rhine`, and I wasted time assuming otherwise.
 LineageOS 18.1 carries a slightly newer build, CRM 39164 against 39150, which
 loads cleanly and changes nothing.
+
+**Bluetooth needs an address, and the phone already has one.** `btqcomsmd`
+registers `hci0` and then sets `HCI_QUIRK_USE_BDADDR_PROPERTY`, which tells the
+core to take the address from a `local-bd-address` device tree property. No
+msm8974 board in mainline defines one, and this controller has no address of its
+own, so it registers as *unconfigured*. bluetoothd ignores unconfigured
+controllers, so the only thing you see is
+
+    $ bluetoothctl show
+    No default controller available
+
+even though `hci0` is sitting right there in sysfs and in `rfkill`. `btmgmt
+config` is what actually says why:
+
+    hci0:   Unconfigured controller
+            missing options: public-address
+
+The address is on the phone, in Sony's TA partition (`mmcblk0p1`). TA is a list
+of units, each one a little endian id and size followed by the magic
+`c1 e9 f8 3b`, four `ff` bytes, and the data. Unit 2568 holds the Bluetooth
+address and 2560 the WLAN one, both stored least significant byte first, which
+is the same order `bdaddr_t` and the `local-bd-address` property use, so the six
+bytes go straight in unchanged. I took the unit numbers from
+`/vendor/bin/macaddrsetup` in the LineageOS image rather than guessing: they are
+Thumb immediates, 2568 on the Bluetooth path and 2560 on the WLAN one.
+
+`userspace/amami-bt-bdaddr` reads the unit at boot and sets the address on the
+kernel's management socket. Doing it in userspace rather than hardcoding an
+address into the device tree keeps the port device independent, and it costs
+nothing: the controller only turns up about thirty seconds in, once the WCNSS
+remoteproc has booted, so there is nothing to be early for.
+
+Three parts of that were less obvious than they look:
+
+TA is rewritten on every boot, and the active generation sits at a different
+offset each time - the unit block moved by `0x60000` between two consecutive
+boots here. Walking units from the start of the partition therefore finds a
+perfectly valid, much shorter list that doesn't contain the MACs at all.
+Searching for the 16 byte unit header works whatever the layout, and matches
+exactly once.
+
+`btmgmt` is the obvious way to set the address, and it hangs whenever its stdin
+is `/dev/null` - which is exactly what systemd hands it. From a shell it is
+fine, so this only appears once the thing is in a unit file. Speaking the
+management protocol directly avoids the problem and drops the dependency.
+
+The radio comes up soft blocked, and systemd-rfkill faithfully restores that at
+every boot, so the service unblocks it as well. Without that you get a correctly
+configured controller that nothing can power on, reported as
+`PowerState: off-blocked`.
 
 ## Debugging notes
 

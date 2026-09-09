@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Give the WCNSS Bluetooth controller its factory address.
+
+btqcomsmd sets HCI_QUIRK_USE_BDADDR_PROPERTY, so the kernel expects the
+address in a 'local-bd-address' device-tree property.  No msm8974 board in
+mainline provides one and the controller has none of its own, so it registers
+unconfigured, and bluetoothd ignores unconfigured controllers: the only visible
+symptom is "No default controller available".
+
+Sony keeps the factory address in the TA partition, in unit 2568, stored least
+significant byte first - the same order bdaddr_t uses.  Read it from there
+rather than hardcoding an address, so this works on any amami.
+
+TA is a list of units - little endian id and size, a magic, four 0xff bytes,
+then the data - but the whole list is rewritten at every boot and the active
+generation sits at a different offset each time, so walking from the start of
+the partition finds nothing.  Search for the unit header instead: id and size
+together with the magic make a 16 byte pattern that occurs exactly once.
+
+The address is handed over on the kernel's management socket directly.  btmgmt
+would do the same job, but it hangs whenever its stdin is /dev/null, which is
+what it gets under systemd.
+"""
+
+import glob
+import os
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+TA = "/dev/disk/by-partlabel/TA"
+TA_MAGIC = bytes.fromhex("c1e9f83b")
+UNIT_BT = 2568
+ADDR_LEN = 6
+
+AF_BLUETOOTH = 31
+BTPROTO_HCI = 1
+HCI_CHANNEL_CONTROL = 3
+HCI_DEV_NONE = 0xFFFF
+
+MGMT_OP_READ_UNCONF_INDEX_LIST = 0x0036
+MGMT_OP_SET_PUBLIC_ADDRESS = 0x0039
+MGMT_EV_CMD_COMPLETE = 0x0001
+MGMT_EV_CMD_STATUS = 0x0002
+
+
+def find_ta_unit(blob, wanted, size):
+    header = struct.pack("<II", wanted, size) + TA_MAGIC + b"\xff" * 4
+    found = set()
+    at = blob.find(header)
+    while at >= 0:
+        found.add(blob[at + 16:at + 16 + size])
+        at = blob.find(header, at + 1)
+    if len(found) != 1:
+        return None
+    return found.pop()
+
+
+class Mgmt:
+    def __init__(self):
+        self.sock = socket.socket(AF_BLUETOOTH, socket.SOCK_RAW, BTPROTO_HCI)
+        self.sock.bind((HCI_DEV_NONE, HCI_CHANNEL_CONTROL))
+        self.sock.settimeout(10)
+
+    def request(self, opcode, index=HCI_DEV_NONE, payload=b""):
+        self.sock.send(struct.pack("<HHH", opcode, index, len(payload))
+                       + payload)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            pkt = self.sock.recv(1024)
+            ev, _, length = struct.unpack_from("<HHH", pkt)
+            body = pkt[6:6 + length]
+            if ev == MGMT_EV_CMD_COMPLETE and struct.unpack_from("<H", body)[0] == opcode:
+                status = body[2]
+                if status:
+                    raise OSError(f"command {opcode:#06x} failed, status {status:#04x}")
+                return body[3:]
+            if ev == MGMT_EV_CMD_STATUS and struct.unpack_from("<H", body)[0] == opcode:
+                raise OSError(f"command {opcode:#06x} rejected, status {body[2]:#04x}")
+        raise TimeoutError(f"no reply to command {opcode:#06x}")
+
+    def unconfigured(self):
+        rp = self.request(MGMT_OP_READ_UNCONF_INDEX_LIST)
+        count = struct.unpack_from("<H", rp)[0]
+        return list(struct.unpack_from(f"<{count}H", rp, 2))
+
+
+def wait_for_hci(timeout=120):
+    """hci0 only appears once the wcnss remoteproc has booted, ~30s in."""
+    deadline = time.monotonic() + timeout
+    while True:
+        found = glob.glob("/sys/class/bluetooth/hci*")
+        if found:
+            return int(os.path.basename(sorted(found)[0])[3:])
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(2)
+
+
+def main():
+    index = wait_for_hci()
+    if index is None:
+        print("no bluetooth controller appeared", file=sys.stderr)
+        return 1
+
+    mgmt = Mgmt()
+    if index not in mgmt.unconfigured():
+        return 0  # already has an address
+
+    with open(TA, "rb") as fh:
+        blob = fh.read(2 * 1024 * 1024)
+
+    addr = find_ta_unit(blob, UNIT_BT, ADDR_LEN)
+    if not addr or not any(addr):
+        print(f"no usable address in TA unit {UNIT_BT}", file=sys.stderr)
+        return 1
+
+    mgmt.request(MGMT_OP_SET_PUBLIC_ADDRESS, index, addr)
+
+    # The radio comes up soft blocked and systemd-rfkill keeps restoring that,
+    # so an untouched boot leaves a working controller nothing can power on.
+    subprocess.run(["rfkill", "unblock", "bluetooth"], check=False, timeout=30)
+
+    print("bluetooth address set to "
+          + ":".join(f"{b:02X}" for b in reversed(addr)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -78,6 +78,18 @@ second every scan times out. `CONFIG_WCN36XX_DEBUGFS=y` is worth adding to the
 kernel config too, since it exposes the firmware capability list that explains
 why `0006` is needed.
 
+Bluetooth needs the service from `userspace/`, which gives the controller the
+factory address out of the TA partition. Without it bluetoothd reports no
+default controller at all:
+
+    sudo install -m 755 userspace/amami-bt-bdaddr /usr/local/bin/
+    sudo install -m 644 userspace/amami-bt-bdaddr.service /etc/systemd/system/
+    sudo systemctl enable --now amami-bt-bdaddr.service
+
+It needs nothing but python3 and `rfkill`, both already present. Check it with
+`bluetoothctl show`, which should report the controller powered on with a
+`BC:6E:64:...` address. The README explains where that address comes from.
+
 Masking `NetworkManager-wait-online.service` used to be necessary here. It isn't
 any more, now that WiFi actually connects.
 
