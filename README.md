@@ -11,8 +11,8 @@ scratch using Sony's downstream device tree as reference.
 
 What works now: the 720x1280 panel, the touchscreen, Xfce with GPU acceleration
 through freedreno on the Adreno 330, WiFi, Bluetooth, charging, battery
-percentage, USB networking and SSH, and the gyroscope, magnetometer and
-proximity sensor.
+percentage, USB networking and SSH, the gyroscope, magnetometer and proximity
+sensor, and the RGB notification LED.
 
 What doesn't: audio, and the accelerometer. The DSP boots and the sensors on it
 work, but there is no codec driver for sound, and the accelerometer is held up
@@ -324,6 +324,23 @@ the DSP a bad accelerometer configuration.
 `sns.reg` is not in this repo and should not be: it is Sony proprietary and
 carries the individual device's factory sensor calibration. Harvest your own,
 as described in the build notes.
+
+**The notification LED needs `multi_intensity`, not `brightness`.** It shows up
+as `/sys/class/leds/rgb:status` with a `max_brightness` of 511, and writing that
+brightness on its own does nothing at all. It is a multicolor LED whose
+`multi_intensity` starts at `0 0 0`, and brightness only scales those channels,
+so sysfs takes the write, reads back exactly what you set, and the LED stays
+dark. I had it written off as broken on that basis.
+
+The channel order is `blue green red`, which `multi_index` will tell you and
+which is not what you would guess. Red is therefore:
+
+    echo "0 0 255" | sudo tee /sys/class/leds/rgb:status/multi_intensity
+    echo 511       | sudo tee /sys/class/leds/rgb:status/brightness
+
+All three channels drive independently and combine to white. Turning it off
+means zeroing both files. No trigger is set by default, so nothing in the
+desktop drives it yet.
 
 ## Debugging notes
 
