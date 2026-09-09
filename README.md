@@ -15,8 +15,8 @@ USB networking and SSH.
 
 What doesn't: audio (the `adsp.mdt` firmware isn't available), and WiFi only
 half works. The radio comes up and scans, then the WCNSS firmware crashes. One
-side of the screen is also slightly dimmer than the other and I haven't worked
-out why yet.
+side of the screen is also slightly dimmer than the other, which as far as I can
+tell is the backlight itself rather than anything software can reach.
 
 ## Patches
 
@@ -160,6 +160,23 @@ controller actually reads.
 
 And the big one: if SSH dies while ping still works, check `journalctl -b -1` for
 an orderly poweroff before assuming the kernel hung.
+
+The uneven backlight is not the third WLED string, which was my first guess.
+`rhine.dtsi` sets `qcom,num-strings = <2>`, so the driver drives sinks 0 and 1 and
+leaves sink 2 alone, and it looked plausible that amami has a string the shared
+file doesn't know about. It doesn't. Driving sink 2 on its own (`CURR_SINK` at
+`0xd84f`, bits 7:5) gives a completely dark panel, so nothing is wired to it and
+the device tree is right. Raising `num-strings` to 3 changes nothing either.
+
+Worth knowing if you go poking at this: `WLED3_SINK_REG_BRIGHT(n)` is `0x40 + n`
+but the driver writes two bytes per string, so consecutive strings overlap and
+overwrite each other. After a normal update `0xd840`-`0xd842` read `00 00 08`
+rather than anything per-string. Brightness on WLED3 is effectively global.
+
+You need a kernel built with `REGMAP_ALLOW_WRITE_DEBUGFS` to try any of this. It's
+deliberately not a Kconfig option; flip the `#undef` in
+`drivers/base/regmap/regmap-debugfs.c` and `/sys/kernel/debug/regmap/0-01/registers`
+becomes writable as `<reg> <value>`, both hex.
 
 ## Flashing
 
