@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Hand the radios their factory addresses, out of Sony's TA partition.
+
+Neither radio knows its own address on mainline.  The Bluetooth controller
+registers unconfigured, because btqcomsmd sets HCI_QUIRK_USE_BDADDR_PROPERTY
+and no msm8974 board defines the local-bd-address property it then wants.  The
+WLAN interface has no permanent address either, so NetworkManager makes one up.
+
+Sony keeps both in the TA partition: unit 2568 is Bluetooth, unit 2560 is WLAN,
+each stored least significant byte first, the same order bdaddr_t uses.  The
+unit numbers come from /vendor/bin/macaddrsetup in the LineageOS image.
+
+TA is rewritten at every boot and the live generation sits at a different
+offset each time, so walking units from the start of the partition finds a
+valid but truncated list with no addresses in it.  Search for the unit header
+instead: id, size and magic together make a 16 byte pattern that occurs once.
+
+Usage: amami-factory-macs bluetooth | wlan <nm-connection>
+
+The WLAN half is a one-shot: it pins the factory address onto one
+NetworkManager connection and leaves every other network alone.  postmarketOS
+ships wifi.cloned-mac-address=stable on purpose, to match Android's per-network
+randomisation, and that is worth keeping away from home.
+"""
+
+import glob
+import os
+import shutil
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+TA = "/dev/disk/by-partlabel/TA"
+TA_MAGIC = bytes.fromhex("c1e9f83b")
+UNIT_BT = 2568
+UNIT_WLAN = 2560
+ADDR_LEN = 6
+
+AF_BLUETOOTH = 31
+BTPROTO_HCI = 1
+HCI_CHANNEL_CONTROL = 3
+HCI_DEV_NONE = 0xFFFF
+
+MGMT_OP_READ_UNCONF_INDEX_LIST = 0x0036
+MGMT_OP_SET_PUBLIC_ADDRESS = 0x0039
+MGMT_EV_CMD_COMPLETE = 0x0001
+MGMT_EV_CMD_STATUS = 0x0002
+
+
+def factory_addr(unit):
+    """The six address bytes of a TA unit, or None if it isn't there."""
+    with open(TA, "rb") as fh:
+        blob = fh.read(2 * 1024 * 1024)
+    header = struct.pack("<II", unit, ADDR_LEN) + TA_MAGIC + b"\xff" * 4
+    found = set()
+    at = blob.find(header)
+    while at >= 0:
+        found.add(blob[at + 16:at + 16 + ADDR_LEN])
+        at = blob.find(header, at + 1)
+    if len(found) != 1:
+        return None
+    addr = found.pop()
+    return addr if any(addr) else None
+
+
+def human(addr):
+    return ":".join(f"{b:02X}" for b in reversed(addr))
+
+
+class Mgmt:
+    """Just enough of the kernel's management protocol to set an address.
+
+    btmgmt would do this, but it hangs whenever its stdin is /dev/null, which
+    is exactly what it gets under systemd.
+    """
+
+    def __init__(self):
+        self.sock = socket.socket(AF_BLUETOOTH, socket.SOCK_RAW, BTPROTO_HCI)
+        self.sock.bind((HCI_DEV_NONE, HCI_CHANNEL_CONTROL))
+        self.sock.settimeout(10)
+
+    def request(self, opcode, index=HCI_DEV_NONE, payload=b""):
+        self.sock.send(struct.pack("<HHH", opcode, index, len(payload)) + payload)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            pkt = self.sock.recv(1024)
+            ev, _, length = struct.unpack_from("<HHH", pkt)
+            body = pkt[6:6 + length]
+            if len(body) < 3 or struct.unpack_from("<H", body)[0] != opcode:
+                continue
+            if ev == MGMT_EV_CMD_COMPLETE:
+                if body[2]:
+                    raise OSError(f"command {opcode:#06x} failed, status {body[2]:#04x}")
+                return body[3:]
+            if ev == MGMT_EV_CMD_STATUS:
+                raise OSError(f"command {opcode:#06x} rejected, status {body[2]:#04x}")
+        raise TimeoutError(f"no reply to command {opcode:#06x}")
+
+    def unconfigured(self):
+        rp = self.request(MGMT_OP_READ_UNCONF_INDEX_LIST)
+        count = struct.unpack_from("<H", rp)[0]
+        return list(struct.unpack_from(f"<{count}H", rp, 2))
+
+
+def wait_for_hci(timeout=120):
+    """hci0 only appears once the wcnss remoteproc has booted, ~30s in."""
+    deadline = time.monotonic() + timeout
+    while True:
+        found = sorted(glob.glob("/sys/class/bluetooth/hci*"))
+        if found:
+            return int(os.path.basename(found[0])[3:])
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(2)
+
+
+def do_bluetooth():
+    index = wait_for_hci()
+    if index is None:
+        print("no bluetooth controller appeared", file=sys.stderr)
+        return 1
+
+    mgmt = Mgmt()
+    if index not in mgmt.unconfigured():
+        return 0  # already has an address
+
+    addr = factory_addr(UNIT_BT)
+    if addr is None:
+        print(f"no usable address in TA unit {UNIT_BT}", file=sys.stderr)
+        return 1
+
+    mgmt.request(MGMT_OP_SET_PUBLIC_ADDRESS, index, addr)
+
+    # The radio comes up soft blocked and systemd-rfkill keeps restoring that,
+    # so an untouched boot leaves a working controller nothing can power on.
+    subprocess.run(["rfkill", "unblock", "bluetooth"], check=False, timeout=30)
+
+    print(f"bluetooth address set to {human(addr)}")
+    return 0
+
+
+def do_wlan(connection):
+    addr = factory_addr(UNIT_WLAN)
+    if addr is None:
+        print(f"no usable address in TA unit {UNIT_WLAN}", file=sys.stderr)
+        return 1
+
+    nmcli = shutil.which("nmcli") or "/usr/bin/nmcli"
+    subprocess.run([nmcli, "connection", "modify", connection,
+                    "802-11-wireless.cloned-mac-address", human(addr)],
+                   check=True, timeout=30)
+    print(f"{connection} pinned to {human(addr)}")
+    return 0
+
+
+def main(argv):
+    if len(argv) >= 2 and argv[1] == "bluetooth":
+        return do_bluetooth()
+    if len(argv) == 3 and argv[1] == "wlan":
+        return do_wlan(argv[2])
+    print("usage: amami-factory-macs bluetooth | wlan <nm-connection>",
+          file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

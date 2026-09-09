@@ -82,13 +82,21 @@ Bluetooth needs the service from `userspace/`, which gives the controller the
 factory address out of the TA partition. Without it bluetoothd reports no
 default controller at all:
 
-    sudo install -m 755 userspace/amami-bt-bdaddr /usr/local/bin/
-    sudo install -m 644 userspace/amami-bt-bdaddr.service /etc/systemd/system/
-    sudo systemctl enable --now amami-bt-bdaddr.service
+    sudo install -m 755 userspace/amami-factory-macs /usr/local/bin/
+    sudo install -m 644 userspace/amami-bluetooth-mac.service /etc/systemd/system/
+    sudo systemctl enable --now amami-bluetooth-mac.service
 
 It needs nothing but python3 and `rfkill`, both already present. Check it with
 `bluetoothctl show`, which should report the controller powered on with a
 `BC:6E:64:...` address. The README explains where that address comes from.
+
+The same script will give WiFi its factory address, on one named connection so
+that other networks keep postmarketOS's randomised default:
+
+    sudo amami-factory-macs wlan "Mahan"
+
+That one is a one-shot, not a service; it edits the connection and stays put.
+Expect a new DHCP lease afterwards, because it is a different MAC.
 
 Masking `NetworkManager-wait-online.service` used to be necessary here. It isn't
 any more, now that WiFi actually connects.

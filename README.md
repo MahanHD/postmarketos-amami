@@ -214,7 +214,7 @@ bytes go straight in unchanged. I took the unit numbers from
 `/vendor/bin/macaddrsetup` in the LineageOS image rather than guessing: they are
 Thumb immediates, 2568 on the Bluetooth path and 2560 on the WLAN one.
 
-`userspace/amami-bt-bdaddr` reads the unit at boot and sets the address on the
+`userspace/amami-factory-macs` reads the unit at boot and sets the address on the
 kernel's management socket. Doing it in userspace rather than hardcoding an
 address into the device tree keeps the port device independent, and it costs
 nothing: the controller only turns up about thirty seconds in, once the WCNSS
@@ -238,6 +238,25 @@ The radio comes up soft blocked, and systemd-rfkill faithfully restores that at
 every boot, so the service unblocks it as well. Without that you get a correctly
 configured controller that nothing can power on, reported as
 `PowerState: off-blocked`.
+
+**The WLAN address is NetworkManager's, not the driver's.** wcn36xx will take a
+`local-mac-address` device tree property and call `SET_IEEE80211_PERM_ADDR` with
+it, but amami's device tree has none, so the interface has no permanent address
+and postmarketOS's shipped `50-random-mac.conf` fills the gap with
+`wifi.cloned-mac-address=stable`. That is a per-connection address derived from
+the connection UUID: stable across reboots, which is why the DHCP lease never
+moved, but locally administered and unrelated to the hardware. It is a
+deliberate choice, matching Android's per-network randomisation, and worth
+keeping.
+
+The factory address is in TA unit 2560, next door to the Bluetooth one. Rather
+than override the default globally and make the phone trackable by a fixed MAC
+on every network it joins, `amami-factory-macs wlan <connection>` pins it to one
+named connection and leaves the rest randomised:
+
+    sudo amami-factory-macs wlan "Mahan"
+
+Worth knowing that this changes the DHCP lease, since it is a different MAC.
 
 ## Debugging notes
 
