@@ -106,3 +106,67 @@ battery reports a real percentage, so `/etc/UPower/UPower.conf` can stay at its
 defaults, `AllowRiskyCriticalPowerAction=false` and `CriticalPowerAction=PowerOff`.
 PowerOff rather than the upstream HybridSleep default, because this device has no
 working hibernate to fall back on.
+
+## Sensors
+
+The gyroscope, magnetometer and proximity sensor hang off the DSP rather than
+any I2C bus the application processor can see, so they need two files and no
+patches at all.
+
+First the DSP firmware, out of the LineageOS 18.1 zip (see the README for how to
+unpack `system.new.dat.br`):
+
+    sudo install -m 644 adsp.mdt adsp.b0? adsp.b1? /lib/firmware/
+
+That alone gets `remoteproc2` booting at every boot. Then the sensor registry:
+
+    sudo mkdir -p /lib/firmware/qcom/sensors
+    sudo install -m 644 sns.reg /lib/firmware/qcom/sensors/sns.reg
+
+Check it with `ls /sys/bus/iio/devices/`, which should gain `qcom-smgr-gyro`,
+`qcom-smgr-mag` and `qcom-smgr-prox` about thirty seconds into the boot.
+
+### Getting sns.reg
+
+There is no copy in any ROM: Android's sensor daemon generates it on first boot.
+It is also not in TA, and pmaports ships registries only for sdm845-era devices.
+So it has to come off an Android install on the phone itself, and since
+postmarketOS lives inside the `userdata` partition, installing Android destroys
+it. Back up first:
+
+    ssh phone 'sudo dd if=/dev/mmcblk0p25 bs=4M | gzip -1' > userdata.img.gz
+    ssh phone 'sudo dd if=/dev/mmcblk0p14 bs=1M | gzip -6' > boot.img.gz
+
+Then flash TWRP to `FOTAKernel`, LineageOS `system.img` to `system` (2.27 GiB,
+unused by postmarketOS) and its `boot.img` to `boot`, all with `dd` from the
+running system. `fastboot boot twrp.img` - Volume Up while plugging in the cable
+gives the blue LED - then format data, which TWRP will not do to an empty
+partition:
+
+    mke2fs -t ext4 -m 0 -L data /dev/block/mmcblk0p25
+
+Boot Android and let it reach the setup wizard; the sensor daemon runs long
+before that, so there is no need to complete it. LineageOS builds are
+`userdebug` and adb came up already authorised, so no developer options are
+needed:
+
+    adb root && adb pull /data/misc/sensors/sns.reg
+
+`dumpsys sensorservice` is worth saving too, since it names the parts.
+
+### Restoring afterwards
+
+Send the image compressed and decompress on the phone. Pushing 12 GB of
+uncompressed data through `adb exec-in` corrupted the GPT partition entry array
+here - one byte in a partition name, plus a bogus fourth entry - which is enough
+that the initramfs, which counts subpartitions with `fdisk` before calling
+`losetup`, refuses to boot. Decompressing on the device puts gzip's CRC across
+the whole transfer instead. Busybox `nc` in the initramfs is connect-only, so
+listen on the host:
+
+    host:  ncat -l 5555 --send-only < userdata.img.gz
+    phone: nc 172.16.42.2 5555 | gzip -d | dd of=/dev/mmcblk0p25 bs=1048576
+
+Then restore `boot` the same way and reboot. Verify with `fdisk -l
+/dev/mmcblk0p25`, which must show exactly two partitions, both named `primary`.
+If boot still stops in the initramfs it exposes a telnet debug shell on port 23.

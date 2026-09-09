@@ -11,13 +11,14 @@ scratch using Sony's downstream device tree as reference.
 
 What works now: the 720x1280 panel, the touchscreen, Xfce with GPU acceleration
 through freedreno on the Adreno 330, WiFi, Bluetooth, charging, battery
-percentage, USB networking and SSH.
+percentage, USB networking and SSH, and the gyroscope, magnetometer and
+proximity sensor.
 
-What doesn't: audio, and sensors. The DSP itself now boots, which turns out to
-be the interesting part - see below - but there is no codec driver above it, and
-the sensors need a registry file that only an Android install can produce. One side of the screen is also slightly dimmer than the other, which as
-far as I can tell is the backlight itself rather than anything software can
-reach.
+What doesn't: audio, and the accelerometer. The DSP boots and the sensors on it
+work, but there is no codec driver for sound, and the accelerometer is held up
+by one missing entry in a mainline driver's table - both below. One side of the
+screen is also slightly dimmer than the other, which as far as I can tell is the
+backlight itself rather than anything software can reach.
 
 ## Patches
 
@@ -287,10 +288,42 @@ DSP in groups at fixed offsets, running to about 25 KB. Android generates it at
 is not in TA either - unit 2500 is exactly 64 KiB and looked promising, but it
 turns out to be a SQLite key store - and pmaports packages registries only for
 sdm845-era devices. The one realistic source is an Android install on this
-phone: boot it once and copy the file out.
+phone: boot it once and copy the file out, which is what I did.
 
-Worth noting that `qcom,msm8974` appears in that driver's supported list marked
-`/* untested */`, so this does not look to have been done on this SoC before.
+**With the registry in place, three of the four sensors work.** Drop the
+harvested file at `/lib/firmware/qcom/sensors/sns.reg`, restart the DSP, and:
+
+    qcom_sns_reg: firmware loaded, error above can be ignored.
+    qcom_smgr 5-6: 0x0a,0: BOSCH BMG160 Gyroscope
+    qcom_smgr 5-6: 0x14,0: AKM AK8963 Magnetometer
+    qcom_smgr 5-6: 0x28,0: Avago APDS-9930/QPDS-T930 Proximity & Light
+
+They come up on their own at every boot after that, about 32 seconds in, as
+`qcom-smgr-gyro`, `qcom-smgr-mag` and `qcom-smgr-prox`. These are buffered IIO
+devices with `s32` channels, so there are no sysfs `_raw` files to cat; enable
+the channels in `scan_elements`, set `buffer/enable`, and read `/dev/iio:deviceN`.
+A stationary phone reads about 1.6 deg/s of gyro bias and a sane field vector on
+the magnetometer.
+
+`qcom,msm8974` appears in that driver's supported list marked `/* untested */`,
+so this does not look to have been done on this SoC before.
+
+**The accelerometer is one table entry away.** Immediately before enumerating,
+the driver says:
+
+    qcom_sns_reg: got request for unmapped group id=2691
+
+The `group_map` in `drivers/soc/qcom/qcom_sns_reg.c` carries 2690 and 2692 to
+2696, 2698 and 2699. 2691 is simply absent, so the DSP's request for it fails
+and the BMA2X2 never appears. The registry is fine; the driver's table has a
+hole in it. Filling it needs group 2691's offset and size within `sns.reg`,
+which are compiled into Android's `/vendor/bin/sensors.qcom` and can be read out
+of it - worth doing properly rather than guessing, since a wrong offset hands
+the DSP a bad accelerometer configuration.
+
+`sns.reg` is not in this repo and should not be: it is Sony proprietary and
+carries the individual device's factory sensor calibration. Harvest your own,
+as described in the build notes.
 
 ## Debugging notes
 
