@@ -123,8 +123,22 @@ That alone gets `remoteproc2` booting at every boot. Then the sensor registry:
     sudo mkdir -p /lib/firmware/qcom/sensors
     sudo install -m 644 sns.reg /lib/firmware/qcom/sensors/sns.reg
 
-Check it with `ls /sys/bus/iio/devices/`, which should gain `qcom-smgr-gyro`,
-`qcom-smgr-mag` and `qcom-smgr-prox` about thirty seconds into the boot.
+Check it with `ls /sys/bus/iio/devices/`, which should gain `qcom-smgr-accel`,
+`qcom-smgr-gyro`, `qcom-smgr-mag` and `qcom-smgr-prox` about thirty seconds into
+the boot. The accelerometer needs `0007`; without it the other three still come
+up and it alone is missing.
+
+These drivers are modules, so testing a change to them is a `.ko` swap and a
+restart of the DSP rather than a kernel flash:
+
+    sudo cp qcom_sns_reg.ko.zst /lib/modules/6.16.12/kernel/drivers/soc/qcom/
+    sudo depmod -a
+    echo stop > /sys/class/remoteproc/<adsp>/state
+    sudo rmmod qcom_sns_reg && sudo modprobe qcom_sns_reg
+    echo start > /sys/class/remoteproc/<adsp>/state
+
+Find `<adsp>` by reading `/sys/class/remoteproc/*/name`, because the numbering
+moves between boots.
 
 ### Getting sns.reg
 

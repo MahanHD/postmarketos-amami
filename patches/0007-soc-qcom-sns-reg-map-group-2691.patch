@@ -1,0 +1,19 @@
+--- a/drivers/soc/qcom/qcom_sns_reg.c	2026-09-10 02:44:41.526243194 +0400
++++ b/drivers/soc/qcom/qcom_sns_reg.c	2026-09-10 02:44:41.544536390 +0400
+@@ -122,6 +122,16 @@
+ 	{ 2640, 0x1000, 0x00a },
+ 	{ 2670, 0x1500, 0x010 },
+ 	{ 2690, 0x1700, 0x100 },
++	/*
++	 * msm8974 asks for 2691 as well, and dropping the request costs the
++	 * accelerometer: SMGR then enumerates the gyro, magnetometer and
++	 * proximity sensor but no BMA2X2 at all. It reads from the same
++	 * region as 2690. Determined by experiment on a Z1 Compact, since
++	 * the offsets here are observed rather than documented - serving
++	 * zeroes instead brings the accelerometer up but reads about 2%
++	 * low, and any other page stops all four sensors enumerating.
++	 */
++	{ 2691, 0x1700, 0x100 },
+ 	{ 2692, 0x1800, 0x100 },
+ 	{ 2693, 0x1900, 0x100 },
+ 	{ 2694, 0x1a00, 0x100 },

@@ -12,11 +12,10 @@ scratch using Sony's downstream device tree as reference.
 What works now: the 720x1280 panel, the touchscreen, Xfce with GPU acceleration
 through freedreno on the Adreno 330, WiFi, Bluetooth, charging, battery
 percentage, USB networking and SSH, the gyroscope, magnetometer and proximity
-sensor, and the RGB notification LED.
+sensor, the accelerometer and the RGB notification LED.
 
-What doesn't: audio, and the accelerometer. The DSP boots and the sensors on it
-work, but there is no codec driver for sound, and the accelerometer is held up
-by one missing entry in a mainline driver's table - both below. One side of the
+What doesn't: audio. The DSP boots and every sensor on it works, but there is no
+codec driver for sound. One side of the
 screen is also slightly dimmer than the other, which as far as I can tell is the
 backlight itself rather than anything software can reach.
 
@@ -31,10 +30,13 @@ adds a `scan_offload` module parameter to wcn36xx. `0003` is the panel driver,
 about 2000 lines, most of it generated. `0004` wires up the display in amami's
 device tree and adds the battery profile. `0005` gives the charger a voltage
 reading and a battery percentage. `0006` stops the driver sending a scan message
-this firmware doesn't implement.
+this firmware doesn't implement. `0007` adds the one registry group the sensor
+service needs before it will bring up the accelerometer.
 
-Patches 1 and 2 touch shared files, so they should help the Z1 (`honami`) and
-Z Ultra (`togari`) too, though I haven't tested either.
+Patches 1, 2 and 7 touch shared files, so they should help the Z1 (`honami`) and
+Z Ultra (`togari`) too, though I haven't tested either. `0007` is not
+amami-specific at all: it should fix the accelerometer on any msm8974 with
+sensors on the DSP.
 
 ## Things that took a while to work out
 
@@ -308,18 +310,39 @@ the magnetometer.
 `qcom,msm8974` appears in that driver's supported list marked `/* untested */`,
 so this does not look to have been done on this SoC before.
 
-**The accelerometer is one table entry away.** Immediately before enumerating,
-the driver says:
+**The accelerometer needed one missing entry, `0007`.** Before that, the driver
+said this immediately before enumerating:
 
     qcom_sns_reg: got request for unmapped group id=2691
 
 The `group_map` in `drivers/soc/qcom/qcom_sns_reg.c` carries 2690 and 2692 to
-2696, 2698 and 2699. 2691 is simply absent, so the DSP's request for it fails
-and the BMA2X2 never appears. The registry is fine; the driver's table has a
-hole in it. Filling it needs group 2691's offset and size within `sns.reg`,
-which are compiled into Android's `/vendor/bin/sensors.qcom` and can be read out
-of it - worth doing properly rather than guessing, since a wrong offset hands
-the DSP a bad accelerometer configuration.
+2696, 2698 and 2699. 2691 is simply absent, the DSP's request for it fails, and
+the BMA2X2 never appears while the other three sensors come up fine.
+
+The offsets in that table are observed rather than documented - the comment above
+it says as much - and Android's sensor daemon turned out not to contain them, so
+I found 2691 by experiment instead. A module parameter to inject one extra
+mapping made each candidate a module reload rather than a rebuild:
+
+| served for 2691          | result                                          |
+| ------------------------ | ----------------------------------------------- |
+| nothing (upstream today) | no accelerometer, other three sensors fine       |
+| a page of zeroes         | accelerometer works, but reads about 2% low      |
+| `0x1700`, same as 2690   | accelerometer works, reads 9.8 m/s^2             |
+| any other page           | *nothing* enumerates, all four sensors gone      |
+
+That last row is what makes the answer convincing. If the DSP only wanted a
+successful reply, every page would behave alike; instead the wrong contents take
+the whole sensor stack down, so `0x1700` is real data rather than a lucky
+constant. I had concluded the contents were ignored after two zero pages behaved
+identically, and only caught it by testing a dense page as a control.
+
+Two things are worth knowing if you go poking at this. Bad registry data wedges
+SMGR in a way that survives both a module reload and a remoteproc restart, so
+only a reboot clears it. And remoteproc numbering is not stable across boots -
+`adsp` was `remoteproc2` one boot and `remoteproc1` the next - so scripts should
+find it by reading `/sys/class/remoteproc/*/name` rather than hardcoding an
+index.
 
 `sns.reg` is not in this repo and should not be: it is Sony proprietary and
 carries the individual device's factory sensor calibration. Harvest your own,
