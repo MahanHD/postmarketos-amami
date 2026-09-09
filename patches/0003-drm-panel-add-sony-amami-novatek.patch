@@ -1,4 +1,4 @@
---- /dev/null	2026-09-07 20:33:27.573840117 +0400
+--- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-sony-amami-novatek.c
 @@ -0,0 +1,2054 @@
 +// SPDX-License-Identifier: GPL-2.0-only

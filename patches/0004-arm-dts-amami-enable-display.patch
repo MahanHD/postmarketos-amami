@@ -1,13 +1,44 @@
 --- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
 +++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-@@ -1,5 +1,6 @@
+@@ -1,11 +1,37 @@
  // SPDX-License-Identifier: GPL-2.0
  #include "qcom-msm8974-sony-xperia-rhine.dtsi"
 +#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/iio/qcom,spmi-vadc.h>
  
  / {
  	model = "Sony Xperia Z1 Compact";
-@@ -23,6 +24,75 @@
+ 	compatible = "sony,xperia-amami", "qcom,msm8974";
+ 	chassis-type = "handset";
+ 
++
++	/*
++	 * Sony LIS1529ERPC. The OCV table is the 25 degC column of
++	 * qcom,pc-temp-ocv-lut in the downstream batterydata-rhine-amami.dtsi.
++	 */
++	battery: battery {
++		compatible = "simple-battery";
++		device-chemistry = "lithium-ion";
++		voltage-min-design-microvolt = <3400000>;
++		voltage-max-design-microvolt = <4350000>;
++		charge-full-design-microamp-hours = <3140000>;
++
++		ocv-capacity-celsius = <25>;
++		ocv-capacity-table-0 =
++			<4310000 100>, <4265000 95>, <4196000 90>, <4146000 85>,
++			<4095000 80>, <4050000 75>, <4007000 70>, <3964000 65>,
++			<3923000 60>, <3887000 55>, <3854000 50>, <3832000 45>,
++			<3813000 40>, <3796000 35>, <3781000 30>, <3761000 25>,
++			<3739000 20>, <3716000 15>, <3688000 10>, <3683000 9>,
++			<3676000 8>, <3665000 7>, <3637000 6>, <3596000 5>,
++			<3539000 4>, <3473000 3>, <3382000 2>, <3250000 1>,
++			<3000000 0>;
++	};
++
+ 	gpio-keys {
+ 		key-camera-snapshot {
+ 			label = "camera_snapshot";
+@@ -23,8 +49,92 @@
  	};
  };
  
@@ -83,3 +114,20 @@
  &smbb {
  	qcom,fast-charge-safe-current = <1300000>;
  	qcom,fast-charge-current-limit = <1300000>;
+ 	qcom,dc-current-limit = <1300000>;
++
++	monitored-battery = <&battery>;
++
++	io-channels = <&pm8941_vadc VADC_VBAT_SNS>;
++	io-channel-names = "vbat";
++
++	/*
++	 * The USB controller and its PHY take their VBUS state from this node's
++	 * extcon, and fw_devlink parses io-channels above, so without this the
++	 * charger waits on the VADC and probes too late for the initramfs to
++	 * find a UDC. USB then stays dead for the whole boot, silently and with
++	 * the display coming up as normal. The charger needs the ADC only to
++	 * report a percentage, never to charge, so drop that edge.
++	 */
++	post-init-providers = <&pm8941_vadc>;
+ };

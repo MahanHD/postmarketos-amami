@@ -1,0 +1,148 @@
+--- a/drivers/iio/adc/qcom-spmi-vadc.c
++++ b/drivers/iio/adc/qcom-spmi-vadc.c
+@@ -564,7 +564,7 @@
+ 	VADC_CHAN_NO_SCALE(SPARE1_03, 1)
+ 	VADC_CHAN_NO_SCALE(USB_ID_MV, 1)
+ 	VADC_CHAN_VOLT(VCOIN, 1, SCALE_DEFAULT)
+-	VADC_CHAN_NO_SCALE(VBAT_SNS, 1)
++	VADC_CHAN_VOLT(VBAT_SNS, 1, SCALE_DEFAULT)
+ 	VADC_CHAN_VOLT(VSYS, 1, SCALE_DEFAULT)
+ 	VADC_CHAN_TEMP(DIE_TEMP, 0, SCALE_PMIC_THERM)
+ 	VADC_CHAN_VOLT(REF_625MV, 0, SCALE_DEFAULT)
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include <linux/errno.h>
++#include <linux/iio/consumer.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+@@ -123,6 +124,11 @@
+ 
+ 	struct regulator_desc otg_rdesc;
+ 	struct regulator_dev *otg_reg;
++
++	/* optional: battery voltage sense + profile for capacity reporting */
++	struct mutex vbat_lock;
++	struct iio_channel *vbat;
++	struct power_supply_battery_info *batt_info;
+ };
+ 
+ static const unsigned int smbb_usb_extcon_cable[] = {
+@@ -587,6 +593,74 @@
+ 	return psp == POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT;
+ }
+ 
++/*
++ * VBAT_SNS is only wired up on boards that pass a "vbat" io-channel; without
++ * it (and without a monitored-battery profile) we simply do not offer
++ * VOLTAGE_NOW/CAPACITY.
++ *
++ * The channel is looked up on first use rather than in probe() because the
++ * VADC is typically a module: an early read can land before it has loaded, and
++ * probing would have nothing to do but defer. A failed lookup is deliberately
++ * not cached so that a later read can still pick the channel up.
++ *
++ * This laziness is not what keeps USB alive on boards where this charger is the
++ * extcon provider - fw_devlink is settled in the device tree instead, see the
++ * comment on the io-channels property there.
++ */
++static int smbb_battery_voltage(struct smbb_charger *chg, int *uv)
++{
++	int rc;
++
++	if (!chg->vbat) {
++		struct iio_channel *ch;
++
++		mutex_lock(&chg->vbat_lock);
++		/* another reader may have got there while we waited */
++		if (!chg->vbat) {
++			ch = devm_iio_channel_get(chg->dev, "vbat");
++			if (!IS_ERR(ch))
++				chg->vbat = ch;
++		}
++		mutex_unlock(&chg->vbat_lock);
++
++		if (!chg->vbat)
++			return -ENODATA;
++	}
++
++	/* a successful read returns IIO_VAL_INT, not 0 */
++	rc = iio_read_channel_processed(chg->vbat, uv);
++
++	return rc < 0 ? rc : 0;
++}
++
++/*
++ * Capacity is read straight off the resting OCV curve, so it reads high while
++ * charging: the terminal voltage then sits above the cell's true open-circuit
++ * voltage. That is good enough to stop userspace believing the battery is flat,
++ * which is the point of reporting it at all.
++ *
++ * ocv_table[0] is the only curve there is to pick - the profile carries a
++ * single 25 degC table and we do not read pack temperature - so index 0 rather
++ * than power_supply_find_ocv2cap_table() is deliberate.
++ */
++static int smbb_battery_capacity(struct smbb_charger *chg, int *cap)
++{
++	int uv, rc;
++
++	if (!chg->batt_info || !chg->batt_info->ocv_table[0])
++		return -ENODATA;
++
++	rc = smbb_battery_voltage(chg, &uv);
++	if (rc)
++		return rc;
++
++	*cap = power_supply_ocv2cap_simple(chg->batt_info->ocv_table[0],
++					   chg->batt_info->ocv_table_size[0],
++					   uv);
++
++	return 0;
++}
++
+ static int smbb_battery_get_property(struct power_supply *psy,
+ 		enum power_supply_property psp,
+ 		union power_supply_propval *val)
+@@ -649,6 +723,12 @@
+ 	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
+ 		val->intval = 3000000; /* single-cell li-ion low end */
+ 		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++		rc = smbb_battery_voltage(chg, &val->intval);
++		break;
++	case POWER_SUPPLY_PROP_CAPACITY:
++		rc = smbb_battery_capacity(chg, &val->intval);
++		break;
+ 	default:
+ 		rc = -EINVAL;
+ 		break;
+@@ -706,6 +786,8 @@
+ 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
+ 	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
+ 	POWER_SUPPLY_PROP_TECHNOLOGY,
++	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++	POWER_SUPPLY_PROP_CAPACITY,
+ };
+ 
+ static const struct reg_off_mask_default {
+@@ -843,6 +925,7 @@
+ 
+ 	chg->dev = &pdev->dev;
+ 	mutex_init(&chg->statlock);
++	mutex_init(&chg->vbat_lock);
+ 
+ 	chg->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+ 	if (!chg->regmap) {
+@@ -889,6 +972,9 @@
+ 		return PTR_ERR(chg->bat_psy);
+ 	}
+ 
++	if (power_supply_get_battery_info(chg->bat_psy, &chg->batt_info))
++		chg->batt_info = NULL;
++
+ 	usb_cfg.drv_data = chg;
+ 	usb_cfg.supplied_to = smbb_bif;
+ 	usb_cfg.num_supplicants = ARRAY_SIZE(smbb_bif);

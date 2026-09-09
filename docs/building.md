@@ -43,16 +43,37 @@ Then the rootfs goes on by booting TWRP and dd'ing the image to
 `/dev/block/mmcblk0p25`, and the boot image to `/dev/block/mmcblk0p14` either
 over fastboot or with dd from a running system.
 
+## Iterating on the kernel
+
+Once the device is up, the fastest loop needs no fastboot at all, but it does
+need two steps rather than one. `QCOM_SPMI_VADC` and `QCOM_VADC_COMMON` are
+modules, and modules come from the rootfs, so writing the boot partition only
+updates the built-in drivers. Stale modules load silently, because vermagic
+doesn't encode the build number, and a patch touching both a built-in and a
+module then appears to be half applied:
+
+    scp linux-...-rNN.apk user@172.16.42.1:/tmp/
+    ssh user@172.16.42.1 'sudo apk add --allow-untrusted /tmp/linux-...-rNN.apk'
+    ssh user@172.16.42.1 'sudo dd of=/dev/disk/by-partlabel/boot bs=1M conv=fsync' < boot-rNN.img
+    ssh user@172.16.42.1 'sudo reboot'
+
+Installing the package also regenerates `/boot/initramfs`, which is worth picking
+up, but `boot-deploy` writes its own `/boot/boot.img` with a `quiet splash
+plymouth...` command line. Keep `plymouth.enable=0 msm.vram=192m
+msm.allow_vram_carveout=1` and build the image yourself.
+
 ## Afterwards
 
-Two workarounds are needed for a usable system:
-
-    printf 'AllowRiskyCriticalPowerAction=true\nCriticalPowerAction=Ignore\n' \
-        >> /etc/UPower/UPower.conf
+One workaround is still needed for a usable system:
 
     nmcli radio wifi off
     systemctl mask NetworkManager-wait-online.service
 
-The first stops UPower powering the device off every few minutes because it can't
-read the battery. The second saves roughly 110 seconds of desktop startup that's
-otherwise spent waiting on WiFi firmware that's going to crash anyway.
+That saves roughly 110 seconds of desktop startup otherwise spent waiting on WiFi
+firmware that's going to crash anyway.
+
+The UPower workaround that used to live here is no longer needed. With `0005` the
+battery reports a real percentage, so `/etc/UPower/UPower.conf` can stay at its
+defaults, `AllowRiskyCriticalPowerAction=false` and `CriticalPowerAction=PowerOff`.
+PowerOff rather than the upstream HybridSleep default, because this device has no
+working hibernate to fall back on.

@@ -1,7 +1,7 @@
 # postmarketOS on the Xperia Z1 Compact
 
 Notes and patches from getting mainline Linux running properly on a Sony Xperia
-Z1 Compact (D5503, codename `amami`) — display, touchscreen and an Xfce desktop
+Z1 Compact (D5503, codename `amami`): display, touchscreen and an Xfce desktop
 on postmarketOS v26.06 with kernel 6.16.12.
 
 postmarketOS archived this device in June 2026 as unmaintained. Mainline had no
@@ -10,10 +10,10 @@ doesn't contain a single display node, so the panel had to be written from
 scratch using Sony's downstream device tree as reference.
 
 What works now: the 720x1280 panel, the touchscreen, Xfce with GPU acceleration
-through freedreno on the Adreno 330, Bluetooth, charging, USB networking and SSH.
+through freedreno on the Adreno 330, Bluetooth, charging, battery percentage,
+USB networking and SSH.
 
-What doesn't: audio (the `adsp.mdt` firmware isn't available), battery percentage
-(no fuel gauge driver, which has knock-on effects — see below), and WiFi only
+What doesn't: audio (the `adsp.mdt` firmware isn't available), and WiFi only
 half works. The radio comes up and scans, then the WCNSS firmware crashes. One
 side of the screen is also slightly dimmer than the other and I haven't worked
 out why yet.
@@ -27,7 +27,8 @@ They go on top of `linux-postmarketos-qcom-msm8974` 6.16.12 from
 two touchscreen problems (wrong I/O rail, far too short a startup delay). `0002`
 adds a `scan_offload` module parameter to wcn36xx. `0003` is the panel driver,
 about 2000 lines, most of it generated. `0004` wires up the display in amami's
-device tree.
+device tree and adds the battery profile. `0005` gives the charger a voltage
+reading and a battery percentage.
 
 Patches 1 and 2 touch shared files, so they should help the Z1 (`honami`) and
 Z Ultra (`togari`) too, though I haven't tested either.
@@ -51,13 +52,13 @@ reads `40 a5 57 57`, so JDI. The driver now carries all four and picks at probe.
 drops to low power during blanking. In mainline terms that's
 `MIPI_DSI_CLOCK_NON_CONTINUOUS`. Leave it out and the clock runs continuously in
 high speed, the panel never locks onto a frame boundary, and you get beautifully
-uniform static — not a corrupted image, which is what threw me. The full set that
+uniform static, not a corrupted image, which is what threw me. The full set that
 works:
 
     MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_HSE |
     MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS
 
-No `BURST` — downstream traffic mode is `non_burst_sync_event`.
+No `BURST`; downstream traffic mode is `non_burst_sync_event`.
 
 **`set_display_on` goes in `.enable()`, not `.prepare()`.** DRM calls `prepare()`
 before the DSI host starts sending video. Switch the panel on there and this
@@ -82,20 +83,59 @@ There's no touch reset GPIO on this board. Mainline also carries
 `touchscreen-inverted-x` for this panel, which is wrong and mirrors touch
 left to right.
 
-**UPower will switch the phone off every three minutes.** The battery driver
-doesn't expose a `capacity` attribute, so UPower reads 0%, decides the battery is
-critically low, and does its critical-power action, which is PowerOff. From
-outside this is indistinguishable from a hang — ping keeps working, SSH dies —
+**UPower will switch the phone off every three minutes.** Before `0005` the
+battery driver exposed no `capacity` attribute, so UPower read 0%, decided the
+battery was critically low, and did its critical-power action, which is PowerOff.
+From outside this is indistinguishable from a hang (ping keeps working, SSH dies)
 and I spent a long time chasing a kernel bug that didn't exist. `journalctl -b -1`
-shows a perfectly clean `systemd-poweroff`. Both of these lines are needed,
-because with `AllowRisky=false` UPower quietly ignores `Ignore` and does
-HybridSleep instead:
+shows a perfectly clean `systemd-poweroff`. The stopgap was to disable the action
+entirely, which needs both lines, because with `AllowRisky=false` UPower quietly
+ignores `Ignore` and does HybridSleep instead:
 
     AllowRiskyCriticalPowerAction=true
     CriticalPowerAction=Ignore
 
-Obviously that means nothing will save you from an actually flat battery. The
-real fix is a fuel gauge driver.
+That is no longer necessary. `0005` reads VBAT through the PMIC's ADC and turns it
+into a percentage against Sony's discharge curve, so UPower now sees a real number
+and the config is back to `false` / `PowerOff`.
+
+The charger reports nothing useful on its own, so the voltage comes from the VADC
+channel the PMIC already has (`VADC_VBAT_SNS`), which mainline registers as a raw
+channel with no scaling. Switching it to `VADC_CHAN_VOLT` gets microvolts out,
+prescale index 1 being the 1:3 divider that the scaling code already knows how to
+undo. The percentage is then `power_supply_ocv2cap_simple()` against a
+`simple-battery` profile built from the 25C column of Sony's
+`qcom,pc-temp-ocv-lut`. It reads high while charging, since an open-circuit curve
+doesn't know about the charger pushing the terminal voltage up, but it is close
+enough that nothing thinks the battery is flat.
+
+One trap here. `iio_read_channel_processed()` returns `IIO_VAL_INT`,
+which is 1, on success rather than 0. Treating any non-zero return as an error
+means the property never gets assigned and userspace reads uninitialised stack
+memory. It presents as a wildly varying negative percentage, and because the
+voltage helper fills its value in before returning, `voltage_now` looks perfectly
+correct the whole time you are staring at it.
+
+**Adding `io-channels` to the charger node killed USB.** This one fails
+silently and the phone still boots, so it took a while to pin down. The USB
+controller and its PHY get their VBUS state from the charger's extcon, and
+fw_devlink parses `extcon` and `io-channels` alike, so pointing the charger at the
+ADC quietly made USB wait on it. The charger still probes and prints nothing
+unusual. It just probes late enough that `/sys/class/udc` is empty when the
+initramfs looks. The gadget is only set up once, there, so USB stays dead for the
+entire boot while the display and desktop come up exactly as normal.
+
+The fix is one property, `post-init-providers = <&pm8941_vadc>`, which carries
+`FWLINK_FLAG_IGNORE` and drops that dependency edge.
+
+Diagnosing it is harder than it should be, because the initramfs's `info()` is a
+no-op unless `log_info=y`, so "No UDC found, skipping gadget setup..." never
+prints. What you actually see is `cat: can't open
+'/sys/kernel/config/usb_gadget/g1/UDC'`. If USB is gone entirely, hold Volume Up
+while plugging in for Sony's fastboot. The bootloader's USB stack is independent
+of Linux, so that still works. Flash a known-good boot image and read the failed
+boot with `journalctl -b -1`. Identify boots by the `#NN` build number in
+`Linux version`: this device's RTC is wrong, so the timestamps lie to you.
 
 **Broken WiFi costs about 110 seconds of desktop startup.** NetworkManager
 auto-connects at boot, the firmware crashes partway through, and the session sits
@@ -106,7 +146,7 @@ it off. Until the firmware situation improves, turn it off.
 
 A few dead ends worth not repeating.
 
-`msm_mdss` interrupt counts don't tell you whether video is running — vblank
+`msm_mdss` interrupt counts don't tell you whether video is running. vblank
 interrupts get disabled when nothing is waiting on them, so a static count proves
 nothing. Use `DRM_IOCTL_WAIT_VBLANK` (`0xC00C643A` on arm32).
 
@@ -132,6 +172,17 @@ Once postmarketOS is up, much the fastest way to iterate is writing boot images
 straight to the boot partition over SSH:
 
     cat boot.img | ssh user@172.16.42.1 'sudo dd of=/dev/mmcblk0p14 bs=1M'
+
+That is only half an update, though. Not everything is built in: `QCOM_SPMI_VADC`
+and `QCOM_VADC_COMMON` are modules, and modules live on the rootfs, so writing the
+boot partition alone leaves the old ones in place. Worse, vermagic only encodes
+the version and SMP/PREEMPT, not the build number, so stale modules load without a
+word of complaint. A patch touching both a built-in and a module then looks half
+applied, which is a genuinely confusing thing to debug. Install the package as
+well:
+
+    scp linux-...apk user@172.16.42.1:/tmp/
+    ssh user@172.16.42.1 'sudo apk add --allow-untrusted /tmp/linux-...apk'
 
 `systemctl reboot bootloader` doesn't work on this device, in case you try it.
 
