@@ -1,0 +1,21 @@
+--- a/drivers/gpu/drm/msm/disp/mdp5/mdp5_plane.c	2026-09-10 14:38:17.996599408 +0400
++++ b/drivers/gpu/drm/msm/disp/mdp5/mdp5_plane.c	2026-09-10 14:38:18.009514081 +0400
+@@ -222,6 +222,18 @@
+ 		struct mdp5_kms *mdp5_kms = get_kms(plane);
+ 		uint32_t blkcfg = 0;
+ 
++		/*
++		 * A disabled plane owns no hwpipe, so a state that enables one
++		 * while still naming a pipe predates the disable that released
++		 * it - which is what resume replays. Keeping it would skip
++		 * mdp5_pipe_assign() and leave the global state without the
++		 * assignment, making the next release() warn and fail.
++		 */
++		if (!plane_enabled(old_state) && mdp5_state->hwpipe) {
++			mdp5_state->hwpipe = NULL;
++			mdp5_state->r_hwpipe = NULL;
++		}
++
+ 		format = msm_framebuffer_format(state->fb);
+ 		if (MSM_FORMAT_IS_YUV(format))
+ 			caps |= MDP_PIPE_CAP_SCALE | MDP_PIPE_CAP_CSC;

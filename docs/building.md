@@ -25,6 +25,19 @@ You also need to add `CONFIG_DRM_PANEL_SONY_AMAMI_NOVATEK=y` to
 `config-postmarketos-qcom-msm8974.armv7` by hand. A new Kconfig symbol defaults
 to `n` and the build won't prompt for it.
 
+The stock config has devfreq switched off entirely, which leaves the GPU with no
+frequency scaling at all -- `msm_devfreq_init` prints `Couldn't initialize GPU
+devfreq` and gives up. DRM_MSM doesn't select the symbol, so it has to be added:
+
+    CONFIG_PM_DEVFREQ=y
+    CONFIG_DEVFREQ_GOV_SIMPLE_ONDEMAND=y
+    CONFIG_DEVFREQ_THERMAL=y
+
+The governor is the one `msm_devfreq_init` asks for by name, so enabling devfreq
+without it gets you no further. `DEVFREQ_THERMAL` is optional and registers the
+GPU as a cooling device. With all three, `/sys/class/devfreq/fdb00000.gpu` turns
+up and the Adreno moves between 27, 200 and 320 MHz.
+
 The Adreno firmware has to be built into the kernel image rather than loaded from
 `/lib/firmware`, because DRM_MSM probes from the initramfs before the rootfs is
 mounted and only tries once:

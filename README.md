@@ -12,7 +12,8 @@ scratch using Sony's downstream device tree as reference.
 What works now: the 720x1280 panel, the touchscreen, Xfce with GPU acceleration
 through freedreno on the Adreno 330, WiFi, Bluetooth, charging, battery
 percentage, USB networking and SSH, the gyroscope, magnetometer and proximity
-sensor, the accelerometer and the RGB notification LED.
+sensor, the accelerometer, the RGB notification LED, suspend and resume, and
+frequency scaling on the GPU.
 
 What doesn't: audio. The DSP boots and every sensor on it works, but there is no
 codec driver for sound. One side of the
@@ -36,7 +37,9 @@ service needs before it will bring up the accelerometer. `0008` corrects the
 wcnss wifi interrupt type, which is what stopped wcn36xx ever being reloaded.
 `0009` gives the active scan type a real value instead of an enum padding
 constant. `0010` makes the offloaded scan depend on the capability bit that
-actually describes it, which removes the need for `scan_offload=0`.
+actually describes it, which removes the need for `scan_offload=0`. `0011` stops
+MDP5 carrying a stale hardware pipe across a suspend, which is what made the
+second suspend fail and every one after it.
 
 `patches/debug/` holds the diagnostic patches, numbered from 9000 so they apply
 last. They are not meant for a build you use day to day, but each one answered a
@@ -45,10 +48,10 @@ question from inside the kernel that could not be answered from outside, and
 own README.
 
 Patches 1, 2, 7 and 8 touch shared files, so they should help the Z1 (`honami`)
-and Z Ultra (`togari`) too, though I haven't tested either. `0007`, `0008`, `0009` and `0010` are not amami-specific at all: `0007` should fix
+and Z Ultra (`togari`) too, though I haven't tested either. `0007`, `0008`, `0009`, `0010` and `0011` are not amami-specific at all: `0007` should fix
 the accelerometer on any msm8974 with sensors on the DSP, `0008` fixes wcn36xx
-module reload on every msm8974, and `0009` and `0010` apply to every device the
-wcn36xx driver supports.
+module reload on every msm8974, `0009` and `0010` apply to every device the
+wcn36xx driver supports, and `0011` applies to every display running on MDP5.
 
 ## Things that took a while to work out
 
@@ -424,6 +427,32 @@ neighbour looks blocky. Running native and raising `/Xft/DPI` instead keeps
 everything sharp. The scale lives in xfconf at `displays -> /Default/DSI-1/Scale`
 and is re-applied at every login, so setting it back to 1 there is what makes the
 fix stick - `xrandr` alone lasts until you log out.
+
+**Suspend works exactly once, and then MDP5 refuses forever.** The first
+`rtcwake -m mem` goes through cleanly. Every attempt after fails in the `prepare`
+step with `-EINVAL` and nothing in `/sys/power/suspend_stats/last_failed_dev`,
+which makes it look like a core PM problem rather than a driver one. Only `dmesg`
+names the device:
+
+    msm_mdp fd900100.display-controller: PM: device_prepare(): msm_kms_pm_prepare returns -22
+
+with a `WARN` from `mdp5_pipe_release` above it, reached through
+`drm_atomic_helper_disable_all`.
+
+MDP5 tracks which hardware pipe belongs to which plane in a private global atomic
+state, separate from the plane state that holds the pointer. Suspend snapshots the
+current state, disables everything - which releases the pipe - and resume replays
+the snapshot. The snapshot predates the disable, so it still names the old pipe.
+`mdp5_plane_atomic_check` sees a non-NULL `hwpipe` whose caps match and keeps it,
+so `mdp5_pipe_assign` is never called and the global state never hears about the
+assignment. The two disagree from then on, and the next release trips the `WARN`.
+
+`0011` drops the stale pointer when a plane is enabled from a disabled state,
+which is safe because a disabled plane never legitimately owns one. Four cycles
+afterwards, including through logind, give `success=4 fail=0`.
+
+Two cosmetic things still happen every cycle: the panel's un-initialize DCS write
+times out with `-110` going down, and MDP5 logs one underrun coming back up.
 
 ## Debugging notes
 
