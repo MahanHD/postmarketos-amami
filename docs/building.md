@@ -64,17 +64,16 @@ msm.allow_vram_carveout=1` and build the image yourself.
 
 ## Afterwards
 
-WiFi needs two settings, both explained in the README:
+WiFi needs one setting, explained in the README:
 
     # /etc/NetworkManager/conf.d/98-wifi-powersave.conf
     [connection]
     wifi.powersave = 2
 
-    # /etc/modprobe.d/wcn36xx.conf
-    options wcn36xx scan_offload=0
-
-Without the first it associates and then immediately drops the link; without the
-second every scan times out. `CONFIG_WCN36XX_DEBUGFS=y` is worth adding to the
+Without it the radio associates and then immediately drops the link. The
+`options wcn36xx scan_offload=0` line that used to be needed here is obsolete as
+of `0010`, which fixes the capability check that made scans time out; the driver
+now picks the software scan on its own. `CONFIG_WCN36XX_DEBUGFS=y` is worth adding to the
 kernel config too, since it exposes the firmware capability list that explains
 why `0006` is needed.
 

@@ -26,7 +26,8 @@ They go on top of `linux-postmarketos-qcom-msm8974` 6.16.12 from
 
 `0001` enables the WCNSS remoteproc so WiFi and Bluetooth exist at all, and fixes
 two touchscreen problems (wrong I/O rail, far too short a startup delay). `0002`
-adds a `scan_offload` module parameter to wcn36xx. `0003` is the panel driver,
+adds a `scan_offload` module parameter to wcn36xx, which `0010` has made
+unnecessary and which is kept only as a debugging escape hatch. `0003` is the panel driver,
 about 2000 lines, most of it generated. `0004` wires up the display in amami's
 device tree and adds the battery profile. `0005` gives the charger a voltage
 reading and a battery percentage. `0006` stops the driver sending a scan message
@@ -34,13 +35,14 @@ this firmware doesn't implement. `0007` adds the one registry group the sensor
 service needs before it will bring up the accelerometer. `0008` corrects the
 wcnss wifi interrupt type, which is what stopped wcn36xx ever being reloaded.
 `0009` gives the active scan type a real value instead of an enum padding
-constant.
+constant. `0010` makes the offloaded scan depend on the capability bit that
+actually describes it, which removes the need for `scan_offload=0`.
 
 Patches 1, 2, 7 and 8 touch shared files, so they should help the Z1 (`honami`)
-and Z Ultra (`togari`) too, though I haven't tested either. Neither `0007` nor
-`0008` is amami-specific: the first should fix the accelerometer on any msm8974
-with sensors on the DSP, and the second fixes wcn36xx module reload on every
-msm8974 there is.
+and Z Ultra (`togari`) too, though I haven't tested either. `0007`, `0008`, `0009` and `0010` are not amami-specific at all: `0007` should fix
+the accelerometer on any msm8974 with sensors on the DSP, `0008` fixes wcn36xx
+module reload on every msm8974, and `0009` and `0010` apply to every device the
+wcn36xx driver supports.
 
 ## Things that took a while to work out
 
@@ -166,66 +168,50 @@ connects at boot with no delay, which is worth saying because I previously blame
 roughly 110 seconds of slow startup on having the radio enabled. That was wrong.
 The delay was WiFi *failing*, not WiFi being on, and it went away once it worked.
 
-Two smaller things are needed alongside it. The firmware advertises the
-SCAN_OFFLOAD capability but never answers `START_SCAN_OFFLOAD` (request 204), so
-offloaded scanning has to be turned off and the software path used instead:
-
-    # /etc/modprobe.d/wcn36xx.conf
-    options wcn36xx scan_offload=0
-
-And `0006` stops the driver sending `UPDATE_CHANNEL_LIST`, which this firmware also
-doesn't implement, and which the driver was sending unconditionally despite
-having a capability bit for it. Confirmed absent by
+One smaller thing is needed alongside it. `0006` stops the driver sending
+`UPDATE_CHANNEL_LIST`, which this firmware does not implement and which the
+driver was sending unconditionally despite having a capability bit for it.
+Confirmed absent by
 `/sys/kernel/debug/ieee80211/phy0/wcn36xx/firmware_feat_caps`, which needs
 `CONFIG_WCN36XX_DEBUGFS=y`.
 
 `hal_start_scan response failed err=5` still appears per channel during software
 scans. It is harmless; the scan completes and returns every network.
 
-**The offloaded scan path sends a nonsense scan type, and `0009` fixes that -
-but it is not why the firmware stays quiet.** `hal.h` had
+**Offloaded scanning: the driver checks the wrong capability bit, and `0010`
+fixes it.** Every scan used to cost a ten second timeout because the driver sent
+`START_SCAN_OFFLOAD` (request 204) and the firmware never answered, so
+`scan_offload=0` was required. I had this recorded as firmware that advertises a
+feature it does not implement. That was wrong.
 
-    enum wcn36xx_hal_scan_type {
-            WCN36XX_HAL_SCAN_TYPE_PASSIVE = 0x00,
-            WCN36XX_HAL_SCAN_TYPE_ACTIVE = WCN36XX_HAL_MAX_ENUM_SIZE
-    };
+There are two capability bits, not one: `SCAN_OFFLOAD` is bit 10 and
+`WLAN_SCAN_OFFLOAD` is bit 27. The driver gates the offloaded scan on bit 10
+alone. This firmware advertises bit 10 and **not** bit 27:
 
-`WCN36XX_HAL_MAX_ENUM_SIZE` is `0x7FFFFFFF`, the padding constant every other
-enum in that header uses for its unused `_MAX` member. Here it had been given to
-a real value, so every offloaded scan asked for scan type `0x7FFFFFFF`. It is the
-only place `scan_type` is set in the whole driver.
+    MCC P2P DOT11AC SLM_SESSIONIZATION DOT11AC_OPMODE SAP32STA TDLS
+    P2P_GO_NOA_DECOUPLE_INIT_SCAN WLANACTIVE_OFFLOAD BEACON_OFFLOAD SCAN_OFFLOAD
+    BCN_MISS_OFFLOAD STA_POWERSAVE STA_ADVANCED_PWRSAVE BCN_FILTER RTT RATECTRL
+    WOW WLAN_ROAM_SCAN_OFFLOAD SPECULATIVE_PS_POLL
 
-Fixing it puts `01 00 00 00` on the wire, confirmed in the SMD dump, and the
-firmware still never answers request 204. So the wrong scan type was a genuine
-bug worth correcting, but the timeout has another cause and
-`options wcn36xx scan_offload=0` is still needed. What is now established is that
-the firmware advertises SCAN_OFFLOAD honestly, answers other requests in 0 ms
-while ignoring this one entirely, and receives a request whose every other field
-decodes correctly against the struct.
+Twenty capabilities. The dumps in the patch series that added that debugfs file
+show wcn3620 with 36 and wcn3680b with 37, and both of those list `SCAN_OFFLOAD`
+*and* `WLAN_SCAN_OFFLOAD`. Bit 27 is the one that means this firmware implements
+the message, and pronto never claimed it. The firmware was honest throughout; the
+driver was asking for something it had correctly declined to advertise.
 
-**wcn36xx could never be reloaded, and `0008` fixes it.** Unloading the module
-and loading it again always failed:
+`0010` requires both bits. The driver then falls back to the software scan by
+itself, `scan_offload` can stay at its default, and the
+`/etc/modprobe.d/wcn36xx.conf` workaround is gone. Verified from a cold boot with
+no module options at all: no request 204 is ever sent, no timeout, and scans
+return every network.
 
-    irq: type mismatch, failed to map hwirq-177 for interrupt-controller@f9000000!
-    wcn36xx ...:wcnss:wifi: error -ENXIO: IRQ tx not found
-
-`qcom-msm8974.dtsi` declares the wcnss wifi interrupts `IRQ_TYPE_EDGE_RISING`,
-while the driver requests them with `IRQF_TRIGGER_HIGH`. The first probe maps
-them edge-triggered from the device tree and `request_irq` then quietly changes
-the type to level-high; `free_irq` leaves the mapping in place, so the next probe
-asks for edge-rising, finds a level-high mapping and is refused.
-
-The device tree is the side that is wrong. apq8064, msm8917 and msm8953 all
-declare these interrupts `IRQ_TYPE_LEVEL_HIGH`, and msm8917 and msm8953 use the
-same GIC lines 145 and 146 that msm8974 does, so msm8974 is the only one out of
-step with both its siblings and the driver. Fixing the device tree rather than
-the driver also keeps the trigger type exactly what it already was in practice,
-so a working radio does not get switched to edge-triggered as a side effect.
-
-This is why a HAL timeout used to mean a reboot. The timeout itself was never
-the unrecoverable part - it tore the driver down, and nothing could bring it back.
-With `0008` a reload works, twice in a row, and NetworkManager reconnects on its
-own with the same lease.
+Two things were ruled out before landing on this, both worth recording so nobody
+repeats them. The message length is not the problem: trimming the trailing IE
+block to send 471 and then 469 bytes instead of 593 changed nothing, all three
+were ignored. And the wrong scan type in `0009` is a real bug but not this one -
+with `01 00 00 00` on the wire instead of `0x7FFFFFFF` the firmware still stayed
+silent. `0009` still matters for hardware that does run offloaded scans, which is
+where that field actually reaches firmware that reads it.
 
 Do not set NetworkManager's
 `cloned-mac-address=permanent`: this device has no valid permanent MAC in its NV
