@@ -38,6 +38,12 @@ wcnss wifi interrupt type, which is what stopped wcn36xx ever being reloaded.
 constant. `0010` makes the offloaded scan depend on the capability bit that
 actually describes it, which removes the need for `scan_offload=0`.
 
+`patches/debug/` holds the diagnostic patches, numbered from 9000 so they apply
+last. They are not meant for a build you use day to day, but each one answered a
+question from inside the kernel that could not be answered from outside, and
+`9001` is what made the accelerometer fix findable at all. That directory has its
+own README.
+
 Patches 1, 2, 7 and 8 touch shared files, so they should help the Z1 (`honami`)
 and Z Ultra (`togari`) too, though I haven't tested either. `0007`, `0008`, `0009` and `0010` are not amami-specific at all: `0007` should fix
 the accelerometer on any msm8974 with sensors on the DSP, `0008` fixes wcn36xx
