@@ -365,6 +365,27 @@ All three channels drive independently and combine to white. Turning it off
 means zeroing both files. No trigger is set by default, so nothing in the
 desktop drives it yet.
 
+**A thin red frame around the screen is the X scaler, not the panel.** Xfce's
+display dialog had a 0.8 scale set on `DSI-1`, so X rendered 576x1024 and the
+CRTC transform stretched it to the panel's 720x1280 with a bilinear filter. At
+the very edge that filter samples past the source image and leaves a one or two
+pixel red fringe on all four sides.
+
+It is easy to misread. It sits *underneath* the desktop, so the compositor paints
+over it most of the time and it only flickers into view during repaints, which
+makes it look touch-related. Turning compositing off makes it constant, which is
+the quickest way to tell it apart from a genuine panel artefact - a panel or MDP
+problem would not care what the compositor is doing. Worth checking `xrandr
+--verbose` for a `Transform` other than identity before going anywhere near the
+display driver. I lost time on MDP interface underruns first; there were only two
+in ten minutes, nowhere near enough to explain something constant.
+
+`--filter nearest` keeps the scale and removes the fringe, but 0.8 nearest-
+neighbour looks blocky. Running native and raising `/Xft/DPI` instead keeps
+everything sharp. The scale lives in xfconf at `displays -> /Default/DSI-1/Scale`
+and is re-applied at every login, so setting it back to 1 there is what makes the
+fix stick - `xrandr` alone lasts until you log out.
+
 ## Debugging notes
 
 A few dead ends worth not repeating.
