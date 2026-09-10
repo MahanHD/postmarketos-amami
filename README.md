@@ -16,9 +16,7 @@ sensor, the accelerometer, the RGB notification LED, suspend and resume, and
 frequency scaling on the GPU.
 
 What doesn't: audio. The DSP boots and every sensor on it works, but there is no
-codec driver for sound. One side of the
-screen is also slightly dimmer than the other, which as far as I can tell is the
-backlight itself rather than anything software can reach.
+codec driver for sound.
 
 ## Patches
 
@@ -40,7 +38,8 @@ constant. `0010` makes the offloaded scan depend on the capability bit that
 actually describes it, which removes the need for `scan_offload=0`. `0011` stops
 MDP5 carrying a stale hardware pipe across a suspend, which is what made the
 second suspend fail and every one after it. `0012` gives the GPU a cooling map,
-so the thermal zone can actually throttle it.
+so the thermal zone can actually throttle it. `0013` fixes the WLED3 brightness
+register stride, which had been leaving all but the last backlight string dark.
 
 `patches/debug/` holds the diagnostic patches, numbered from 9000 so they apply
 last. They are not meant for a build you use day to day, but each one answered a
@@ -52,8 +51,9 @@ Patches 1, 2, 7 and 8 touch shared files, so they should help the Z1 (`honami`)
 and Z Ultra (`togari`) too, though I haven't tested either. `0007` through `0012` are not amami-specific at all: `0007` should fix
 the accelerometer on any msm8974 with sensors on the DSP, `0008` and `0012` apply to
 every msm8974 -- `0008` fixes wcn36xx module reload, `0012` the missing GPU cooling
-map -- `0009` and `0010` apply to every device the wcn36xx driver supports, and
-`0011` to every display running on MDP5.
+map -- `0009` and `0010` apply to every device the wcn36xx driver supports,
+`0011` to every display running on MDP5, and `0013` to every WLED3 device with
+more than one backlight string.
 
 ## Things that took a while to work out
 
@@ -475,22 +475,41 @@ controller actually reads.
 And the big one: if SSH dies while ping still works, check `journalctl -b -1` for
 an orderly poweroff before assuming the kernel hung.
 
-The uneven backlight is not the third WLED string, which was my first guess.
-`rhine.dtsi` sets `qcom,num-strings = <2>`, so the driver drives sinks 0 and 1 and
-leaves sink 2 alone, and it looked plausible that amami has a string the shared
-file doesn't know about. It doesn't. Driving sink 2 on its own (`CURR_SINK` at
-`0xd84f`, bits 7:5) gives a completely dark panel, so nothing is wired to it and
-the device tree is right. Raising `num-strings` to 3 changes nothing either.
+**The uneven backlight was a one-character driver bug, and I called it hardware.**
+This is the mistake I'd most like someone else to avoid.
 
-Worth knowing if you go poking at this: `WLED3_SINK_REG_BRIGHT(n)` is `0x40 + n`
-but the driver writes two bytes per string, so consecutive strings overlap and
-overwrite each other. After a normal update `0xd840`-`0xd842` read `00 00 08`
-rather than anything per-string. Brightness on WLED3 is effectively global.
+`WLED3_SINK_REG_BRIGHT(n)` is `0x40 + n`, but `wled3_set_brightness()` writes two
+bytes at that address. So consecutive strings overlap: with brightness `0x0800`,
+writing string 0 at `0x40` leaves `d840=00 d841=08`, then writing string 1 at
+`0x41` leaves `d841=00 d842=08`. The real layout is two bytes per string, so what
+the hardware ends up with is string 0 at `0x0000` - **off** - and string 1 at
+`0x0f08`, near maximum, because its high byte was never overwritten and still
+holds part of the `0x0fff` power-on default. Every other WLED3 per-string register
+uses a `0x10` stride, and WLED4's brightness is `0x57 + n * 0x10`; only this one
+is `+ n`. `0013` makes it `0x40 + n * 2`.
 
-You need a kernel built with `REGMAP_ALLOW_WRITE_DEBUGFS` to try any of this. It's
-deliberately not a Kconfig option; flip the `#undef` in
+One string dead and the light guide fed from the other end is what produced the
+gradient, and the surviving string sitting near maximum is why the panel still
+looked bright enough not to question.
+
+The first investigation ruled out the third WLED string - `num-strings = <2>` is
+correct, driving sink 2 alone gives a dark panel, nothing is wired to it - and
+then concluded the gradient must therefore be the backlight hardware. That does
+not follow, and it was wrong. Two things should have stopped it. Stock firmware
+and LineageOS drive the same panel and the same WLED block without the gradient,
+which makes it software until proven otherwise. And `0xd840`-`0xd842` reading
+`00 00 08` was already in my notes, dismissed as harmless overlap; decoding it as
+two bytes per string shows one string pinned at zero.
+
+Reading the whole block is what makes it obvious - `d844 d845` still holding
+`ff 0f` is the power-on default, and a default of `0x0fff` only makes sense if
+brightness is two bytes per string.
+
+You need a kernel built with `REGMAP_ALLOW_WRITE_DEBUGFS` to poke at this live.
+It's deliberately not a Kconfig option; flip the `#undef` in
 `drivers/base/regmap/regmap-debugfs.c` and `/sys/kernel/debug/regmap/0-01/registers`
-becomes writable as `<reg> <value>`, both hex.
+becomes writable as `<reg> <value>`, both hex. Reading it dumps the whole SPMI
+space and is slow, so match every address you want in one `awk` pass.
 
 ## Flashing
 

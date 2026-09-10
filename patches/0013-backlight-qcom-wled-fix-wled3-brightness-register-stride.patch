@@ -1,0 +1,11 @@
+--- a/drivers/video/backlight/qcom-wled.c	2026-09-10 16:37:18.215464743 +0400
++++ b/drivers/video/backlight/qcom-wled.c	2026-09-10 16:37:18.225422262 +0400
+@@ -59,7 +59,7 @@
+ #define  WLED3_SINK_REG_CURR_SINK_SHFT			5
+ 
+ /* WLED3 specific per-'string' registers below */
+-#define WLED3_SINK_REG_BRIGHT(n)			(0x40 + n)
++#define WLED3_SINK_REG_BRIGHT(n)			(0x40 + (n * 2))
+ 
+ #define WLED3_SINK_REG_STR_MOD_EN(n)			(0x60 + (n * 0x10))
+ #define  WLED3_SINK_REG_STR_MOD_MASK			BIT(7)
