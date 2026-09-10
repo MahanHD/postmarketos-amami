@@ -13,7 +13,7 @@ What works now: the 720x1280 panel, the touchscreen, Xfce with GPU acceleration
 through freedreno on the Adreno 330, WiFi, Bluetooth, charging, battery
 percentage, USB networking and SSH, the gyroscope, magnetometer and proximity
 sensor, the accelerometer, the RGB notification LED, suspend and resume, and
-frequency scaling on the GPU.
+frequency scaling on both the GPU and the CPU.
 
 What doesn't: audio. The DSP boots and every sensor on it works, but there is no
 codec driver for sound.
@@ -41,6 +41,9 @@ MDP5 carrying a stale hardware pipe across a suspend, which is what made the
 second suspend fail and every one after it. `0012` gives the GPU a cooling map,
 so the thermal zone can actually throttle it. `0013` fixes the WLED3 brightness
 register stride, which had been leaving all but the last backlight string dark.
+`0014` gives the HFPLL driver its msm8974 configuration and `0015` wires up the
+Krait clock tree, which together give the CPU frequency scaling for the first
+time.
 
 `patches/debug/` holds the diagnostic patches, numbered from 9000 so they apply
 last. They are not meant for a build you use day to day, but each one answered a
@@ -493,6 +496,59 @@ in `mdp5_vid_encoder_enable`: `INTF_TIMING_ENGINE_EN` is written before
 just before the configuration lands. That is generic MDP5 code shared by every
 SoC that uses it, it costs one frame while the panel has not latched video yet,
 and it is left alone deliberately.
+
+**The CPU had no frequency scaling, and mainline had all the drivers for it.**
+`qcom-cpufreq-nvmem` already lists `qcom,msm8974` with `match_data_krait`, `krait-cc`
+already handles this SoC, and `qcom,msm8974-hfpll` is already in the HFPLL binding -
+complete with an example using amami's own `0xf908a000`. What was missing was the
+device tree to connect them, plus the one `hfpll_data` entry the binding implies.
+No arm32 DT in the tree wires Krait cpufreq: not msm8974, not apq8064, not ipq8064,
+not msm8960. The upstream series that would have added it ran from 2014 to 2018 and
+was reworked in 2023; the drivers and bindings landed, the DT never did.
+
+`qcom,krait-cc-v2` turns out to be exactly the msm8974 case. The v1/v2 split is not
+"msm8960 or apq8064", it is whether each CPU owns an aux clock: for v2 the driver
+registers `qsb` and `acpu_aux` itself as `gpll0_vote / 2`, so no `kpss-gcc` or
+`kpss-xcc` wiring is needed - which matters, because `kpss-xcc` only ever matches
+`qcom,kpss-acc-v1` and this SoC is `-v2`.
+
+The HFPLL entry in `0014` differs from the `qcs404` one already in the file by a
+single field: `config_val`, `0x430405d` to `0x4d0405d`. Offsets, `user_val`, VCO mask
+and rate limits are all identical.
+
+The numbers came out of the ROM. Downstream msm8974 does not use the `acpuclock-*`
+family, it uses `clock-krait-8974`, and that binding keeps its data in the device
+tree - so LineageOS's own `boot.img`, unpacked through its `QCDT` container, carries
+`/soc/qcom,clock-krait@f9016000` with the HFPLL addresses, the config value, and a
+per-bin frequency-to-voltage table.
+
+Which bin applies is in the fuses. `get_krait_bin_format_b` reads eight bytes and
+carries its own validity bits, and `0xb0` in `qfprom0` is the only offset where both
+are set: **speed bin 2, PVS bin 4, version 0**, later confirmed verbatim by the
+kernel itself once the driver was live. Downstream's `reg` for `efuse` is
+`0xfc4b80b0`, the raw region behind the ECC-corrected shadow mainline maps, which
+agrees. For this bin the ladder tops out at **2150.4MHz**, not the 2265600 top row of
+`qcom,cpufreq-table` - that table is bin-independent, the PVS table is what governs,
+and 2.15GHz is exactly the MSM8974AA rating.
+
+**The table stops at 960MHz on purpose.** Nothing in mainline can drive VDD_APC.
+Downstream runs `qcom,krait-pdn` with per-core `qcom,krait-regulator` LDOs and
+`qcom,krait-regulator-pmic`, none of which exist here, and mainline's only
+alternative - the `qcom,saw-reg` path in `qcom_spmi-regulator.c` - has no DT users on
+any platform. The rail also cannot be read: PM8841 returns zeroes over SPMI even for
+its type and subtype registers, so unlike PM8941 it is simply not reachable. What can
+be established is where the bootloader leaves the cores, because `krait-cc` prints it
+at probe: `CPU0 @ 960000 KHz`, all four. Downstream wants 820000uV there, the phone
+has already booted at that rate, so every OPP at or below it is covered by whatever
+the rail is doing anyway. Raising the ceiling further is an under-volted overclock
+until the rail is controllable.
+
+That probe line also corrected a measurement. The CPU had been recorded at 799.9MHz
+from `perf stat -e cycles`; it was 960MHz all along, and the discrepancy was the
+busy loop forking `date` every iteration and letting the core idle. With a spinner
+that does not fork, perf reads 307, 576 and 961MHz against 300, 576 and 960 asked
+for. Under four-core load at 960MHz the CPUs settle at 62-63C, well under the 75C
+passive trip.
 
 ## Debugging notes
 

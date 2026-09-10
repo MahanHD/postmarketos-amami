@@ -38,6 +38,21 @@ without it gets you no further. `DEVFREQ_THERMAL` is optional and registers the
 GPU as a cooling device. With all three, `/sys/class/devfreq/fdb00000.gpu` turns
 up and the Adreno moves between 27, 200 and 320 MHz.
 
+CPU frequency scaling needs three more, and no others: the prerequisites
+(`QCOM_SMEM`, `NVMEM_QCOM_QFPROM`) are already on.
+
+    CONFIG_QCOM_HFPLL=y
+    CONFIG_KRAIT_CLOCKS=y
+    CONFIG_KRAITCC=y
+    CONFIG_ARM_QCOM_CPUFREQ_NVMEM=y
+
+`KPSS_XCC` is deliberately absent: it only matches `qcom,kpss-acc-v1`, and for
+`qcom,krait-cc-v2` the Krait clock driver builds its own aux clock instead. Expect
+`CPU0 @ 960000 KHz` from `krait-cc` early in the boot, and
+`/sys/devices/system/cpu/cpufreq/policy0` covering all four cores. `scaling_driver`
+reads `cpufreq-dt`, which is correct - `qcom-cpufreq-nvmem` reads the speed bin,
+applies the OPP filter and then registers `cpufreq-dt` to do the actual work.
+
 The Adreno firmware has to be built into the kernel image rather than loaded from
 `/lib/firmware`, because DRM_MSM probes from the initramfs before the rootfs is
 mounted and only tries once:

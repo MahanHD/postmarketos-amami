@@ -1,0 +1,188 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -46,6 +46,9 @@
+ 			qcom,acc = <&acc0>;
+ 			qcom,saw = <&saw0>;
+ 			cpu-idle-states = <&cpu_spc>;
++			clocks = <&kraitcc 0>;
++			clock-names = "cpu";
++			operating-points-v2 = <&cpu_opp_table>;
+ 		};
+ 
+ 		cpu1: cpu@1 {
+@@ -57,6 +60,9 @@
+ 			qcom,acc = <&acc1>;
+ 			qcom,saw = <&saw1>;
+ 			cpu-idle-states = <&cpu_spc>;
++			clocks = <&kraitcc 1>;
++			clock-names = "cpu";
++			operating-points-v2 = <&cpu_opp_table>;
+ 		};
+ 
+ 		cpu2: cpu@2 {
+@@ -68,6 +74,9 @@
+ 			qcom,acc = <&acc2>;
+ 			qcom,saw = <&saw2>;
+ 			cpu-idle-states = <&cpu_spc>;
++			clocks = <&kraitcc 2>;
++			clock-names = "cpu";
++			operating-points-v2 = <&cpu_opp_table>;
+ 		};
+ 
+ 		cpu3: cpu@3 {
+@@ -79,6 +88,9 @@
+ 			qcom,acc = <&acc3>;
+ 			qcom,saw = <&saw3>;
+ 			cpu-idle-states = <&cpu_spc>;
++			clocks = <&kraitcc 3>;
++			clock-names = "cpu";
++			operating-points-v2 = <&cpu_opp_table>;
+ 		};
+ 
+ 		l2: l2-cache {
+@@ -99,6 +111,82 @@
+ 		};
+ 	};
+ 
++	kraitcc: clock-controller {
++		compatible = "qcom,krait-cc-v2";
++		clocks = <&hfpll0>, <&hfpll1>, <&hfpll2>, <&hfpll3>, <&hfpll_l2>;
++		clock-names = "hfpll0", "hfpll1", "hfpll2", "hfpll3", "hfpll_l2";
++		#clock-cells = <1>;
++	};
++
++	/*
++	 * Stops at 960MHz, which is where the bootloader leaves all four cores
++	 * (krait-cc reports "CPU0 @ 960000 KHz" at probe). Nothing in mainline
++	 * can drive VDD_APC, so the table may not ask for a rate needing more
++	 * voltage than the rail already supplies: downstream's
++	 * qcom,speed2-pvs4-bin-v0 wants 820000uV at 960MHz and this device has
++	 * booted at that rate, so everything here is covered. The rest of the
++	 * ladder up to 2.15GHz goes in once the rail is controllable.
++	 */
++	cpu_opp_table: opp-table-cpu {
++		compatible = "operating-points-v2-krait-cpu";
++		opp-shared;
++		nvmem-cells = <&speedbin_efuse>;
++
++		opp-300000000 {
++			opp-hz = /bits/ 64 <300000000>;
++			opp-supported-hw = <0x7>;
++			clock-latency-ns = <100000>;
++		};
++
++		opp-422400000 {
++			opp-hz = /bits/ 64 <422400000>;
++			opp-supported-hw = <0x7>;
++			clock-latency-ns = <100000>;
++		};
++
++		opp-499200000 {
++			opp-hz = /bits/ 64 <499200000>;
++			opp-supported-hw = <0x7>;
++			clock-latency-ns = <100000>;
++		};
++
++		opp-576000000 {
++			opp-hz = /bits/ 64 <576000000>;
++			opp-supported-hw = <0x7>;
++			clock-latency-ns = <100000>;
++		};
++
++		opp-652800000 {
++			opp-hz = /bits/ 64 <652800000>;
++			opp-supported-hw = <0x7>;
++			clock-latency-ns = <100000>;
++		};
++
++		opp-729600000 {
++			opp-hz = /bits/ 64 <729600000>;
++			opp-supported-hw = <0x7>;
++			clock-latency-ns = <100000>;
++		};
++
++		opp-806400000 {
++			opp-hz = /bits/ 64 <806400000>;
++			opp-supported-hw = <0x7>;
++			clock-latency-ns = <100000>;
++		};
++
++		opp-883200000 {
++			opp-hz = /bits/ 64 <883200000>;
++			opp-supported-hw = <0x7>;
++			clock-latency-ns = <100000>;
++		};
++
++		opp-960000000 {
++			opp-hz = /bits/ 64 <960000000>;
++			opp-supported-hw = <0x7>;
++			clock-latency-ns = <100000>;
++		};
++	};
++
+ 	firmware {
+ 		scm {
+ 			compatible = "qcom,scm-msm8974", "qcom,scm";
+@@ -456,6 +544,51 @@
+ 			};
+ 		};
+ 
++		hfpll_l2: clock-controller@f9016000 {
++			compatible = "qcom,msm8974-hfpll";
++			reg = <0xf9016000 0x30>;
++			#clock-cells = <0>;
++			clock-output-names = "hfpll_l2";
++			clocks = <&xo_board>;
++			clock-names = "xo";
++		};
++
++		hfpll0: clock-controller@f908a000 {
++			compatible = "qcom,msm8974-hfpll";
++			reg = <0xf908a000 0x30>;
++			#clock-cells = <0>;
++			clock-output-names = "hfpll0";
++			clocks = <&xo_board>;
++			clock-names = "xo";
++		};
++
++		hfpll1: clock-controller@f909a000 {
++			compatible = "qcom,msm8974-hfpll";
++			reg = <0xf909a000 0x30>;
++			#clock-cells = <0>;
++			clock-output-names = "hfpll1";
++			clocks = <&xo_board>;
++			clock-names = "xo";
++		};
++
++		hfpll2: clock-controller@f90aa000 {
++			compatible = "qcom,msm8974-hfpll";
++			reg = <0xf90aa000 0x30>;
++			#clock-cells = <0>;
++			clock-output-names = "hfpll2";
++			clocks = <&xo_board>;
++			clock-names = "xo";
++		};
++
++		hfpll3: clock-controller@f90ba000 {
++			compatible = "qcom,msm8974-hfpll";
++			reg = <0xf90ba000 0x30>;
++			#clock-cells = <0>;
++			clock-output-names = "hfpll3";
++			clocks = <&xo_board>;
++			clock-names = "xo";
++		};
++
+ 		acc0: power-manager@f9088000 {
+ 			compatible = "qcom,kpss-acc-v2";
+ 			reg = <0xf9088000 0x1000>, <0xf9008000 0x1000>;
+@@ -1262,6 +1395,10 @@
+ 			#address-cells = <1>;
+ 			#size-cells = <1>;
+ 
++			speedbin_efuse: speedbin@b0 {
++				reg = <0xb0 0x8>;
++			};
++
+ 			tsens_base1: base1@d0 {
+ 				reg = <0xd0 0x1>;
+ 				bits = <0 8>;
