@@ -31,12 +31,14 @@ about 2000 lines, most of it generated. `0004` wires up the display in amami's
 device tree and adds the battery profile. `0005` gives the charger a voltage
 reading and a battery percentage. `0006` stops the driver sending a scan message
 this firmware doesn't implement. `0007` adds the one registry group the sensor
-service needs before it will bring up the accelerometer.
+service needs before it will bring up the accelerometer. `0008` corrects the
+wcnss wifi interrupt type, which is what stopped wcn36xx ever being reloaded.
 
-Patches 1, 2 and 7 touch shared files, so they should help the Z1 (`honami`) and
-Z Ultra (`togari`) too, though I haven't tested either. `0007` is not
-amami-specific at all: it should fix the accelerometer on any msm8974 with
-sensors on the DSP.
+Patches 1, 2, 7 and 8 touch shared files, so they should help the Z1 (`honami`)
+and Z Ultra (`togari`) too, though I haven't tested either. Neither `0007` nor
+`0008` is amami-specific: the first should fix the accelerometer on any msm8974
+with sensors on the DSP, and the second fixes wcn36xx module reload on every
+msm8974 there is.
 
 ## Things that took a while to work out
 
@@ -178,9 +180,31 @@ having a capability bit for it. Confirmed absent by
 `hal_start_scan response failed err=5` still appears per channel during software
 scans. It is harmless; the scan completes and returns every network.
 
-Two traps worth knowing. Any HAL operation that times out wedges the driver so
-thoroughly that it cannot re-probe, failing with `-ENXIO: IRQ tx not found`, and
-only a reboot brings `wlan0` back. And do not set NetworkManager's
+**wcn36xx could never be reloaded, and `0008` fixes it.** Unloading the module
+and loading it again always failed:
+
+    irq: type mismatch, failed to map hwirq-177 for interrupt-controller@f9000000!
+    wcn36xx ...:wcnss:wifi: error -ENXIO: IRQ tx not found
+
+`qcom-msm8974.dtsi` declares the wcnss wifi interrupts `IRQ_TYPE_EDGE_RISING`,
+while the driver requests them with `IRQF_TRIGGER_HIGH`. The first probe maps
+them edge-triggered from the device tree and `request_irq` then quietly changes
+the type to level-high; `free_irq` leaves the mapping in place, so the next probe
+asks for edge-rising, finds a level-high mapping and is refused.
+
+The device tree is the side that is wrong. apq8064, msm8917 and msm8953 all
+declare these interrupts `IRQ_TYPE_LEVEL_HIGH`, and msm8917 and msm8953 use the
+same GIC lines 145 and 146 that msm8974 does, so msm8974 is the only one out of
+step with both its siblings and the driver. Fixing the device tree rather than
+the driver also keeps the trigger type exactly what it already was in practice,
+so a working radio does not get switched to edge-triggered as a side effect.
+
+This is why a HAL timeout used to mean a reboot. The timeout itself was never
+the unrecoverable part - it tore the driver down, and nothing could bring it back.
+With `0008` a reload works, twice in a row, and NetworkManager reconnects on its
+own with the same lease.
+
+Do not set NetworkManager's
 `cloned-mac-address=permanent`: this device has no valid permanent MAC in its NV
 data, so the interface then refuses to come up at all with `EADDRNOTAVAIL`. The
 random locally-administered MAC isn't cosmetic, it's required.
