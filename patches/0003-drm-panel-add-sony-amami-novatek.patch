@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-sony-amami-novatek.c
-@@ -0,0 +1,2054 @@
+@@ -0,0 +1,2040 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Sony Xperia Z1 Compact (amami) Novatek 720p video mode DSI panel
@@ -1845,21 +1845,6 @@
 +	return dsi_ctx.accum_err;
 +}
 +
-+static int amami_novatek_off(struct amami_novatek *ctx)
-+{
-+	struct mipi_dsi_device *dsi = ctx->dsi;
-+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
-+
-+	/* low-power mode: see the note in amami_novatek_disable() */
-+	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
-+
-+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_ENTER_SLEEP_MODE);
-+	/* DCS requires >=120ms after sleep-in; leave extra margin */
-+	mipi_dsi_msleep(&dsi_ctx, 150);
-+
-+	return dsi_ctx.accum_err;
-+}
-+
 +static int amami_novatek_prepare(struct drm_panel *panel)
 +{
 +	struct amami_novatek *ctx = to_amami_novatek(panel);
@@ -1899,15 +1884,22 @@
 +	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 +
 +	/*
-+	 * Send the shutdown commands in low-power mode. In HS mode the msm DSI
-+	 * host waits for a completed video frame before each transfer, which
-+	 * times out (-110) while the stream is being torn down and stalls every
-+	 * modeset/VT switch for 10s a piece.
++	 * Both shutdown commands go out here rather than in unprepare(). By the
++	 * time unprepare() runs, mdp5_vid_encoder_disable() has already cleared
++	 * INTF_TIMING_ENGINE_EN, yet the DSI host still reads the video engine
++	 * as busy: it waits 70ms for a video-done that will not come, then the
++	 * command DMA - which a video-mode link only transmits during blanking -
++	 * times out after another 200ms with -110. Low-power mode because in HS
++	 * each transfer stalls the modeset for seconds. Downstream sends 0x28
++	 * and 0x10 together here too.
 +	 */
 +	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 +
 +	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_DISPLAY_OFF);
 +	mipi_dsi_msleep(&dsi_ctx, 20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_ENTER_SLEEP_MODE);
++	/* DCS requires >=120ms after sleep-in, before reset or a sleep-out */
++	mipi_dsi_msleep(&dsi_ctx, 150);
 +
 +	return dsi_ctx.accum_err;
 +}
@@ -1915,12 +1907,6 @@
 +static int amami_novatek_unprepare(struct drm_panel *panel)
 +{
 +	struct amami_novatek *ctx = to_amami_novatek(panel);
-+	struct device *dev = &ctx->dsi->dev;
-+	int ret;
-+
-+	ret = amami_novatek_off(ctx);
-+	if (ret < 0)
-+		dev_err(dev, "Failed to un-initialize panel: %d\n", ret);
 +
 +	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 +	gpiod_set_value_cansleep(ctx->enable_gpio, 0);

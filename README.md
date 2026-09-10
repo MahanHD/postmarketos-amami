@@ -27,7 +27,8 @@ They go on top of `linux-postmarketos-qcom-msm8974` 6.16.12 from
 two touchscreen problems (wrong I/O rail, far too short a startup delay). `0002`
 adds a `scan_offload` module parameter to wcn36xx, which `0010` has made
 unnecessary and which is kept only as a debugging escape hatch. `0003` is the panel driver,
-about 2000 lines, most of it generated. `0004` wires up the display in amami's
+about 2000 lines, most of it generated; it also sends the panel's shutdown
+commands early enough that the DSI host can still transmit them. `0004` wires up the display in amami's
 device tree and adds the battery profile. `0005` gives the charger a voltage
 reading and a battery percentage. `0006` stops the driver sending a scan message
 this firmware doesn't implement. `0007` adds the one registry group the sensor
@@ -453,8 +454,45 @@ assignment. The two disagree from then on, and the next release trips the `WARN`
 which is safe because a disabled plane never legitimately owns one. Four cycles
 afterwards, including through logind, give `success=4 fail=0`.
 
-Two cosmetic things still happen every cycle: the panel's un-initialize DCS write
-times out with `-110` going down, and MDP5 logs one underrun coming back up.
+**The panel's shutdown DCS write always timed out.** Going down, every cycle
+logged `wait for video done timed out`, then `cmd dma tx failed, type=0x5,
+data0=0x10, ret=-110`, then `Failed to un-initialize panel: -110`. `0x10` is
+`ENTER_SLEEP_MODE`, sent from the panel's `unprepare()`.
+
+It could never have worked there. `disable_outputs()` runs the bridge chain's
+`disable` (panel `disable()`), then the encoder's, then the chain's `post_disable`
+(panel `unprepare()`) - and the encoder's is `mdp5_vid_encoder_disable`, which
+clears `INTF_TIMING_ENGINE_EN`. By `unprepare()` the video stream is stopped, but
+the DSI host is still `enabled`/`power_on` and `STATUS0` still reads
+`VIDEO_MODE_ENGINE_BUSY`, so `dsi_wait4video_eng_busy()` waits 70ms for a
+video-done that will never arrive, and the command DMA - which a video-mode link
+only transmits during blanking - then times out after another 200ms.
+
+`0003` now sends both `SET_DISPLAY_OFF` and `ENTER_SLEEP_MODE` from `disable()`,
+while the timing engine is still running. Downstream does the same: Sony's
+`qcom,mdss-dsi-off-command` is `28` and `10` in one batch, issued before the
+controller is stopped.
+
+The timeout was also hiding a second bug. `mipi_dsi_msleep()` is a no-op once
+`accum_err` is set, so the failed sleep-in skipped the 150ms settling delay that
+follows it and the panel was reset immediately - the delay the code existed to
+honour was the one thing it did not do. Measured over `device_pm_callback`
+tracepoints, `msm_mdp fd900100.display-controller [suspend]` goes from 373.7ms to
+272.9ms, and four cycles log no DSI errors at all.
+
+**The resume underrun is not a suspend bug.** MDP5 logs one
+`mdp5_irq_error_handler: errors: 04000000` (`INTF1_UNDER_RUN`) per cycle, but a
+plain `xset dpms force off; xset dpms force on` produces exactly one too - three
+DPMS cycles, three underruns. It fires 690ms into the resume callback, at the
+encoder enable rather than when the clocks come back, so it is a real first-frame
+underflow and not a stale status bit. The bandwidth vote is in place and unchanged
+across suspend (`mas_mdp_port0` peak 6400 MB/s, from `fd900100.display-controller`)
+and the clocks are at maximum (mdp 320MHz, AXI 400MHz). What is left is the order
+in `mdp5_vid_encoder_enable`: `INTF_TIMING_ENGINE_EN` is written before
+`mdp5_ctl_commit()` flushes the pipe and mixer, so the interface asks for pixels
+just before the configuration lands. That is generic MDP5 code shared by every
+SoC that uses it, it costs one frame while the panel has not latched video yet,
+and it is left alone deliberately.
 
 ## Debugging notes
 
