@@ -1,0 +1,45 @@
+--- a/drivers/net/wireless/ath/wcn36xx/smd.c	2026-09-10 12:46:04.715001279 +0400
++++ b/drivers/net/wireless/ath/wcn36xx/smd.c	2026-09-10 12:46:04.727143751 +0400
+@@ -20,6 +20,7 @@
+ #include <linux/etherdevice.h>
+ #include <linux/firmware.h>
+ #include <linux/bitops.h>
++#include <linux/moduleparam.h>
+ #include <linux/rpmsg.h>
+ #include "smd.h"
+ #include "firmware.h"
+@@ -836,6 +837,20 @@
+ 	return ret;
+ }
+ 
++/*
++ * Debug aid. The offloaded scan request ends with a variable length IE block,
++ * a later addition to this HAL, so allow the tail to be trimmed at runtime and
++ * the firmware's tolerance of the message length probed without rebuilding:
++ *
++ *   0 - send the IEs as usual
++ *   1 - send no IEs, keep the ie_len field
++ *   2 - send no IEs and drop the ie_len field as well
++ */
++static unsigned int scan_ie_mode;
++module_param(scan_ie_mode, uint, 0644);
++MODULE_PARM_DESC(scan_ie_mode,
++		 "trim the offload scan request: 0 normal, 1 no IEs, 2 no IEs or ie_len");
++
+ int wcn36xx_smd_start_hw_scan(struct wcn36xx *wcn, struct ieee80211_vif *vif,
+ 			      struct cfg80211_scan_request *req)
+ {
+@@ -880,10 +895,12 @@
+ 
+ 	msg_body->header.len -= WCN36XX_MAX_SCAN_IE_LEN;
+ 
+-	if (req->ie_len > 0) {
++	if (scan_ie_mode == 0 && req->ie_len > 0) {
+ 		msg_body->ie_len = req->ie_len;
+ 		msg_body->header.len += req->ie_len;
+ 		memcpy(msg_body->ie, req->ie, req->ie_len);
++	} else if (scan_ie_mode >= 2) {
++		msg_body->header.len -= sizeof(msg_body->ie_len);
+ 	}
+ 
+ 	PREPARE_HAL_BUF(wcn->hal_buf, (*msg_body));

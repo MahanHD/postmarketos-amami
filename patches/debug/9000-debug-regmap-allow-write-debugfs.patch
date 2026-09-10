@@ -1,0 +1,15 @@
+Local debug-only change: allow writing registers through regmap debugfs so the
+PM8941 WLED sink configuration can be poked at runtime instead of needing a
+kernel rebuild per experiment. Not intended for upstream or for the repo.
+
+--- a/drivers/base/regmap/regmap-debugfs.c
++++ b/drivers/base/regmap/regmap-debugfs.c
+@@ -290,7 +290,7 @@
+ 				   count, ppos);
+ }
+ 
+-#undef REGMAP_ALLOW_WRITE_DEBUGFS
++#define REGMAP_ALLOW_WRITE_DEBUGFS
+ #ifdef REGMAP_ALLOW_WRITE_DEBUGFS
+ /*
+  * This can be dangerous especially when we have clients such as

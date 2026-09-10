@@ -1,0 +1,43 @@
+--- a/drivers/soc/qcom/qcom_sns_reg.c	2026-09-10 02:25:32.714493280 +0400
++++ b/drivers/soc/qcom/qcom_sns_reg.c	2026-09-10 02:26:11.261381077 +0400
+@@ -179,11 +179,40 @@
+ 	{ /* sentinel */}
+ };
+ 
++/*
++ * Debug aid for finding the registry offset of a group that isn't in the map
++ * above. The DSP asks msm8974 for group 2691 and gets a failure, and the
++ * accelerometer never appears as a result. Rather than rebuild for every
++ * candidate offset, let one extra mapping be supplied at load time:
++ *
++ *   modprobe qcom_sns_reg extra_gid=2691 extra_offset=0x1600 extra_size=0x100
++ */
++static unsigned short extra_gid;
++static unsigned int extra_offset;
++static unsigned int extra_size = 0x100;
++module_param(extra_gid, ushort, 0644);
++MODULE_PARM_DESC(extra_gid, "group id to add to the static map, 0 to disable");
++module_param(extra_offset, uint, 0644);
++MODULE_PARM_DESC(extra_offset, "offset of that group within sns.reg");
++module_param(extra_size, uint, 0644);
++MODULE_PARM_DESC(extra_size, "size of that group in bytes");
++
++static struct group_map_entry extra_entry;
++
+ static const struct group_map_entry *group_map_entry_by_id(short gid)
+ {
+ 	const struct group_map_entry *entry;
+ 	int index = 0;
+ 
++	if (extra_gid && gid == (short)extra_gid) {
++		extra_entry.group_id = extra_gid;
++		extra_entry.offset = extra_offset;
++		extra_entry.size = extra_size;
++		pr_warn("qcom_sns_reg: serving group %u from offset %#x size %#x\n",
++			extra_gid, extra_offset, extra_size);
++		return &extra_entry;
++	}
++
+ 	while ((entry = &group_map[index++])->size)
+ 		if (entry->group_id == gid)
+ 			return entry;
