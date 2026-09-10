@@ -1,0 +1,12 @@
+--- a/drivers/net/wireless/ath/wcn36xx/hal.h	2026-09-10 12:27:38.745721543 +0400
++++ b/drivers/net/wireless/ath/wcn36xx/hal.h	2026-09-10 12:27:38.761389202 +0400
+@@ -1262,7 +1262,8 @@
+ 
+ enum wcn36xx_hal_scan_type {
+ 	WCN36XX_HAL_SCAN_TYPE_PASSIVE = 0x00,
+-	WCN36XX_HAL_SCAN_TYPE_ACTIVE = WCN36XX_HAL_MAX_ENUM_SIZE
++	WCN36XX_HAL_SCAN_TYPE_ACTIVE = 0x01,
++	WCN36XX_HAL_SCAN_TYPE_MAX = WCN36XX_HAL_MAX_ENUM_SIZE
+ };
+ 
+ struct wcn36xx_hal_mac_ssid {

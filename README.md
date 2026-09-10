@@ -33,6 +33,8 @@ reading and a battery percentage. `0006` stops the driver sending a scan message
 this firmware doesn't implement. `0007` adds the one registry group the sensor
 service needs before it will bring up the accelerometer. `0008` corrects the
 wcnss wifi interrupt type, which is what stopped wcn36xx ever being reloaded.
+`0009` gives the active scan type a real value instead of an enum padding
+constant.
 
 Patches 1, 2, 7 and 8 touch shared files, so they should help the Z1 (`honami`)
 and Z Ultra (`togari`) too, though I haven't tested either. Neither `0007` nor
@@ -179,6 +181,27 @@ having a capability bit for it. Confirmed absent by
 
 `hal_start_scan response failed err=5` still appears per channel during software
 scans. It is harmless; the scan completes and returns every network.
+
+**The offloaded scan path sends a nonsense scan type, and `0009` fixes that -
+but it is not why the firmware stays quiet.** `hal.h` had
+
+    enum wcn36xx_hal_scan_type {
+            WCN36XX_HAL_SCAN_TYPE_PASSIVE = 0x00,
+            WCN36XX_HAL_SCAN_TYPE_ACTIVE = WCN36XX_HAL_MAX_ENUM_SIZE
+    };
+
+`WCN36XX_HAL_MAX_ENUM_SIZE` is `0x7FFFFFFF`, the padding constant every other
+enum in that header uses for its unused `_MAX` member. Here it had been given to
+a real value, so every offloaded scan asked for scan type `0x7FFFFFFF`. It is the
+only place `scan_type` is set in the whole driver.
+
+Fixing it puts `01 00 00 00` on the wire, confirmed in the SMD dump, and the
+firmware still never answers request 204. So the wrong scan type was a genuine
+bug worth correcting, but the timeout has another cause and
+`options wcn36xx scan_offload=0` is still needed. What is now established is that
+the firmware advertises SCAN_OFFLOAD honestly, answers other requests in 0 ms
+while ignoring this one entirely, and receives a request whose every other field
+decodes correctly against the struct.
 
 **wcn36xx could never be reloaded, and `0008` fixes it.** Unloading the module
 and loading it again always failed:
