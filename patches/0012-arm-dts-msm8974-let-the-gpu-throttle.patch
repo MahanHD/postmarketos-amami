@@ -1,0 +1,58 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi	2026-09-10 14:43:21.179052799 +0400
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi	2026-09-10 14:43:21.188316604 +0400
+@@ -10,6 +10,7 @@
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
+ #include <dt-bindings/power/qcom-rpmpd.h>
+ #include <dt-bindings/reset/qcom,gcc-msm8974.h>
++#include <dt-bindings/thermal/thermal.h>
+ 
+ / {
+ 	#address-cells = <1>;
+@@ -2175,6 +2176,7 @@
+ 			sram = <&gmu_sram>;
+ 			power-domains = <&mmcc OXILICX_GDSC>;
+ 			operating-points-v2 = <&gpu_opp_table>;
++			#cooling-cells = <2>;
+ 
+ 			interconnects = <&mmssnoc MNOC_MAS_GRAPHICS_3D &bimc BIMC_SLV_EBI_CH0>,
+ 					<&ocmemnoc OCMEM_VNOC_MAS_GFX3D &ocmemnoc OCMEM_SLV_OCMEM>;
+@@ -2411,7 +2413,19 @@
+ 
+ 			thermal-sensors = <&tsens 9>;
+ 
++			cooling-maps {
++				map0 {
++					trip = <&gpu1_passive>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++
+ 			trips {
++				gpu1_passive: gpu-passive {
++					temperature = <75000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
+ 				gpu1_alert0: trip-point0 {
+ 					temperature = <90000>;
+ 					hysteresis = <2000>;
+@@ -2426,7 +2440,19 @@
+ 
+ 			thermal-sensors = <&tsens 10>;
+ 
++			cooling-maps {
++				map0 {
++					trip = <&gpu2_passive>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++
+ 			trips {
++				gpu2_passive: gpu-passive {
++					temperature = <75000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
+ 				gpu2_alert0: trip-point0 {
+ 					temperature = <90000>;
+ 					hysteresis = <2000>;

@@ -39,7 +39,8 @@ wcnss wifi interrupt type, which is what stopped wcn36xx ever being reloaded.
 constant. `0010` makes the offloaded scan depend on the capability bit that
 actually describes it, which removes the need for `scan_offload=0`. `0011` stops
 MDP5 carrying a stale hardware pipe across a suspend, which is what made the
-second suspend fail and every one after it.
+second suspend fail and every one after it. `0012` gives the GPU a cooling map,
+so the thermal zone can actually throttle it.
 
 `patches/debug/` holds the diagnostic patches, numbered from 9000 so they apply
 last. They are not meant for a build you use day to day, but each one answered a
@@ -48,10 +49,11 @@ question from inside the kernel that could not be answered from outside, and
 own README.
 
 Patches 1, 2, 7 and 8 touch shared files, so they should help the Z1 (`honami`)
-and Z Ultra (`togari`) too, though I haven't tested either. `0007`, `0008`, `0009`, `0010` and `0011` are not amami-specific at all: `0007` should fix
-the accelerometer on any msm8974 with sensors on the DSP, `0008` fixes wcn36xx
-module reload on every msm8974, `0009` and `0010` apply to every device the
-wcn36xx driver supports, and `0011` applies to every display running on MDP5.
+and Z Ultra (`togari`) too, though I haven't tested either. `0007` through `0012` are not amami-specific at all: `0007` should fix
+the accelerometer on any msm8974 with sensors on the DSP, `0008` and `0012` apply to
+every msm8974 -- `0008` fixes wcn36xx module reload, `0012` the missing GPU cooling
+map -- `0009` and `0010` apply to every device the wcn36xx driver supports, and
+`0011` to every display running on MDP5.
 
 ## Things that took a while to work out
 
