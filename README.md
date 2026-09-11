@@ -43,7 +43,9 @@ so the thermal zone can actually throttle it. `0013` fixes the WLED3 brightness
 register stride, which had been leaving all but the last backlight string dark.
 `0014` gives the HFPLL driver its msm8974 configuration and `0015` wires up the
 Krait clock tree, which together give the CPU frequency scaling for the first
-time.
+time. `0016` does for the CPU what `0012` did for the GPU: the four `cpuN-thermal`
+zones had a passive trip and nothing to act on it, so the only response to heat
+was the 110 C emergency poweroff.
 
 `patches/debug/` holds the diagnostic patches, numbered from 9000 so they apply
 last. They are not meant for a build you use day to day, but each one answered a
@@ -57,7 +59,8 @@ the accelerometer on any msm8974 with sensors on the DSP, `0008` and `0012` appl
 every msm8974 -- `0008` fixes wcn36xx module reload, `0012` the missing GPU cooling
 map -- `0009` and `0010` apply to every device the wcn36xx driver supports,
 `0011` to every display running on MDP5, and `0013` to every WLED3 device with
-more than one backlight string.
+more than one backlight string. `0016` needs `0015` to be useful, but is otherwise
+generic msm8974 as well.
 
 ## Things that took a while to work out
 
@@ -549,6 +552,32 @@ busy loop forking `date` every iteration and letting the core idle. With a spinn
 that does not fork, perf reads 307, 576 and 961MHz against 300, 576 and 960 asked
 for. Under four-core load at 960MHz the CPUs settle at 62-63C, well under the 75C
 passive trip.
+
+**The passive trip was bound to nothing.** All four `cpuN-thermal` zones already
+carried a 75C `passive` trip and a 110C `critical` one, but with no `cooling-maps`
+the passive trip did nothing at all and the only response to heat was the emergency
+poweroff. `0016` adds the maps, and `CONFIG_CPU_THERMAL` had to be turned on with
+them.
+
+The shape of that patch follows from who registers the cooling device. It is not
+`cpufreq-dt`: the cpufreq core does it, in `cpufreq_online()`, for any driver
+carrying `CPUFREQ_IS_COOLING_DEV`, and it resolves the node with
+`of_get_cpu_node(policy->cpu)`. `0015` made the OPP table `opp-shared`, so the four
+Kraits are one policy whose leader is CPU0, and exactly one cooling device exists.
+So `#cooling-cells` belongs on `cpu0` alone - putting it on the other three would
+advertise cooling devices that never get registered - and all four zones map their
+passive trip to `&cpu0`. That is the right answer anyway: `thermal_cdev_update()`
+takes the highest state any zone asks for, so the hottest core throttles the
+cluster, which is what you want when one policy sets all four clocks together.
+
+Verifying it needed `CONFIG_THERMAL_EMULATION`, because the trip is unreachable:
+four-core load at the 960MHz ceiling tops out at 56-57C, nearly 20C short. Driven
+through `emul_temp` the zone walks the whole ladder, 76C through 90C mapping onto
+states 1 to 8 and 883.2MHz down to 300MHz, and releases back to 960MHz below the
+trip's 2C hysteresis. Any of the four zones drives it, not just CPU0's. The cost is
+that `emul_temp` also lets root feed the thermal core a fake *low* reading and mask
+the 110C trip, so it is a knob worth removing once the ceiling is raised far enough
+to reach 75C honestly.
 
 ## Debugging notes
 

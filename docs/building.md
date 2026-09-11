@@ -38,7 +38,7 @@ without it gets you no further. `DEVFREQ_THERMAL` is optional and registers the
 GPU as a cooling device. With all three, `/sys/class/devfreq/fdb00000.gpu` turns
 up and the Adreno moves between 27, 200 and 320 MHz.
 
-CPU frequency scaling needs three more, and no others: the prerequisites
+CPU frequency scaling needs four more, and no others: the prerequisites
 (`QCOM_SMEM`, `NVMEM_QCOM_QFPROM`) are already on.
 
     CONFIG_QCOM_HFPLL=y
@@ -52,6 +52,26 @@ CPU frequency scaling needs three more, and no others: the prerequisites
 `/sys/devices/system/cpu/cpufreq/policy0` covering all four cores. `scaling_driver`
 reads `cpufreq-dt`, which is correct - `qcom-cpufreq-nvmem` reads the speed bin,
 applies the OPP filter and then registers `cpufreq-dt` to do the actual work.
+
+CPU thermal throttling (`0016`) needs two more, plus two that are only for testing
+it:
+
+    CONFIG_CPU_THERMAL=y
+    CONFIG_CPU_FREQ_THERMAL=y
+    CONFIG_THERMAL_STATISTICS=y
+    CONFIG_THERMAL_EMULATION=y
+
+`CPU_FREQ_THERMAL` defaults to `y` once `CPU_THERMAL` is on, but set it explicitly
+so the config file says what it means. `THERMAL_STATISTICS` adds
+`cooling_device*/stats/`, which is how you tell afterwards whether anything actually
+throttled. `THERMAL_EMULATION` adds `thermal_zone*/emul_temp`, which is the only way
+to reach the 75C trip on a device that peaks at 57C; it also lets root fake a low
+reading and mask the 110C critical trip, so drop it if that matters more than being
+able to test.
+
+With all four on, expect one `cpufreq-cpu0` cooling device with `max_state` 8, and
+each of `thermal_zone5` through `thermal_zone8` (`cpu0`- through `cpu3-thermal`)
+showing a `cdev0` pointing at it with `cdev0_trip_point` 0.
 
 The Adreno firmware has to be built into the kernel image rather than loaded from
 `/lib/firmware`, because DRM_MSM probes from the initramfs before the rootfs is
