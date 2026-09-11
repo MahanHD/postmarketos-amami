@@ -719,6 +719,29 @@ Measuring draw needs the USB cable **out**. On USB the battery floats: the exter
 sense resistor sees only noise, current does not respond to load at all, and
 `capacity` barely moves. Use WiFi for the session instead.
 
+## Why idle costs 252 mA, and why suspend is shallow
+
+These are the same fact twice. `/sys/power/mem_sleep` offers only `[s2idle]`, so
+`mem` quietly falls back to freeze, and that is not something waiting to be switched
+on: for `deep` to exist something has to call `suspend_set_ops()` with
+`PM_SUSPEND_MEM`, and **nothing in mainline does for Qualcomm ARM32**. There is no
+`suspend_set_ops` anywhere under `drivers/soc/qcom`, `drivers/firmware` or
+`arch/arm/mach-qcom`, and that last directory contains only `Kconfig`, `Makefile` and
+`platsmp.c`. `CONFIG_ARM_PSCI` is off as well, so there is no firmware route either.
+
+So the cores power-collapse individually - `cpu_spc` logged 35000 entries in a
+20-minute soak - while the SoC around them never does. The RPM stays up, the rails
+stay where they are, DDR stays refreshed and the clocks keep running. 252 mA with the
+screen off is that, not a runaway. Worth stating because it looked like a bug: the
+wakeup sources are clean, nothing holds a wakelock (`fe200000.remoteproc` accounts
+for 575 ms in total and is not active), and at idle the only notable interrupt
+sources are the arch timer, the eMMC and WiFi receive.
+
+Closing the gap means writing platform suspend ops, driving the SPM for system-wide
+power collapse rather than the per-core standalone kind, and coordinating with the
+RPM to drop rails. That is a project on the scale of the GPU IOMMU. It is the single
+biggest lever on battery life that remains.
+
 ## The GPU IOMMU, and why it is parked
 
 `msm.vram=192m` costs 192MB on a 2GB phone, and an IOMMU would give it back.
