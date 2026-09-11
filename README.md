@@ -58,11 +58,6 @@ possible.
 support and are kept here because the device-tree data in them was expensive to
 recover; see the IOMMU section below for why they are parked.
 
-`0030` adds an ambient light channel to the proximity driver. It is **not confirmed
-working**: the channel appears correctly in sysfs, but sensor 0x28 never delivers a
-report at all, so there is nothing to validate it against. See the sensor section
-below.
-
 `0028` stops the sensor manager registering the same sensor twice, and `0029` fixes
 an `ocmem` bit-number/bitmask mixup. Neither is amami-specific.
 
