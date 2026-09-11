@@ -1,0 +1,27 @@
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -531,6 +531,24 @@
+ 
+ 	/* Get primary and secondary sensors from each sensor ID */
+ 	for (i = 0; i < smgr->sensor_count; i++) {
++		bool seen = false;
++
++		/*
++		 * The service lists some IDs more than once. Registering an ID
++		 * twice collides in sysfs, and while the error is not fatal -
++		 * the return below is deliberately not checked - it costs a
++		 * round trip to the DSP per repeat and leaves a backtrace in
++		 * every boot log.
++		 */
++		for (j = 0; j < i; j++) {
++			if (smgr->sensors[j].id == smgr->sensors[i].id) {
++				seen = true;
++				break;
++			}
++		}
++		if (seen)
++			continue;
++
+ 		ret = qcom_smgr_request_single_sensor_info(smgr,
+ 							   &smgr->sensors[i]);
+ 		if (ret < 0) {

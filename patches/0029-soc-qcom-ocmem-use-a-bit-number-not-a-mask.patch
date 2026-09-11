@@ -1,0 +1,29 @@
+--- a/drivers/soc/qcom/ocmem.c
++++ b/drivers/soc/qcom/ocmem.c
+@@ -222,7 +222,7 @@
+ 	if (size < OCMEM_MIN_ALLOC || !IS_ALIGNED(size, OCMEM_MIN_ALIGN))
+ 		return ERR_PTR(-EINVAL);
+ 
+-	if (test_and_set_bit_lock(BIT(client), &ocmem->active_allocations))
++	if (test_and_set_bit_lock(client, &ocmem->active_allocations))
+ 		return ERR_PTR(-EBUSY);
+ 
+ 	struct ocmem_buf *buf __free(kfree) = kzalloc(sizeof(*buf), GFP_KERNEL);
+@@ -257,7 +257,7 @@
+ 	return_ptr(buf);
+ 
+ err_unlock:
+-	clear_bit_unlock(BIT(client), &ocmem->active_allocations);
++	clear_bit_unlock(client, &ocmem->active_allocations);
+ 
+ 	return ERR_PTR(ret);
+ }
+@@ -286,7 +286,7 @@
+ 
+ 	kfree(buf);
+ 
+-	clear_bit_unlock(BIT(client), &ocmem->active_allocations);
++	clear_bit_unlock(client, &ocmem->active_allocations);
+ }
+ EXPORT_SYMBOL_GPL(ocmem_free);
+ 

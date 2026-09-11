@@ -58,6 +58,9 @@ possible.
 support and are kept here because the device-tree data in them was expensive to
 recover; see the IOMMU section below for why they are parked.
 
+`0028` stops the sensor manager registering the same sensor twice, and `0029` fixes
+an `ocmem` bit-number/bitmask mixup. Neither is amami-specific.
+
 `patches/debug/` holds the diagnostic patches, numbered from 9000 so they apply
 last. They are not meant for a build you use day to day, but each one answered a
 question from inside the kernel that could not be answered from outside, and
