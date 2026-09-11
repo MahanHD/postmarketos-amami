@@ -1,0 +1,54 @@
+--- a/drivers/iommu/arm/arm-smmu/qcom_iommu.c
++++ b/drivers/iommu/arm/arm-smmu/qcom_iommu.c
+@@ -785,6 +785,43 @@
+ 	return false;
+ }
+ 
++/*
++ * Instances TrustZone does not own have to be configured from the non-secure
++ * side. Downstream does it by replaying a table of register/value pairs carried
++ * in the device tree, which mainline never applies - and without it the msm8974
++ * GPU IOMMU translates but the GPU behind it never reaches idle. No halt is
++ * needed here: nothing is translating yet at probe.
++ */
++static void qcom_iommu_bfb_settings(struct qcom_iommu_dev *qcom_iommu,
++				    struct device_node *np)
++{
++	struct device *dev = qcom_iommu->dev;
++	int nregs, ndata, i;
++
++	nregs = of_property_count_u32_elems(np, "qcom,iommu-bfb-regs");
++	if (nregs <= 0)
++		return;
++
++	ndata = of_property_count_u32_elems(np, "qcom,iommu-bfb-data");
++	if (ndata != nregs) {
++		dev_err(dev, "bfb regs/data length mismatch (%d vs %d)\n",
++			nregs, ndata);
++		return;
++	}
++
++	for (i = 0; i < nregs; i++) {
++		u32 off, data;
++
++		if (of_property_read_u32_index(np, "qcom,iommu-bfb-regs", i, &off) ||
++		    of_property_read_u32_index(np, "qcom,iommu-bfb-data", i, &data))
++			break;
++
++		writel_relaxed(data, qcom_iommu->local_base + off);
++	}
++
++	dev_info(dev, "applied %d bfb settings\n", i);
++}
++
+ static int qcom_iommu_device_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *child;
+@@ -894,6 +931,7 @@
+ 
+ 	if (qcom_iommu->local_base) {
+ 		pm_runtime_get_sync(dev);
++		qcom_iommu_bfb_settings(qcom_iommu, dev->of_node);
+ 		writel_relaxed(0xffffffff, qcom_iommu->local_base + SMMU_INTR_SEL_NS);
+ 		pm_runtime_put_sync(dev);
+ 	}

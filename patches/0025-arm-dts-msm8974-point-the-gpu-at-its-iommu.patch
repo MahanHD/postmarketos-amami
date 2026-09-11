@@ -15,3 +15,22 @@
  			status = "disabled";
  
  			gpu_opp_table: opp-table {
+@@ -2373,6 +2381,18 @@
+ 			interrupts = <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH>;
+ 			power-domains = <&mmcc OXILICX_GDSC>;
+ 
++			/*
++			 * Verbatim from downstream's kgsl_iommu node. TrustZone
++			 * does not own this IOMMU, so these have to be written
++			 * from here or the GPU never comes up behind it.
++			 */
++			qcom,iommu-bfb-regs = <0x204c 0x2050 0x2514 0x2540
++					       0x256c 0x20ac 0x215c 0x220c
++					       0x2314 0x2394 0x2414 0x2008>;
++			qcom,iommu-bfb-data = <0x3 0x0 0x4 0x10
++					       0x0 0x0 0x1 0x21
++					       0x0 0x1 0x81 0x0>;
++
+ 			/* gfx3d_user */
+ 			iommu-ctx@1000 {
+ 				compatible = "qcom,msm-iommu-v1-ns";

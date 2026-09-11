@@ -54,7 +54,7 @@ comparator refuses to charge at all. `0023` fixes the current ADC, which had bee
 an amp and mangling the sign on discharge; it is what made any power measurement
 possible.
 
-`0017`, `0018`, `0019` and `0025` are **not in the build**. They are the start of GPU IOMMU
+`0017` through `0019`, `0025`, `0026` and `0027` are **not in the build**. They are the start of GPU IOMMU
 support and are kept here because the device-tree data in them was expensive to
 recover; see the IOMMU section below for why they are parked.
 
@@ -744,9 +744,21 @@ succeeds.
 translates, `a3xx_hw_init` reports `timeout waiting for GPU to idle!` and
 `adreno_load_gpu` fails with `-22`, so mesa falls back from `FD330` to `llvmpipe`.
 Every software step passes first - attach, address space, OCMEM, interconnects,
-firmware. The next suspect is the non-secure BFB init that downstream performs from
-`qcom,iommu-bfb-regs`/`-data` and mainline never does, which is precisely what the
-prior art's `#if 0` block held.
+firmware, and now the BFB settings too.
+
+Three explanations have been tried and none of them is it. OCMEM contention was
+ruled out by instrumentation, which shows it allocating cleanly with `active=0x0`.
+The idea that mainline's `0xffffffff` write to `SMMU_INTR_SEL_NS` is really setting
+a halt bit - the prior art uses the same 0x2000 offset as `MICRO_MMU_CTRL`, bit 2
+halt-request - was ruled out by skipping the write, which changed nothing; so those
+offsets should be treated as unverified. And `0027` applies downstream's non-secure
+BFB table from `qcom,iommu-bfb-regs`/`-data`, reporting `applied 12 bfb settings`,
+with the GPU failing identically.
+
+Whatever stops the GPU idling is somewhere else. Things not yet eliminated: whether
+`iommus` should name one context bank rather than two, whether the aperture the
+address space is built over suits a3xx, and whether faults are being raised but never
+reported.
 
 **And the prize is not where it looked.** `msm_use_mmu()` tests
 `device_iommu_mapped(dev->dev) || device_iommu_mapped(dev->dev->parent)`, where
