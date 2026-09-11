@@ -1,0 +1,56 @@
+--- a/drivers/iio/adc/qcom-spmi-iadc.c
++++ b/drivers/iio/adc/qcom-spmi-iadc.c
+@@ -10,6 +10,7 @@
+ #include <linux/iio/iio.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel.h>
++#include <linux/math64.h>
+ #include <linux/mutex.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -311,8 +312,9 @@
+ 			 int *val, int *val2, long mask)
+ {
+ 	struct iadc_chip *iadc = iio_priv(indio_dev);
+-	s32 isense_ua, vsense_uv;
+-	u16 adc_raw, vsense_raw;
++	s32 isense_ua, vsense_raw;
++	s64 vsense_uv;
++	u16 adc_raw;
+ 	int ret;
+ 
+ 	switch (mask) {
+@@ -323,14 +325,26 @@
+ 		if (ret < 0)
+ 			return ret;
+ 
+-		vsense_raw = adc_raw - iadc->offset[chan->channel];
++		/*
++		 * Discharge reads below the offset, so this difference is
++		 * routinely negative and must not be taken in an unsigned type.
++		 */
++		vsense_raw = (s32)adc_raw - (s32)iadc->offset[chan->channel];
++
++		vsense_uv = (s64)vsense_raw * IADC_REF_GAIN_MICRO_VOLTS;
++		vsense_uv = div_s64(vsense_uv,
++				    (s32)iadc->gain - (s32)iadc->offset[chan->channel]);
++
++		/*
++		 * rsense is in micro Ohms and vsense in micro Volts, so their
++		 * quotient is amperes; scale it so the channel reports the
++		 * micro amps that IIO_CHAN_INFO_SCALE already assumes. Without
++		 * this every current below 1A truncates to zero.
++		 */
++		isense_ua = div_s64(vsense_uv * 1000000,
++				    iadc->rsense[chan->channel]);
+ 
+-		vsense_uv = vsense_raw * IADC_REF_GAIN_MICRO_VOLTS;
+-		vsense_uv /= (s32)iadc->gain - iadc->offset[chan->channel];
+-
+-		isense_ua = vsense_uv / iadc->rsense[chan->channel];
+-
+-		dev_dbg(iadc->dev, "off %d gain %d adc %d %duV I %duA\n",
++		dev_dbg(iadc->dev, "off %d gain %d adc %d %llduV I %duA\n",
+ 			iadc->offset[chan->channel], iadc->gain,
+ 			adc_raw, vsense_uv, isense_ua);
+ 

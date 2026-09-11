@@ -49,6 +49,10 @@ was the 110 C emergency poweroff. `0022` gives each Krait its own cpufreq policy
 which is both what the hardware actually looks like and what stops power collapse
 and frequency switching wedging cores when they run together.
 
+`0023` fixes the current ADC, which had been reporting zero for every current below
+an amp and mangling the sign on discharge; it is what made any power measurement
+possible.
+
 `0017`, `0018` and `0019` are **not in the build**. They are the start of GPU IOMMU
 support and are kept here because the device-tree data in them was expensive to
 recover; see the IOMMU section below for why they are parked.
@@ -640,6 +644,42 @@ pulled. **That third parameter is not optional**: `rcu_exp_cpu_stall_timeout` is
 milliseconds and defaults to 20, while its sibling `rcu_cpu_stall_timeout` is in
 seconds, so without it the kernel panics on the harmless ~3-jiffy expedited stall
 this device emits at about 36s of every boot.
+
+## What the phone actually draws
+
+There was no power measurement at all until `0023`, because the PM8941 current ADC
+reported a flat zero. Two bugs in `qcom-spmi-iadc.c`, both upstream:
+
+- `vsense_raw` is declared `u16`, and discharge reads *below* the calibration
+  offset. Every negative current underflowed into a huge positive one - the internal
+  channel was reporting a fictitious 363mV.
+- `vsense_uv / rsense` divides micro volts by micro Ohms, which yields **amperes**,
+  while the variable is named `isense_ua`, the debug print says uA, and
+  `IIO_CHAN_INFO_SCALE` is 0.001. Integer division then truncated anything below 1A
+  to zero, which is every current this phone ever draws.
+
+Fixing both gives a working ammeter, and the two independent sense resistors -
+internal and the 10 mOhm external one named in the device tree - agree within 5-7%,
+which is the reason to believe the numbers:
+
+| state | current | runtime on a 3140 mAh pack |
+|---|---|---|
+| idle, screen off | 252 mA | 12.5 h |
+| idle, screen on | 400 mA | 7.8 h |
+| four cores loaded, screen on | 689 mA | 4.6 h |
+
+The panel and its backlight cost **148 mA**, 37% of idle draw. Resolution is about
+0.55 mA per ADC count.
+
+Two caveats. These are *awake* figures; nothing here is a suspend number, and s2idle
+standby will be much lower. And `capacity` is derived from voltage through Sony's OCV
+table rather than counted, so it sags under load and recovers afterwards - it read
+91% idle, 83% under load, then 88% back at idle within a few minutes. Treat the
+percentage as an open-circuit estimate, not a fuel gauge.
+
+Measuring this needs the USB cable **out**. On USB the battery floats: the external
+sense resistor sees only noise, current does not respond to load at all, and
+`capacity` barely moves. Use WiFi for the session instead.
 
 ## The GPU IOMMU, and why it is parked
 
