@@ -45,9 +45,9 @@ register stride, which had been leaving all but the last backlight string dark.
 Krait clock tree, which together give the CPU frequency scaling for the first
 time. `0016` does for the CPU what `0012` did for the GPU: the four `cpuN-thermal`
 zones had a passive trip and nothing to act on it, so the only response to heat
-was the 110 C emergency poweroff. `0021` stops the CPUs using the `cpu_spc` idle
-state, because standalone power collapse and Krait frequency switching wedge cores
-when they run together.
+was the 110 C emergency poweroff. `0022` gives each Krait its own cpufreq policy,
+which is both what the hardware actually looks like and what stops power collapse
+and frequency switching wedging cores when they run together.
 
 `0017`, `0018` and `0019` are **not in the build**. They are the start of GPU IOMMU
 support and are kept here because the device-tree data in them was expensive to
@@ -616,11 +616,22 @@ reprograms every CPU's mux and HFPLL - including cores that are power-collapsed 
 that instant. Downstream does per-core DVFS coordinated with the SPM; there is no
 equivalent here.
 
-`0021` takes the conservative half: drop the `cpu-idle-states` reference so the SPM
-cpuidle driver finds no DT state, fails to register, and idle falls back to plain
-WFI. Frequency scaling keeps working. Validated with 5478 transitions under burst
-load over 22 minutes - nearly double what killed the unfixed kernel. Making the
-switching path safe against a collapsed core, and getting SPC back, is still open.
+**`0015` should never have said `opp-shared` in the first place.** That property
+asserts the CPUs share a clock domain and must change together. Each Krait has its
+own mux and its own HFPLL, so it is simply false here - and it is what dragged
+collapsed cores into every transition. `0022` drops it, which gives four independent
+policies, and adds the `#cooling-cells` and per-zone cooling maps that `0016` now
+needs on all four CPUs rather than only CPU0.
+
+The first attempt at this shipped as `0021`, which disabled `cpu_spc` outright. That
+worked - 5478 transitions under burst load over 22 minutes - but paid for stability
+with all of the idle power saving. `0022` replaces it and keeps both: 19460
+transitions and 133447 collapses over 27 minutes of burst load, 109031 collapses
+over 17 minutes idle, four clean boots, no stalls anywhere.
+
+One caveat for later: VDD_APC *is* shared between the cores even though the clocks
+are not, so if the rail ever becomes controllable it will have to be driven at the
+maximum any core needs. Nothing controls it today, so the point is moot.
 
 The standard command line now carries `sysctl.kernel.panic_on_rcu_stall=1 panic=10
 rcupdate.rcu_exp_cpu_stall_timeout=21000`, so if a core ever wedges again the phone

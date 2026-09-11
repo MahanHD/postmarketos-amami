@@ -1,0 +1,68 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -65,6 +65,7 @@
+ 			clocks = <&kraitcc 1>;
+ 			clock-names = "cpu";
+ 			operating-points-v2 = <&cpu_opp_table>;
++			#cooling-cells = <2>;
+ 		};
+ 
+ 		cpu2: cpu@2 {
+@@ -79,6 +80,7 @@
+ 			clocks = <&kraitcc 2>;
+ 			clock-names = "cpu";
+ 			operating-points-v2 = <&cpu_opp_table>;
++			#cooling-cells = <2>;
+ 		};
+ 
+ 		cpu3: cpu@3 {
+@@ -93,6 +95,7 @@
+ 			clocks = <&kraitcc 3>;
+ 			clock-names = "cpu";
+ 			operating-points-v2 = <&cpu_opp_table>;
++			#cooling-cells = <2>;
+ 		};
+ 
+ 		l2: l2-cache {
+@@ -131,7 +134,13 @@
+ 	 */
+ 	cpu_opp_table: opp-table-cpu {
+ 		compatible = "operating-points-v2-krait-cpu";
+-		opp-shared;
++		/*
++		 * Deliberately not "opp-shared". Each Krait has its own mux and
++		 * HFPLL, and with one shared policy every transition reprograms
++		 * all four - including cores that are power-collapsed at that
++		 * instant, which wedges them. One policy per CPU keeps a core's
++		 * clock changing only when that core is the one asking.
++		 */
+ 		nvmem-cells = <&speedbin_efuse>;
+ 
+ 		opp-300000000 {
+@@ -2441,7 +2450,7 @@
+ 			cooling-maps {
+ 				map0 {
+ 					trip = <&cpu_alert1>;
+-					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++					cooling-device = <&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+ 				};
+ 			};
+ 
+@@ -2468,7 +2477,7 @@
+ 			cooling-maps {
+ 				map0 {
+ 					trip = <&cpu_alert2>;
+-					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++					cooling-device = <&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+ 				};
+ 			};
+ 
+@@ -2495,7 +2504,7 @@
+ 			cooling-maps {
+ 				map0 {
+ 					trip = <&cpu_alert3>;
+-					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++					cooling-device = <&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+ 				};
+ 			};
+ 
