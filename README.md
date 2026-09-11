@@ -701,6 +701,20 @@ The 642 mV figure is worth trusting because the VADC was calibrated against its 
 `REF_625MV`, `REF_1250MV` and `GND_REF` channels - 97.41 uV per count - and the same
 calibration reproduces `voltage_now` from `VBAT_SNS` exactly.
 
+These were measured while polling the phone over ssh every 25s, which sounds like it
+should inflate them and does not: repeating the run with nobody connected at all - an
+on-device script logging to tmpfs - gives ~396 mA against 400 mA, so the entire cost
+of watching is about 4 mA. The ssh traffic is visible elsewhere though. Each login
+writes sshd/sudo/pam lines to the journal, and that showed up as ~13 mmc0
+interrupts/s and ~70 block writes per 10s at idle with *no* process reporting
+`write_bytes`, because journald mmaps its files and that accounting never sees them.
+The journal had reached 617MB; `userspace/98-journal-size.conf` caps it at 64MB.
+
+One trap when measuring standby: a touch wakes DPMS. An unattended run came back with
+screen-off and screen-on within 2 mA of each other, purely because handling the phone
+to unplug the cable turned the display back on. Check that `bl_power` reads 4 in the
+samples rather than trusting that the blank stuck.
+
 Measuring draw needs the USB cable **out**. On USB the battery floats: the external
 sense resistor sees only noise, current does not respond to load at all, and
 `capacity` barely moves. Use WiFi for the session instead.
