@@ -1,0 +1,19 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -125,6 +125,16 @@
+ 
+ 	monitored-battery = <&battery>;
+ 
++	/*
++	 * BAT_THERM sits at 642mV, which the narrow [35%:70%] band the driver
++	 * picks by default reads as too hot, so the SMBB's own comparator
++	 * inhibits charging: health stays Overheat, charge_type N/A, and the
++	 * measured current into the pack is noise around zero even on USB.
++	 * The extended band moves the hot limit from 35% to 25% of the
++	 * reference and leaves real margin.
++	 */
++	qcom,jeita-extended-temp-range;
++
+ 	io-channels = <&pm8941_vadc VADC_VBAT_SNS>;
+ 	io-channel-names = "vbat";
+ 
