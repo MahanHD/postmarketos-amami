@@ -719,6 +719,9 @@ register pokes in that branch is not guesswork, it is downstream's
 `qcom,iommu-bfb-regs`/`-data` pair for `kgsl_iommu` verbatim, which is the
 non-secure init the GPU IOMMU needs.
 
+Where the port goes next, and what is already instrumented to get it there, is in
+[`docs/next-steps.md`](docs/next-steps.md).
+
 ## Debugging notes
 
 A few dead ends worth not repeating.
