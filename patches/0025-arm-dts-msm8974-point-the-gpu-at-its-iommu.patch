@@ -1,0 +1,17 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -2329,6 +2329,14 @@
+ 					<&ocmemnoc OCMEM_VNOC_MAS_GFX3D &ocmemnoc OCMEM_SLV_OCMEM>;
+ 			interconnect-names = "gfx-mem", "ocmem";
+ 
++			/*
++			 * gfx3d_user and gfx3d_priv. The context banks sit 0x1000
++			 * apart and qcom_iommu derives each ASID from reg / 0x1000,
++			 * so gfx3d_user is 1 and not 0 - which is what the stale
++			 * placeholder that used to sit here got wrong.
++			 */
++			iommus = <&gpu_iommu 1>, <&gpu_iommu 2>;
++
+ 			status = "disabled";
+ 
+ 			gpu_opp_table: opp-table {

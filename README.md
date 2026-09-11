@@ -54,7 +54,7 @@ comparator refuses to charge at all. `0023` fixes the current ADC, which had bee
 an amp and mangling the sign on discharge; it is what made any power measurement
 possible.
 
-`0017`, `0018` and `0019` are **not in the build**. They are the start of GPU IOMMU
+`0017`, `0018`, `0019` and `0025` are **not in the build**. They are the start of GPU IOMMU
 support and are kept here because the device-tree data in them was expensive to
 recover; see the IOMMU section below for why they are parked.
 
@@ -711,7 +711,24 @@ secure id, so TrustZone does not own the GPU IOMMU and the stock driver's
 three context banks. `0019` adds the `alt` clock, because the first attempt hung the
 phone at boot with only the OXILICX interface and bus clocks.
 
-It is parked because the CPU wedge above outranks it, and because upstream has not
+As of the second attempt the IOMMU itself works. With the `alt` clock in place it
+probes, `/sys/class/iommu/fdb10000.iommu` appears and all three context banks bind -
+the first attempt hung the phone precisely because that clock was missing, the GPU
+SMMU's registers needing GFX3D running and not just the OXILICX interface and bus
+clocks that msm8916 gets away with.
+
+`0025` then points the GPU at it, and that works too: the GPU joins iommu group 0,
+gains an `iommu` symlink, and gets a real address space. The proof of the last part
+is indirect but solid - `No memory protection without IOMMU` only prints when
+`gpu->aspace` is NULL, stage one prints it and stage two does not.
+
+What still fails is `a3xx_gpu_init`, with `-16`, so the GPU falls back to the
+carveout anyway. The only `-EBUSY` on that path is `ocmem_allocate`, which returns it
+when the graphics client bit is already set - but `a3xx_destroy` does release OCMEM,
+so a clean retry should not hit it. That is inference, not evidence, and the next
+step is a debug patch that prints the return of each step rather than more reading.
+
+It is parked because the CPU wedge above outranked it, and because upstream has not
 solved it either: Matti Lehtimaki's `qcom-msm8974-5.19.y-iommu` branch is, in Luca
 Weiss's words on the freedreno list, "a semi-working branch but hitting random
 issues with it". One thing worth keeping from reading it - the `#if 0` block of
