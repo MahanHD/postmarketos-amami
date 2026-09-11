@@ -1,0 +1,30 @@
+--- a/drivers/iommu/arm/arm-smmu/qcom_iommu.c
++++ b/drivers/iommu/arm/arm-smmu/qcom_iommu.c
+@@ -38,6 +38,7 @@
+ 	CLK_IFACE,
+ 	CLK_BUS,
+ 	CLK_TBU,
++	CLK_ALT,
+ 	CLK_NUM,
+ };
+ 
+@@ -835,6 +836,19 @@
+ 	qcom_iommu->clks[CLK_TBU].clk = clk;
+ 
+ 	/*
++	 * Some instances need a further clock running before their registers
++	 * respond at all. On msm8974 the GPU IOMMU sits behind the GFX3D clock,
++	 * not just the OXILICX interface and bus clocks, and touching a context
++	 * bank without it wedges the boot.
++	 */
++	clk = devm_clk_get_optional(dev, "alt");
++	if (IS_ERR(clk)) {
++		dev_err(dev, "failed to get alt clock\n");
++		return PTR_ERR(clk);
++	}
++	qcom_iommu->clks[CLK_ALT].clk = clk;
++
++	/*
+ 	 * Not every instance is known to TrustZone. The msm8974 GPU IOMMU has
+ 	 * no secure id downstream either; it is configured entirely from the
+ 	 * non-secure side, so treat the property as optional rather than

@@ -1,0 +1,65 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -2320,8 +2320,6 @@
+ 					<&ocmemnoc OCMEM_VNOC_MAS_GFX3D &ocmemnoc OCMEM_SLV_OCMEM>;
+ 			interconnect-names = "gfx-mem", "ocmem";
+ 
+-			// iommus = <&gpu_iommu 0>;
+-
+ 			status = "disabled";
+ 
+ 			gpu_opp_table: opp-table {
+@@ -2341,6 +2339,53 @@
+ 			};
+ 		};
+ 
++		/*
++		 * The GPU IOMMU has no secure id: downstream's kgsl_iommu node
++		 * has none either, so TrustZone does not own it and it is
++		 * configured entirely from the non-secure side. Context banks
++		 * live at 0xfdb18000, 0xfdb19000 and 0xfdb1a000; "ranges"
++		 * places them at 0x1000, 0x2000 and 0x3000, which is also how
++		 * the driver derives their ASIDs.
++		 */
++		gpu_iommu: iommu@fdb10000 {
++			compatible = "qcom,msm8974-iommu", "qcom,msm-iommu-v1";
++			reg = <0xfdb10000 0x3000>;
++			ranges = <0 0xfdb17000 0x10000>;
++
++			#address-cells = <1>;
++			#size-cells = <1>;
++			#iommu-cells = <1>;
++
++			clocks = <&mmcc OXILICX_AHB_CLK>,
++				 <&mmcc OXILICX_AXI_CLK>,
++				 <&mmcc OXILI_GFX3D_CLK>;
++			clock-names = "iface", "bus", "alt";
++
++			interrupts = <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH>;
++			power-domains = <&mmcc OXILICX_GDSC>;
++
++			/* gfx3d_user */
++			iommu-ctx@1000 {
++				compatible = "qcom,msm-iommu-v1-ns";
++				reg = <0x1000 0x1000>;
++				interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
++			};
++
++			/* gfx3d_priv */
++			iommu-ctx@2000 {
++				compatible = "qcom,msm-iommu-v1-ns";
++				reg = <0x2000 0x1000>;
++				interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
++			};
++
++			/* gfx3d_spare */
++			iommu-ctx@3000 {
++				compatible = "qcom,msm-iommu-v1-ns";
++				reg = <0x3000 0x1000>;
++				interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
++			};
++		};
++
+ 		sram@fdd00000 {
+ 			compatible = "qcom,msm8974-ocmem";
+ 			reg = <0xfdd00000 0x2000>,

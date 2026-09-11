@@ -73,6 +73,39 @@ With all four on, expect one `cpufreq-cpu0` cooling device with `max_state` 8, a
 each of `thermal_zone5` through `thermal_zone8` (`cpu0`- through `cpu3-thermal`)
 showing a `cdev0` pointing at it with `cdev0_trip_point` 0.
 
+`pstore` is on, and is what makes a hang debuggable at all:
+
+    CONFIG_PSTORE=y
+    CONFIG_PSTORE_RAM=y
+    CONFIG_PSTORE_CONSOLE=y
+    CONFIG_PSTORE_PMSG=y
+
+The device tree already reserved `ramoops@3e8e0000` - 2MB with a 1MB console buffer -
+and nothing was using it. Two things to know when reading a record back:
+`systemd-pstore.service` **moves** the files out of `/sys/fs/pstore` into
+`/var/lib/systemd/pstore/`, so look there; and the buffer survives a panic or a soft
+reboot but **not** a forced power-off, because that loses DRAM. For a hard hang,
+photograph the screen instead - it is a real console and the timestamps are enough to
+date the failure.
+
+The command line to build into the boot image is:
+
+    plymouth.enable=0 msm.vram=192m msm.allow_vram_carveout=1
+    sysctl.kernel.panic_on_rcu_stall=1 panic=10
+    rcupdate.rcu_exp_cpu_stall_timeout=21000
+    pmos_boot_uuid=... pmos_root_uuid=... pmos_rootfsopts=defaults
+
+The RCU parameters turn a wedged core into a panic, a pstore record and an automatic
+reboot instead of a phone that needs its battery pulled. Keep all three together:
+`rcu_exp_cpu_stall_timeout` is in **milliseconds** and defaults to 20, while
+`rcu_cpu_stall_timeout` is in **seconds**, so leaving it out makes the kernel panic on
+the harmless expedited stall this device emits at about 36s of every boot.
+
+`reboot bootloader` does not work here. The `reboot-mode` node exists and
+`syscon-reboot-mode` binds to it, but adding the usual Qualcomm magics at offset
+`0x65c` changed nothing - Sony's S1Boot ignores them. Getting into fastboot still
+means holding Volume Up while plugging the cable in.
+
 The Adreno firmware has to be built into the kernel image rather than loaded from
 `/lib/firmware`, because DRM_MSM probes from the initramfs before the rootfs is
 mounted and only tries once:

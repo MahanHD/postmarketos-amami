@@ -1,0 +1,59 @@
+--- a/drivers/iommu/arm/arm-smmu/qcom_iommu.c
++++ b/drivers/iommu/arm/arm-smmu/qcom_iommu.c
+@@ -43,12 +43,19 @@
+ 
+ struct qcom_iommu_ctx;
+ 
++/*
++ * 0 is a valid secure id, so an out-of-range value is needed to mean "this
++ * IOMMU has no secure id at all".
++ */
++#define QCOM_IOMMU_SEC_ID_NONE	U32_MAX
++
+ struct qcom_iommu_dev {
+ 	/* IOMMU core code handle */
+ 	struct iommu_device	 iommu;
+ 	struct device		*dev;
+ 	struct clk_bulk_data clks[CLK_NUM];
+ 	void __iomem		*local_base;
++	/* QCOM_IOMMU_SEC_ID_NONE when the IOMMU is entirely non-secure */
+ 	u32			 sec_id;
+ 	u8			 max_asid;
+ 	struct qcom_iommu_ctx	*ctxs[];   /* indexed by asid */
+@@ -254,7 +261,7 @@
+ 	for (i = 0; i < fwspec->num_ids; i++) {
+ 		struct qcom_iommu_ctx *ctx = to_ctx(qcom_domain, fwspec->ids[i]);
+ 
+-		if (!ctx->secure_init) {
++		if (!ctx->secure_init && qcom_iommu->sec_id != QCOM_IOMMU_SEC_ID_NONE) {
+ 			ret = qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, ctx->asid);
+ 			if (ret) {
+ 				dev_err(qcom_iommu->dev, "secure init failed: %d\n", ret);
+@@ -827,10 +834,16 @@
+ 	}
+ 	qcom_iommu->clks[CLK_TBU].clk = clk;
+ 
++	/*
++	 * Not every instance is known to TrustZone. The msm8974 GPU IOMMU has
++	 * no secure id downstream either; it is configured entirely from the
++	 * non-secure side, so treat the property as optional rather than
++	 * refusing to probe.
++	 */
+ 	if (of_property_read_u32(dev->of_node, "qcom,iommu-secure-id",
+ 				 &qcom_iommu->sec_id)) {
+-		dev_err(dev, "missing qcom,iommu-secure-id property\n");
+-		return -ENODEV;
++		dev_dbg(dev, "no qcom,iommu-secure-id, assuming non-secure\n");
++		qcom_iommu->sec_id = QCOM_IOMMU_SEC_ID_NONE;
+ 	}
+ 
+ 	if (qcom_iommu_has_secure_context(qcom_iommu)) {
+@@ -897,7 +910,7 @@
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (dev->pm_domain)
++	if (dev->pm_domain && qcom_iommu->sec_id != QCOM_IOMMU_SEC_ID_NONE)
+ 		return qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, 0);
+ 
+ 	return ret;

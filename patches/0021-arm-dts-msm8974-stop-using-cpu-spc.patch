@@ -1,0 +1,54 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -46,7 +46,6 @@
+ 			next-level-cache = <&l2>;
+ 			qcom,acc = <&acc0>;
+ 			qcom,saw = <&saw0>;
+-			cpu-idle-states = <&cpu_spc>;
+ 			clocks = <&kraitcc 0>;
+ 			clock-names = "cpu";
+ 			operating-points-v2 = <&cpu_opp_table>;
+@@ -61,7 +60,6 @@
+ 			next-level-cache = <&l2>;
+ 			qcom,acc = <&acc1>;
+ 			qcom,saw = <&saw1>;
+-			cpu-idle-states = <&cpu_spc>;
+ 			clocks = <&kraitcc 1>;
+ 			clock-names = "cpu";
+ 			operating-points-v2 = <&cpu_opp_table>;
+@@ -75,7 +73,6 @@
+ 			next-level-cache = <&l2>;
+ 			qcom,acc = <&acc2>;
+ 			qcom,saw = <&saw2>;
+-			cpu-idle-states = <&cpu_spc>;
+ 			clocks = <&kraitcc 2>;
+ 			clock-names = "cpu";
+ 			operating-points-v2 = <&cpu_opp_table>;
+@@ -89,7 +86,6 @@
+ 			next-level-cache = <&l2>;
+ 			qcom,acc = <&acc3>;
+ 			qcom,saw = <&saw3>;
+-			cpu-idle-states = <&cpu_spc>;
+ 			clocks = <&kraitcc 3>;
+ 			clock-names = "cpu";
+ 			operating-points-v2 = <&cpu_opp_table>;
+@@ -102,6 +98,19 @@
+ 			qcom,saw = <&saw_l2>;
+ 		};
+ 
++		/*
++		 * cpu_spc is deliberately left unreferenced. Standalone power
++		 * collapse and Krait frequency switching wedge cores when they
++		 * run together: a core that is collapsed while the shared
++		 * cpufreq policy reprograms its mux and HFPLL does not come
++		 * back, and stops answering even an NMI. Measured 2026-09-11 --
++		 * with the frequency pinned, 35k collapses under load over 20
++		 * minutes are fine; with it moving, 2832 transitions killed the
++		 * machine. Dropping the reference leaves the SPM cpuidle driver
++		 * with no DT state, so it does not register and idle falls back
++		 * to plain WFI. Restore the four "cpu-idle-states" properties
++		 * once the switching path is made safe against a collapsed core.
++		 */
+ 		idle-states {
+ 			cpu_spc: cpu-spc {
+ 				compatible = "qcom,idle-state-spc",

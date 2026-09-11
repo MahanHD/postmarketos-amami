@@ -45,7 +45,13 @@ register stride, which had been leaving all but the last backlight string dark.
 Krait clock tree, which together give the CPU frequency scaling for the first
 time. `0016` does for the CPU what `0012` did for the GPU: the four `cpuN-thermal`
 zones had a passive trip and nothing to act on it, so the only response to heat
-was the 110 C emergency poweroff.
+was the 110 C emergency poweroff. `0021` stops the CPUs using the `cpu_spc` idle
+state, because standalone power collapse and Krait frequency switching wedge cores
+when they run together.
+
+`0017`, `0018` and `0019` are **not in the build**. They are the start of GPU IOMMU
+support and are kept here because the device-tree data in them was expensive to
+recover; see the IOMMU section below for why they are parked.
 
 `patches/debug/` holds the diagnostic patches, numbered from 9000 so they apply
 last. They are not meant for a build you use day to day, but each one answered a
@@ -578,6 +584,68 @@ trip's 2C hysteresis. Any of the four zones drives it, not just CPU0's. The cost
 that `emul_temp` also lets root feed the thermal core a fake *low* reading and mask
 the 110C trip, so it is a knob worth removing once the ceiling is raised far enough
 to reach 75C honestly.
+
+**Power collapse and frequency switching cannot both be on.** With `cpu_spc` and
+cpufreq both live, cores wedge: `rcu_preempt detected stalls` names two CPUs, and
+`Sending NMI from CPU 2 to CPUs 0:` is followed by no backtrace at all. A core
+spinning on a lock still answers an NMI; one that does not has stopped. The
+surviving cores keep logging for tens of minutes, which makes it look like a boot
+hang from outside - the USB gadget stays enumerated the whole time, so the host sees
+a device that never answers.
+
+It is not a boot hang, and the log says so if you do the arithmetic. Jiffies advance
+7311 over 73.09s of printk timestamps, so HZ is 100; with `t=89834 jiffies` at
+timestamp 927.34 the grace period began at **29.0s of uptime**. The kernel had been
+alive for 26 minutes.
+
+Five controlled runs found the pair, one variable at a time:
+
+| cpuidle | frequency | load | result |
+|---|---|---|---|
+| off | free | idle | 567s clean |
+| SPC on | pinned 960MHz | idle | 971s clean, 35089 collapses |
+| SPC on | pinned 300MHz | idle | 669s clean |
+| SPC on | **moving** | burst | **died at ~780s**, 2832 transitions |
+| SPC on | pinned 960MHz | burst | 1224s clean, 0 transitions |
+
+The last row is the one that matters: same load, same collapses, frequency held
+still, survives. So it is the switching, not the load, and that makes it a
+consequence of `0015`. The likely mechanism is that `0015` marks the OPP table
+`opp-shared`, so all four Kraits are one policy and a governor running on any CPU
+reprograms every CPU's mux and HFPLL - including cores that are power-collapsed at
+that instant. Downstream does per-core DVFS coordinated with the SPM; there is no
+equivalent here.
+
+`0021` takes the conservative half: drop the `cpu-idle-states` reference so the SPM
+cpuidle driver finds no DT state, fails to register, and idle falls back to plain
+WFI. Frequency scaling keeps working. Validated with 5478 transitions under burst
+load over 22 minutes - nearly double what killed the unfixed kernel. Making the
+switching path safe against a collapsed core, and getting SPC back, is still open.
+
+The standard command line now carries `sysctl.kernel.panic_on_rcu_stall=1 panic=10
+rcupdate.rcu_exp_cpu_stall_timeout=21000`, so if a core ever wedges again the phone
+panics, saves a pstore record and reboots itself rather than needing the battery
+pulled. **That third parameter is not optional**: `rcu_exp_cpu_stall_timeout` is in
+milliseconds and defaults to 20, while its sibling `rcu_cpu_stall_timeout` is in
+seconds, so without it the kernel panics on the harmless ~3-jiffy expedited stall
+this device emits at about 36s of every boot.
+
+## The GPU IOMMU, and why it is parked
+
+`msm.vram=192m` costs 192MB on a 2GB phone, and an IOMMU would give it back.
+`0017` makes `qcom,iommu-secure-id` optional - downstream's `kgsl_iommu` has no
+secure id, so TrustZone does not own the GPU IOMMU and the stock driver's
+`-ENODEV` makes it unprobeable. `0018` adds the `gpu_iommu@fdb10000` node with its
+three context banks. `0019` adds the `alt` clock, because the first attempt hung the
+phone at boot with only the OXILICX interface and bus clocks.
+
+It is parked because the CPU wedge above outranks it, and because upstream has not
+solved it either: Matti Lehtimaki's `qcom-msm8974-5.19.y-iommu` branch is, in Luca
+Weiss's words on the freedreno list, "a semi-working branch but hitting random
+issues with it". One thing worth keeping from reading it - the `#if 0` block of
+register pokes in that branch is not guesswork, it is downstream's
+`qcom,iommu-bfb-regs`/`-data` pair for `kgsl_iommu` verbatim, which is the
+non-secure init the GPU IOMMU needs.
 
 ## Debugging notes
 
