@@ -1,0 +1,27 @@
+--- a/drivers/iio/proximity/qcom_smgr_prox.c
++++ b/drivers/iio/proximity/qcom_smgr_prox.c
+@@ -27,6 +27,24 @@
+ 				      BIT(IIO_CHAN_INFO_SAMP_FREQ)
+ 	},
+ 	{
++		/*
++		 * The APDS-9930 is one sensor ID with two data types, and a
++		 * report carries both: values[0] is proximity, values[1] the
++		 * ambient light reading. No offset here - that is proximity's,
++		 * whose values are inverted and start from the upper bound.
++		 */
++		.type = IIO_LIGHT,
++		.scan_index = 1,
++		.scan_type = {
++			.sign = 'u',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_separate = BIT(IIO_CHAN_INFO_SCALE) |
++				      BIT(IIO_CHAN_INFO_SAMP_FREQ)
++	},
++	{
+ 		.type = IIO_TIMESTAMP,
+ 		.channel = -1,
+ 		.scan_index = 3,
