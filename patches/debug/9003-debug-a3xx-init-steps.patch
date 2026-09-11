@@ -1,0 +1,105 @@
+--- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c
+@@ -570,6 +570,7 @@
+ 	adreno_gpu->registers = a3xx_registers;
+ 
+ 	ret = adreno_gpu_init(dev, pdev, adreno_gpu, &funcs, 1);
++	pr_err("DBG a3xx: adreno_gpu_init -> %d (aspace %p)\n", ret, gpu->aspace);
+ 	if (ret)
+ 		goto fail;
+ 
+@@ -577,6 +578,7 @@
+ 	if (adreno_is_a330(adreno_gpu) || adreno_is_a305b(adreno_gpu)) {
+ 		ret = adreno_gpu_ocmem_init(&adreno_gpu->base.pdev->dev,
+ 					    adreno_gpu, &a3xx_gpu->ocmem);
++		pr_err("DBG a3xx: ocmem_init -> %d\n", ret);
+ 		if (ret)
+ 			goto fail;
+ 	}
+@@ -597,6 +599,7 @@
+ 	}
+ 
+ 	icc_path = devm_of_icc_get(&pdev->dev, "gfx-mem");
++	pr_err("DBG a3xx: icc gfx-mem -> %ld\n", PTR_ERR_OR_ZERO(icc_path));
+ 	if (IS_ERR(icc_path)) {
+ 		ret = PTR_ERR(icc_path);
+ 		goto fail;
+@@ -623,6 +626,7 @@
+ 	return gpu;
+ 
+ fail:
++	pr_err("DBG a3xx: failing with %d\n", ret);
+ 	if (a3xx_gpu)
+ 		a3xx_destroy(&a3xx_gpu->base.base);
+ 
+--- a/drivers/soc/qcom/ocmem.c
++++ b/drivers/soc/qcom/ocmem.c
+@@ -215,15 +215,22 @@
+ {
+ 	int ret;
+ 
++	pr_err("DBG ocmem_allocate: client=%d size=%lu active=0x%lx\n",
++	       client, size, ocmem->active_allocations);
++
+ 	/* TODO: add support for other clients... */
+ 	if (WARN_ON(client != OCMEM_GRAPHICS))
+ 		return ERR_PTR(-ENODEV);
+ 
+-	if (size < OCMEM_MIN_ALLOC || !IS_ALIGNED(size, OCMEM_MIN_ALIGN))
++	if (size < OCMEM_MIN_ALLOC || !IS_ALIGNED(size, OCMEM_MIN_ALIGN)) {
++		pr_err("DBG ocmem_allocate: bad size -> -EINVAL\n");
+ 		return ERR_PTR(-EINVAL);
++	}
+ 
+-	if (test_and_set_bit_lock(BIT(client), &ocmem->active_allocations))
++	if (test_and_set_bit_lock(BIT(client), &ocmem->active_allocations)) {
++		pr_err("DBG ocmem_allocate: bit already set -> -EBUSY\n");
+ 		return ERR_PTR(-EBUSY);
++	}
+ 
+ 	struct ocmem_buf *buf __free(kfree) = kzalloc(sizeof(*buf), GFP_KERNEL);
+ 	if (!buf) {
+--- a/drivers/gpu/drm/msm/msm_iommu.c
++++ b/drivers/gpu/drm/msm/msm_iommu.c
+@@ -440,6 +440,8 @@
+ 		return NULL;
+ 
+ 	domain = iommu_paging_domain_alloc(dev);
++	pr_err("DBG msm_iommu_new: paging_domain_alloc -> %ld\n",
++	       PTR_ERR_OR_ZERO(domain));
+ 	if (IS_ERR(domain))
+ 		return ERR_CAST(domain);
+ 
+@@ -457,6 +459,7 @@
+ 	atomic_set(&iommu->pagetables, 0);
+ 
+ 	ret = iommu_attach_device(iommu->domain, dev);
++	pr_err("DBG msm_iommu_new: attach_device -> %d\n", ret);
+ 	if (ret) {
+ 		iommu_domain_free(domain);
+ 		kfree(iommu);
+--- a/drivers/iommu/iommu.c
++++ b/drivers/iommu/iommu.c
+@@ -2226,13 +2226,21 @@
+ {
+ 	struct device *dev;
+ 
++	pr_err("DBG attach_group: dom=%p cur=%p def=%p blk=%p\n",
++	       domain, group->domain, group->default_domain,
++	       group->blocking_domain);
+ 	if (group->domain && group->domain != group->default_domain &&
+-	    group->domain != group->blocking_domain)
++	    group->domain != group->blocking_domain) {
++		pr_err("DBG attach_group: busy\n");
+ 		return -EBUSY;
++	}
+ 
+ 	dev = iommu_group_first_dev(group);
+ 	if (!dev_has_iommu(dev) ||
+ 	    !domain_iommu_ops_compatible(dev_iommu_ops(dev), domain))
++		pr_err("DBG attach_group: ops incompatible or no iommu\n");
++	if (!dev_has_iommu(dev) ||
++	    !domain_iommu_ops_compatible(dev_iommu_ops(dev), domain))
+ 		return -EINVAL;
+ 
+ 	return __iommu_group_set_domain(group, domain);

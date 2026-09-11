@@ -1,0 +1,33 @@
+--- a/drivers/gpu/drm/msm/msm_iommu.c
++++ b/drivers/gpu/drm/msm/msm_iommu.c
+@@ -4,6 +4,10 @@
+  * Author: Rob Clark <robdclark@gmail.com>
+  */
+ 
++#ifdef CONFIG_ARM_DMA_USE_IOMMU
++#include <asm/dma-iommu.h>
++#endif
++
+ #include <linux/adreno-smmu-priv.h>
+ #include <linux/io-pgtable.h>
+ #include "msm_drv.h"
+@@ -439,6 +443,19 @@
+ 	if (!device_iommu_mapped(dev))
+ 		return NULL;
+ 
++#ifdef CONFIG_ARM_DMA_USE_IOMMU
++	/*
++	 * On 32-bit ARM the DMA layer gets here first: arch_setup_dma_ops()
++	 * calls arm_setup_iommu_dma_ops(), which creates its own mapping and
++	 * attaches a domain to this device's IOMMU group. The group is then no
++	 * longer sitting on its default domain, so the attach below is refused
++	 * with -EBUSY and the GPU falls back to the VRAM carveout. Give the
++	 * device back before claiming it for ourselves.
++	 */
++	if (to_dma_iommu_mapping(dev))
++		arm_iommu_detach_device(dev);
++#endif
++
+ 	domain = iommu_paging_domain_alloc(dev);
+ 	if (IS_ERR(domain))
+ 		return ERR_CAST(domain);

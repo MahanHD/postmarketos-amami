@@ -722,11 +722,39 @@ gains an `iommu` symlink, and gets a real address space. The proof of the last p
 is indirect but solid - `No memory protection without IOMMU` only prints when
 `gpu->aspace` is NULL, stage one prints it and stage two does not.
 
-What still fails is `a3xx_gpu_init`, with `-16`, so the GPU falls back to the
-carveout anyway. The only `-EBUSY` on that path is `ocmem_allocate`, which returns it
-when the graphics client bit is already set - but `a3xx_destroy` does release OCMEM,
-so a clean retry should not hit it. That is inference, not evidence, and the next
-step is a debug patch that prints the return of each step rather than more reading.
+The `-16` that used to stop it there is understood and fixed. It was `-EBUSY` from
+`__iommu_attach_group`, and the reason is 32-bit specific: `arch_setup_dma_ops()`
+calls `arm_setup_iommu_dma_ops()`, which creates its own mapping and attaches a
+domain to the GPU's IOMMU group before drm/msm ever runs. The group is then no longer
+on its default domain, so msm's attach is refused. Booting with `no_hash_pointers`
+shows it plainly - the domain the second attach trips over is the same pointer the
+DMA layer attached 100ms earlier:
+
+    4.730  attach_group: dom=c42dbe9c cur=c17096a4 def=c17096a4
+    4.838  attach_group: dom=c42e639c cur=c42dbe9c def=c17096a4
+    4.843  attach_group: busy
+
+`0026` hands the device back with `arm_iommu_detach_device()` before claiming it.
+`QCOM_IOMMU` *selects* `ARM_DMA_USE_IOMMU`, so turning the IOMMU on is what enables
+the glue in the first place, and no DRM driver in the tree calls that detach because
+drm/msm is arm64-focused. With it, the attach returns 0 and `adreno_gpu_init`
+succeeds.
+
+**It is still not usable, one layer further down.** Once the IOMMU actually
+translates, `a3xx_hw_init` reports `timeout waiting for GPU to idle!` and
+`adreno_load_gpu` fails with `-22`, so mesa falls back from `FD330` to `llvmpipe`.
+Every software step passes first - attach, address space, OCMEM, interconnects,
+firmware. The next suspect is the non-secure BFB init that downstream performs from
+`qcom,iommu-bfb-regs`/`-data` and mainline never does, which is precisely what the
+prior art's `#if 0` block held.
+
+**And the prize is not where it looked.** `msm_use_mmu()` tests
+`device_iommu_mapped(dev->dev) || device_iommu_mapped(dev->dev->parent)`, where
+`dev->dev` is the *display controller*. The 192MB carveout is therefore gated on the
+**MDP** having an IOMMU, not the GPU. Even a flawless GPU IOMMU reclaims nothing by
+itself; that needs `mdp_iommu@fd928000`, whose probe fires
+`qcom_scm_restore_sec_cfg` at the SMMU behind a live display. Worth weighing before
+spending more on this.
 
 It is parked because the CPU wedge above outranked it, and because upstream has not
 solved it either: Matti Lehtimaki's `qcom-msm8974-5.19.y-iommu` branch is, in Luca
