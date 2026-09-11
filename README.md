@@ -49,7 +49,8 @@ was the 110 C emergency poweroff. `0022` gives each Krait its own cpufreq policy
 which is both what the hardware actually looks like and what stops power collapse
 and frequency switching wedging cores when they run together.
 
-`0023` fixes the current ADC, which had been reporting zero for every current below
+`0024` widens the battery temperature band, without which the charger's own
+comparator refuses to charge at all. `0023` fixes the current ADC, which had been reporting zero for every current below
 an amp and mangling the sign on discharge; it is what made any power measurement
 possible.
 
@@ -677,7 +678,27 @@ table rather than counted, so it sags under load and recovers afterwards - it re
 91% idle, 83% under load, then 88% back at idle within a few minutes. Treat the
 percentage as an open-circuit estimate, not a fuel gauge.
 
-Measuring this needs the USB cable **out**. On USB the battery floats: the external
+**Charging needs a real supply, not a PC port.** The phone draws about 400 mA just
+to run, so a 500 mA host port leaves nothing for the pack: net battery current sits
+at exactly zero, `status` reads Discharging and `capacity` barely moves, which looks
+convincingly like a broken charger. On a wall charger the same kernel reports
+`Charging`/`Fast` and pushes ~268 mA in at 92%, tapering towards the 4.35 V VMAX.
+
+That is only half the story though - `0024` had to come first. `qcom_smbb` always
+enables the SMBB's temperature comparators and picks their window from a single
+device tree bool, and the default narrow [35%:70%] band read amami's perfectly
+ordinary 642 mV `BAT_THERM` as too hot. That comparator gates the charger in
+hardware, not just in reporting, so `health = Overheat` was a genuine block rather
+than a cosmetic complaint. With `qcom,jeita-extended-temp-range` the band widens to
+[25%:80%], `BAT_IF` real-time status reads 0x03 and health reports Good. Both changes
+were needed; since they landed together the attribution is not cleanly proven, but
+the mechanism says the fix was necessary and the supply was the other half.
+
+The 642 mV figure is worth trusting because the VADC was calibrated against its own
+`REF_625MV`, `REF_1250MV` and `GND_REF` channels - 97.41 uV per count - and the same
+calibration reproduces `voltage_now` from `VBAT_SNS` exactly.
+
+Measuring draw needs the USB cable **out**. On USB the battery floats: the external
 sense resistor sees only noise, current does not respond to load at all, and
 `capacity` barely moves. Use WiFi for the session instead.
 
