@@ -1,0 +1,52 @@
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -216,6 +216,7 @@
+ 	struct qmi_txn txn;
+ 	u16 sample_rate = 0;
+ 	int ret;
++	u8 i;
+ 
+ 	if (enable) {
+ 		req.action = SNS_SMGR_BUFFERING_ACTION_ADD;
+@@ -248,19 +249,30 @@
+ 
+ 		req.report_rate = sample_rate * SMGR_REPORT_RATE_HZ;
+ 
+-		req.item_len = 1;
+-		req.items[0].sensor_id = sensor->id;
+-		req.items[0].data_type = SNS_SMGR_DATA_TYPE_PRIMARY;
+-
+-		req.items[0].sampling_rate = sample_rate;
+-
+ 		/*
+-		 * Unknown fields set to values frequently seen in dumps and
+-		 * known to be working (although many different random values
+-		 * appear to not cause any trouble).
++		 * Subscribe to every data type the sensor reports, not just the
++		 * primary one. A sensor can carry two: the APDS-9930 is one
++		 * sensor ID whose primary type is proximity and whose secondary
++		 * is ambient light, and requesting only the primary leaves the
++		 * light reading unreachable no matter what channels the IIO
++		 * driver declares.
+ 		 */
+-		req.items[0].val1 = 3;
+-		req.items[0].val2 = 1;
++		req.item_len = min_t(u8, sensor->data_type_count,
++				     SNS_SMGR_DATA_TYPE_COUNT);
++
++		for (i = 0; i < req.item_len; i++) {
++			req.items[i].sensor_id = sensor->id;
++			req.items[i].data_type = i;
++			req.items[i].sampling_rate = sample_rate;
++
++			/*
++			 * Unknown fields set to values frequently seen in dumps
++			 * and known to be working (although many different
++			 * random values appear to not cause any trouble).
++			 */
++			req.items[i].val1 = 3;
++			req.items[i].val2 = 1;
++		}
+ 	} else
+ 		req.action = SNS_SMGR_BUFFERING_ACTION_DELETE;
+ 

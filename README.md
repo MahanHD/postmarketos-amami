@@ -58,6 +58,11 @@ possible.
 support and are kept here because the device-tree data in them was expensive to
 recover; see the IOMMU section below for why they are parked.
 
+`0031` is **not in the build**. It makes the sensor manager subscribe to every data
+type a sensor reports rather than only the primary one, which is a prerequisite for
+ever exposing ambient light - but it fixes nothing observable here, for reasons in
+the sensor section below.
+
 `0028` stops the sensor manager registering the same sensor twice, and `0029` fixes
 an `ocmem` bit-number/bitmask mixup. Neither is amami-specific.
 
@@ -718,6 +723,30 @@ samples rather than trusting that the blank stuck.
 Measuring draw needs the USB cable **out**. On USB the battery floats: the external
 sense resistor sees only noise, current does not respond to load at all, and
 `capacity` barely moves. Use WiFi for the session instead.
+
+## The proximity sensor reports nothing
+
+It enumerates correctly - right vendor, right part, two data types - and registers an
+IIO device, which is exactly why it passed for working. Its buffer yields **zero
+bytes** over 25 seconds with a hand waved across it, while the accelerometer under
+the same procedure yields tens of kilobytes in five. Enabling the buffer produces no
+error and no dmesg output, and the buffering request to the DSP succeeds.
+
+Two explanations have been tried and neither is it. The first was that the driver
+only ever subscribes `SNS_SMGR_DATA_TYPE_PRIMARY`, so a sensor's secondary data type
+is never requested - true, and it is why an ambient light channel alone can never
+work, but subscribing to both types (patch `0031`, kept in `patches/` and out of the
+build) leaves 0x28 just as silent. The second was the sensor registry: nine groups
+are requested and unmapped (2001, 2500, 2610, 2650, 2680, 2970, 2971, 2980, 2990),
+and `0007` proved a single missing group can disable a sensor outright. But that
+cost the accelerometer its *enumeration*, whereas proximity enumerates fine and only
+fails to report, so the registry is a poor fit. Offsets `0x2900`-`0x2cff` are unused
+in `group_map[]` - four `0x100` pages against exactly four unmapped `29xx` groups -
+which is suggestive, and is also exactly the guess-and-flash pattern that should be
+resisted without a real source.
+
+Upstream lists proximity as supported, so this may well be specific to this device's
+APDS-9930 configuration rather than the driver.
 
 ## Why idle costs 252 mA, and why suspend is shallow
 
