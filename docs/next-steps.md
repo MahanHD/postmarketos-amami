@@ -216,15 +216,44 @@ proved one missing group can disable a sensor, but that cost the accelerometer i
 costs 252 mA and why there is no standby to speak of: cores collapse individually
 while the SoC never does, so the RPM stays up, rails stay put and DDR stays refreshed.
 
-It is unimplemented, not unconfigured. Nothing in mainline calls `suspend_set_ops()`
-with `PM_SUSPEND_MEM` for Qualcomm ARM32 - there is no such call under
-`drivers/soc/qcom`, `drivers/firmware` or `arch/arm/mach-qcom`, and that directory
-holds only `Kconfig`, `Makefile` and `platsmp.c`. `ARM_PSCI` is off, so there is no
-firmware route either.
+It is unimplemented, not unconfigured, and that is now verified three ways rather
+than assumed. `arch/arm/mach-qcom` holds only `Kconfig`, `Makefile` and `platsmp.c`;
+nothing anywhere registers `platform_suspend_ops`; and the phone itself reports
 
-Scope it by reading how arm64 Qualcomm gets there through PSCI, and what downstream
-msm8974 does instead. Then platform suspend ops, SPM programming for system-wide
-power collapse rather than the per-core standalone kind, and RPM coordination.
+    /sys/power/state:     freeze mem
+    /sys/power/mem_sleep: [s2idle]
+
+with no `deep` offered, so `mem` is just s2idle under another name. `ARM_PSCI` is off,
+so there is no firmware route either.
+
+**Per-core idle is already at mainline's maximum**, which is worth knowing before
+looking for easy wins there. `cpuidle-qcom-spm.c` offers exactly one state type,
+`qcom,idle-state-spc` - standalone power collapse - and no system-wide variant, and
+the phone uses it well: 74799 entries and 1740 seconds of residency in a short uptime,
+against 25640 in plain WFI. The cores collapse. The SoC does not.
+
+Three separate pieces are missing, each verified in tree:
+
+1. **No platform suspend ops.** Nothing implements `PM_SUSPEND_MEM`, so there is
+   nothing for `mem_sleep` to select.
+2. **No system-wide SPM programming.** `cpuidle-qcom-spm.c` knows only standalone
+   collapse. It does already call `qcom_scm_set_warm_boot_addr(cpu_resume_arm)`, so
+   the resume path exists and is proven - that part would not have to be invented.
+3. **No RPM sleep-set votes.** `QCOM_SMD_RPM_SLEEP_STATE` is defined in
+   `include/linux/soc/qcom/smd-rpm.h`, and `qcom_smd-regulator.c` never uses it -
+   zero occurrences. Mainline votes only the active set, so even a collapsed SoC would
+   leave the rails where they are. This is the piece that actually saves the power,
+   and it is independent of the other two.
+
+That last point suggests the cheapest first experiment by a wide margin: sleep-set
+votes are a regulator concern, not a suspend concern, and could be investigated on
+their own without implementing suspend at all.
+
+**Before any of it, take the measurement that is still missing:** the battery baseline
+has no s2idle figure at all, only awake ones. That needs the USB cable *out* (see
+[[xperia-z1c-battery-baseline]] - on a host port the battery floats and current does
+not respond), so it needs a hand on the phone. Without it there is no way to tell how
+much of the 252 mA a working deep suspend would actually remove.
 
 ## Phase 3: audio
 
