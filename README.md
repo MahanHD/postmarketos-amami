@@ -54,12 +54,12 @@ comparator refuses to charge at all. `0023` fixes the current ADC, which had bee
 an amp and mangling the sign on discharge; it is what made any power measurement
 possible.
 
-`0018`, `0025`, `0027`, `0031` through `0035` are **not in the build**. `0034` and
-`0035` are the working GPU IOMMU - the GPU renders through it with no faults and no
-hangchecks - but they cost about five times the throughput and reclaim no memory
-until the display controller has an IOMMU too, so they stay out until that is worth
-paying for. The rest are earlier attempts, kept because the device-tree data in them
-was expensive to recover. See the IOMMU section below.
+`0034` through `0037` are **in the build, and they remove the 192MB carveout**:
+`0034`/`0035` put the GPU behind its SMMU, `0036` lets the mappings use pages bigger
+than 4KB, and `0037` does the same for the display controller, which is what actually
+reclaims the memory. `0018`, `0025`, `0027` and `0031` are **not** in the build -
+earlier attempts, kept because the device-tree data in them was expensive to recover.
+See the IOMMU sections below.
 
 `0031` is **not in the build**. It makes the sensor manager subscribe to every data
 type a sensor reports rather than only the primary one, which is a prerequisite for
@@ -1040,8 +1040,8 @@ to 3.0x. A 150 second soak at 300x300 gives zero hangchecks, zero faults on any 
 and `last-fence` equal to `retired-fence` at 264505.
 
 What is left of the gap is the 366 small pages and the irreducible cost of translating
-at all. Still out of the build, but the trade is now arguable rather than obviously
-bad - and it buys the GPU real memory protection, which the carveout cannot.
+at all. On its own this would have been a clear win; what it does not survive is
+removing the carveout, which is the next section.
 
 One honest loose end: `msm8974_smmu_write_s2cr` forces `NSCFG` and `MEMATTR` because
 downstream does, and it was originally added on a theory - that unmarked transactions
@@ -1106,9 +1106,26 @@ here: `HAVE_ARCH_TRANSPARENT_HUGEPAGE` is selected only `if ARM_LPAE`, and LPAE 
 pages back alongside the reclaimed memory would mean a CMA-backed GEM allocator rather
 than shmem, which is a real divergence from upstream.
 
-So the choice is roughly 192MB of CMA against about 2.7x of GPU throughput, on a
-device whose heaviest graphics load is an Xfce desktop. Both `0036` and `0037` stay
-out of the build until that is decided deliberately.
+So the choice was roughly 192MB of RAM against about 2.7x of GPU throughput, on a
+2GB device whose heaviest graphics load is an Xfce desktop. **The memory won**, and
+`0034` through `0037` are in the build as of r76.
+
+Measured on the flashed kernel after a real reboot: `MemAvailable` 1395404 kB against
+1217868 kB on the carveout kernel at a comparable fresh boot - about **172MB more
+memory actually available**, with CMA entirely free. Display, GPU, WiFi, touch and
+the filesystem all healthy; a 90 second GPU soak gives zero hangchecks, zero faults on
+any of the six lines, and `last-fence` equal to `retired-fence`.
+
+Two things the build needs beyond the patches:
+
+- `CONFIG_ARM_SMMU=y` and `CONFIG_ARM_SMMU_QCOM=y`, with
+  **`CONFIG_ARM_SMMU_DISABLE_BYPASS_BY_DEFAULT` off**. That has to be in the config
+  rather than `arm-smmu.disable_bypass=0` on the command line, because `boot-deploy`
+  writes its own command line and MDSS masters that are not described here still have
+  to get through - losing bypass blanks the panel.
+- `msm.vram=192m msm.allow_vram_carveout=1` are kept on the command line even though
+  nothing uses them now. If the IOMMU ever fails to probe, `msm_use_mmu()` goes false
+  and the carveout is the fallback, so the phone still boots with a display.
 
 It went unsolved for a long time partly because upstream has not solved it either:
 Matti Lehtimaki's `qcom-msm8974-5.19.y-iommu` branch is, in Luca
