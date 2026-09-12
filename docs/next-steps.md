@@ -16,7 +16,8 @@ LED, suspend (s2idle), GPU and CPU frequency scaling, and CPU thermal throttling
 
 Not working: audio, proximity, ambient light, deep suspend.
 
-The GPU IOMMU works as of `0034`/`0035` but is out of the build; see below.
+Both IOMMUs work as of `0034`-`0037`, and the 192MB carveout can be reclaimed, but
+they are out of the build pending a throughput-against-memory decision; see below.
 
 ## What is instrumented
 
@@ -126,6 +127,41 @@ base+0x8000 layout, so the `numpage` quirk carries over), global SPI 73, context
 interrupts SPI 47 and 46 - and `qcom,iommu-secure-id = <1>`, which `kgsl_iommu` does
 not have. TrustZone owns that one.
 
+### The MDP IOMMU: done, and it is what reclaimed the 192MB
+
+`msm_use_mmu()` tests the display controller, not the GPU, so the carveout survives a
+perfectly good GPU IOMMU and only goes away here. `0037` adds `mdp_smmu@fd928000` and
+points the MDP at it.
+
+Cheaper than expected on every axis. It is the **same hardware as the GPU's SMMU** -
+identical probe, and the `numpage` write-back test reads `0xdeadbee0` at `+0x8000`,
+agreeing with stock's `mdp_0` at `0xfd930000` - so `0034`/`0035` carry over with **no
+new driver code**. Stock and LineageOS describe both IOMMUs identically. And despite
+`qcom,iommu-secure-id = <1>`, **TrustZone does not block the non-secure side**, so the
+`qcom_scm_restore_sec_cfg` that `arm-smmu-qcom` lacks is not needed.
+
+Result: carveout gone, display fine, `FD330` still the renderer, zero faults on all
+six lines the two SMMUs register, and `CmaFree` from 65152 kB to 261760 kB - exactly
+192MiB back. Net usable memory gains less, since the buffers now come from ordinary
+memory instead of a reservation.
+
+**Boot with `arm-smmu.disable_bypass=0`.** This SMMU sits in the display path whether
+or not anything attaches to it, `arm_smmu_device_reset()` rewrites every S2CR before
+`impl->reset` runs, and undescribed MDSS masters still have to get through. With the
+bypass disabled it blanks the panel just by probing.
+
+**It costs the page-size win.** Without a carveout, GEM comes from shmem as scattered
+order-0 pages, so `iommu_pgsize()` cannot coalesce whatever the IOVA alignment is -
+walking both SMMUs afterwards finds no sections and no large pages at all. Throughput
+returns to the 4KB figures, 329 FPS at 200x200 against 876. Huge pages would fix it
+and are not reachable: `HAVE_ARCH_TRANSPARENT_HUGEPAGE` is selected only `if
+ARM_LPAE`, which is off - which is also why the IOMMU uses v7s short descriptors.
+Having both would need a CMA-backed GEM allocator rather than shmem.
+
+So the open question is 192MB of CMA against about 2.7x of GPU throughput, on a device
+whose heaviest graphics load is an Xfce desktop. Decide it deliberately; until then
+`0036` and `0037` stay out of the build with the rest.
+
 ### Why sensor 0x28 reports nothing
 
 Proximity enumerates correctly and registers an IIO device - which is why it passed
@@ -172,7 +208,7 @@ codec driver. The DSP boots and every sensor on it works, so the groundwork exis
 
 Out of the build, kept because the data in them was expensive to recover:
 
-- `0034`, `0035`, `0036` - the working GPU IOMMU and its page-size fix.
+- `0034`, `0035`, `0036`, `0037` - the GPU and MDP IOMMUs, and the page-size fix.
 - `0018`, `0025` - the earlier `qcom_iommu` node and the GPU's binding to it.
 - `0027` - the non-secure BFB settings.
 - `0031` - subscribing to every data type, a prerequisite for ambient light.
@@ -198,18 +234,3 @@ screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
 - `THERMAL_EMULATION` is still enabled. It is how the thermal trips were tested, and
   it also lets root feed the thermal core a fake low reading. Worth dropping once the
   frequency ceiling can reach 75 C honestly.
-
-**The MDP IOMMU is done too (`0037`), and the carveout is gone.** Same hardware as the
-GPU's SMMU, so no new driver code; TrustZone does not block it despite
-`qcom,iommu-secure-id = <1>`; display fine, zero faults. `CmaFree` goes from 65152 kB
-to 261760 kB - exactly 192MiB back.
-
-It costs the page-size win: without a carveout, GEM comes from shmem as scattered
-order-0 pages, so nothing coalesces and throughput returns to the 4KB figures (329 FPS
-at 200x200 against 876). Huge pages are not reachable -
-`HAVE_ARCH_TRANSPARENT_HUGEPAGE` needs `ARM_LPAE`, which is off. Having both would
-mean a CMA-backed GEM allocator instead of shmem.
-
-**Boot with `arm-smmu.disable_bypass=0`** for anything involving the MDP SMMU: it sits
-in the display path regardless of attachment, `arm_smmu_device_reset()` rewrites every
-S2CR before `impl->reset`, and undescribed MDSS masters still need to get through.
