@@ -1,0 +1,53 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -2329,7 +2329,13 @@
+ 					<&ocmemnoc OCMEM_VNOC_MAS_GFX3D &ocmemnoc OCMEM_SLV_OCMEM>;
+ 			interconnect-names = "gfx-mem", "ocmem";
+ 
+-			// iommus = <&gpu_iommu 0>;
++			/*
++			 * gfx3d_user. The cell is a stream ID here, not a
++			 * context bank index: arm-smmu does the stream matching
++			 * itself, which is exactly what this hardware needs and
++			 * what qcom_iommu cannot do.
++			 */
++			iommus = <&gpu_smmu 0>;
+ 
+ 			status = "disabled";
+ 
+@@ -2350,6 +2356,35 @@
+ 			};
+ 		};
+ 
++		/*
++		 * This is a plain ARM SMMU, whatever its downstream name: the
++		 * stream match table sits at GR0+0x800, CBAR at GR1, and the
++		 * context banks at base+0x8000, all exactly where arm-smmu.c
++		 * expects them. Downstream maps stream IDs 0, 1 and 2 -
++		 * gfx3d_user, gfx3d_priv and gfx3d_spare - onto three context
++		 * banks; arm-smmu derives the bank count from its own ID
++		 * registers, so only the interrupts are listed here.
++		 */
++		gpu_smmu: iommu@fdb10000 {
++			compatible = "arm,smmu-v1";
++			reg = <0xfdb10000 0x10000>;
++
++			#global-interrupts = <1>;
++			#iommu-cells = <1>;
++
++			interrupts = <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
++
++			clocks = <&mmcc OXILICX_AHB_CLK>,
++				 <&mmcc OXILICX_AXI_CLK>,
++				 <&mmcc OXILI_GFX3D_CLK>;
++			clock-names = "iface", "bus", "core";
++
++			power-domains = <&mmcc OXILICX_GDSC>;
++		};
++
+ 		sram@fdd00000 {
+ 			compatible = "qcom,msm8974-ocmem";
+ 			reg = <0xfdd00000 0x2000>,

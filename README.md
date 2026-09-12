@@ -54,7 +54,7 @@ comparator refuses to charge at all. `0023` fixes the current ADC, which had bee
 an amp and mangling the sign on discharge; it is what made any power measurement
 possible.
 
-`0018`, `0025`, `0027`, `0031`, `0032` and `0033` are **not in the build**. They are the start of GPU IOMMU
+`0018`, `0025`, `0027`, `0031` through `0034` are **not in the build**. They are the start of GPU IOMMU
 support and are kept here because the device-tree data in them was expensive to
 recover; see the IOMMU section below for why they are parked.
 
@@ -834,10 +834,30 @@ call is skipped. The GPU's transactions therefore match no stream and reach no
 context bank, which accounts for the hang *and* for the complete absence of fault
 reports - no context bank owns the transaction, so nothing is there to report one.
 
-Worth weighing before writing that code: this is ordinary ARM SMMU stream matching,
-and mainline's generic `arm-smmu.c` already does it. `qcom_iommu.c` is the cut-down
-msm8916 variant that assumes TrustZone handles it. Driving this IOMMU with `arm-smmu`
-may be a much shorter road than teaching `qcom_iommu` stream mapping.
+Which raises a better question than "how do we teach `qcom_iommu` stream mapping",
+because the register layout is a byte-for-byte match with the generic ARM SMMU
+driver: the stream match table at GR0+0x800, CBAR at GR1, context banks at
+base+0x8000. This hardware simply *is* an ARM SMMU, and `arm-smmu.c` already does
+everything `qcom_iommu.c` cannot.
+
+`0034` tries exactly that, and the driver agrees:
+
+    arm-smmu fdb10000.iommu: SMMUv1 with:
+            stage 1 translation / stage 2 / nested
+            stream matching with 4 register groups
+    arm-smmu fdb10000.iommu: SMMU address space size (0x8000) differs from
+                             mapped region size (0x10000)!
+
+That warning is the next thing in the way, and it is specific. `arm-smmu` takes
+`numpage` from `IDR1.NUMPAGENDXB` and addresses context bank *n* at
+`base + ((numpage + n) << pgshift)`. The ID register reports numpage 4, putting the
+banks at base+0x4000, while downstream places them at `0xfdb18000` - base+0x8000 -
+so the real value is 8 and the ID register under-reports. The driver is programming
+the wrong addresses, which is why the GPU still fails the same way.
+
+`arm-smmu-qcom.c` has a `cfg_probe` implementation hook for exactly this kind of
+deviation, and there is no msm8974 entry in its match table. Adding one that forces
+`numpage` is the next step, and it should come before anything else here.
 
 Two register facts settled along the way, both from downstream's `iommu_hw-v1.h`.
 `0x2000` is `MICRO_MMU_CTRL` with halt-request at bit 2 and idle at bit 3, so the
