@@ -1,21 +1,24 @@
 --- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
 +++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
-@@ -2329,7 +2329,13 @@
+@@ -2329,7 +2329,16 @@
  					<&ocmemnoc OCMEM_VNOC_MAS_GFX3D &ocmemnoc OCMEM_SLV_OCMEM>;
  			interconnect-names = "gfx-mem", "ocmem";
  
 -			// iommus = <&gpu_iommu 0>;
 +			/*
-+			 * gfx3d_user. The cell is a stream ID here, not a
-+			 * context bank index: arm-smmu does the stream matching
-+			 * itself, which is exactly what this hardware needs and
-+			 * what qcom_iommu cannot do.
++			 * All three stream IDs downstream maps: gfx3d_user,
++			 * gfx3d_priv and gfx3d_spare. The cell is a stream ID
++			 * here, not a context bank index - arm-smmu does the
++			 * stream matching itself, which is what this hardware
++			 * needs and what qcom_iommu cannot do. Mapping only
++			 * user leaves the GPU's other traffic untranslated, and
++			 * it submits work that never completes.
 +			 */
-+			iommus = <&gpu_smmu 0>;
++			iommus = <&gpu_smmu 0>, <&gpu_smmu 1>, <&gpu_smmu 2>;
  
  			status = "disabled";
  
-@@ -2350,6 +2356,35 @@
+@@ -2350,6 +2359,35 @@
  			};
  		};
  
@@ -29,7 +32,7 @@
 +		 * registers, so only the interrupts are listed here.
 +		 */
 +		gpu_smmu: iommu@fdb10000 {
-+			compatible = "arm,smmu-v1";
++			compatible = "qcom,msm8974-smmu-v1", "arm,smmu-v1";
 +			reg = <0xfdb10000 0x10000>;
 +
 +			#global-interrupts = <1>;

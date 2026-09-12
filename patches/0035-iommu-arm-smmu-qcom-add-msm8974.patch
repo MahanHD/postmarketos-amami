@@ -1,0 +1,64 @@
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -662,6 +662,53 @@
+  * It is not yet possible to use MDP SMMU with the bypass quirk on the msm8996,
+  * there are not enough context banks.
+  */
++/*
++ * msm8974's IDR1.NUMPAGENDXB reports four pages, which would put context bank n at
++ * base + 0x4000 + n * 0x1000. Downstream addresses the banks at 0xfdb18000 on a
++ * base of 0xfdb10000, i.e. base + 0x8000, so the register under-reports and the
++ * generic calculation programs the wrong addresses entirely. Probe both candidates
++ * before overriding, so the correction is measured rather than assumed.
++ */
++static int msm8974_smmu_cfg_probe(struct arm_smmu_device *smmu)
++{
++	unsigned int off;
++	int ret;
++
++	for (off = 0x4000; off <= 0x8000; off += 0x4000) {
++		u32 back;
++
++		writel_relaxed(0xdeadbee0, smmu->base + off + ARM_SMMU_CB_TTBR0);
++		back = readl_relaxed(smmu->base + off + ARM_SMMU_CB_TTBR0);
++		writel_relaxed(0, smmu->base + off + ARM_SMMU_CB_TTBR0);
++
++		dev_info(smmu->dev, "context bank probe at +0x%x: read back 0x%08x\n",
++			 off, back);
++	}
++
++	ret = qcom_smmu_cfg_probe(smmu);
++	if (ret)
++		return ret;
++
++	smmu->numpage = 8;
++	dev_info(smmu->dev, "context banks forced to base + 0x%x\n",
++		 smmu->numpage << smmu->pgshift);
++
++	return 0;
++}
++
++static const struct arm_smmu_impl msm8974_smmu_impl = {
++	.init_context = qcom_smmu_init_context,
++	.cfg_probe = msm8974_smmu_cfg_probe,
++	.def_domain_type = qcom_smmu_def_domain_type,
++	.write_s2cr = qcom_smmu_write_s2cr,
++	.tlb_sync = qcom_smmu_tlb_sync,
++};
++
++static const struct qcom_smmu_match_data msm8974_smmu_data = {
++	.impl = &msm8974_smmu_impl,
++	.adreno_impl = &qcom_adreno_smmu_v2_impl,
++};
++
+ static const struct qcom_smmu_match_data msm8996_smmu_data = {
+ 	.impl = NULL,
+ 	.adreno_impl = &qcom_adreno_smmu_v2_impl,
+@@ -693,6 +740,7 @@
+  * special handling and can not be covered by the qcom,smmu-500 entry.
+  */
+ static const struct of_device_id __maybe_unused qcom_smmu_impl_of_match[] = {
++	{ .compatible = "qcom,msm8974-smmu-v1", .data = &msm8974_smmu_data },
+ 	{ .compatible = "qcom,msm8996-smmu-v2", .data = &msm8996_smmu_data },
+ 	{ .compatible = "qcom,msm8998-smmu-v2", .data = &qcom_smmu_v2_data },
+ 	{ .compatible = "qcom,qcm2290-smmu-500", .data = &qcom_smmu_500_impl0_data },

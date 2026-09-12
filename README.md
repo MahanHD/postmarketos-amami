@@ -54,7 +54,7 @@ comparator refuses to charge at all. `0023` fixes the current ADC, which had bee
 an amp and mangling the sign on discharge; it is what made any power measurement
 possible.
 
-`0018`, `0025`, `0027`, `0031` through `0034` are **not in the build**. They are the start of GPU IOMMU
+`0018`, `0025`, `0027`, `0031` through `0035` are **not in the build**. They are the start of GPU IOMMU
 support and are kept here because the device-tree data in them was expensive to
 recover; see the IOMMU section below for why they are parked.
 
@@ -856,8 +856,32 @@ so the real value is 8 and the ID register under-reports. The driver is programm
 the wrong addresses, which is why the GPU still fails the same way.
 
 `arm-smmu-qcom.c` has a `cfg_probe` implementation hook for exactly this kind of
-deviation, and there is no msm8974 entry in its match table. Adding one that forces
-`numpage` is the next step, and it should come before anything else here.
+deviation - it already corrects lying ID registers on msm8998 and sdm630 - so `0035`
+adds `qcom,msm8974-smmu-v1` beside them. The correction is measured rather than
+assumed: writing a magic word to `CB_TTBR0` at both candidate offsets and reading it
+back gives
+
+    context bank probe at +0x4000: read back 0x00000000
+    context bank probe at +0x8000: read back 0xdeadbee0
+
+so the banks really are at base+0x8000 and `numpage` really is 8.
+
+**With that, the GPU initialises through the IOMMU.** `a3xx_hw_init` passes, the `-22`
+is gone, the device gains an `iommu` symlink pointing at `smmu.0xfdb10000`, mesa loads
+`FD330`, and `msm_gpu_init` stops printing its fallback line - which only appears when
+`gpu->aspace` is NULL, so a real address space is being built and used. That is the
+furthest this has ever got.
+
+What remains is a hangcheck lockup on real submissions: the GPU runs its init command
+stream through the IOMMU and then cannot complete ordinary work, with the completed
+fence trailing the submitted one and recovery looping. Mapping all three stream IDs
+downstream uses - gfx3d_user, gfx3d_priv, gfx3d_spare - changes nothing; it fails the
+same with one or three, and no fault is reported either way. Worth examining next:
+the IOVA range the address space is built over, TLB maintenance, and whether fault
+reporting is reaching us at all.
+
+A kernel in this state still renders by hanging and recovering, so it is not usable
+day to day and both patches stay out of the build.
 
 Two register facts settled along the way, both from downstream's `iommu_hw-v1.h`.
 `0x2000` is `MICRO_MMU_CTRL` with halt-request at bit 2 and idle at bit 3, so the
