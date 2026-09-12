@@ -1058,13 +1058,57 @@ idle and unhalted, and clearing halt-request explicitly changes nothing. Downstr
 never halts these instances either - `qcom,iommu-enable-halt` appears zero times
 across all ten of them.
 
-**And the prize is not where it looked.** `msm_use_mmu()` tests
-`device_iommu_mapped(dev->dev) || device_iommu_mapped(dev->dev->parent)`, where
-`dev->dev` is the *display controller*. The 192MB carveout is therefore gated on the
-**MDP** having an IOMMU, not the GPU. Even a flawless GPU IOMMU reclaims nothing by
-itself; that needs `mdp_iommu@fd928000`, whose probe fires
-`qcom_scm_restore_sec_cfg` at the SMMU behind a live display. Worth weighing before
-spending more on this.
+## The MDP IOMMU, and the 192MB
+
+`msm_use_mmu()` tests `device_iommu_mapped(dev->dev) || device_iommu_mapped(dev->dev->parent)`,
+where `dev->dev` is the *display controller*. The carveout is gated on the **MDP**
+having an IOMMU, not the GPU, so a flawless GPU IOMMU reclaims nothing by itself.
+
+`0037` adds `mdp_smmu@fd928000` and points the MDP at it, and **the carveout is
+gone**: no `using 192m VRAM carveout`, no `VRAM: 70100000->7c100000`, the display
+controller bound to `smmu.0xfd928000`, `FD330` still the renderer, and zero faults on
+any of the six interrupt lines the two SMMUs now register.
+
+Three things made it much cheaper than expected. It is the **same hardware as the
+GPU's SMMU** - identical probe, 4 stream-match groups, 3 context banks, and the
+`numpage` write-back test reading `0xdeadbee0` at `+0x8000`, which agrees with stock
+placing `mdp_0` at `0xfd930000`. So `0034`/`0035`'s compatible and quirks carry over
+and **no new driver code was needed**. Stock and LineageOS describe both IOMMUs
+identically, so the vendor tree could be trusted here. And despite
+`qcom,iommu-secure-id = <1>`, **TrustZone does not block the non-secure side** -
+`arm-smmu-qcom` never calls `qcom_scm_restore_sec_cfg` and does not need to.
+
+The trap worth recording: this SMMU sits in the display's path whether or not anything
+attaches to it, and `arm_smmu_device_reset()` rewrites every S2CR *before*
+`impl->reset` runs. With `CONFIG_ARM_SMMU_DISABLE_BYPASS_BY_DEFAULT=y` that blanks the
+panel just by probing. **Boot with `arm-smmu.disable_bypass=0`** - MDSS has masters
+that are not described here, and they still have to get through.
+
+**What it costs.** Without the carveout, GEM objects come from shmem as scattered
+order-0 pages, so `iommu_pgsize()` cannot coalesce whatever the IOVA alignment is and
+`0036`'s gain disappears entirely - its `get_pages_vram` half becomes dead code.
+Walking both SMMUs afterwards finds **no sections and no large pages at all**, only
+4253 small pages on the GPU and 1945 on the MDP. Throughput goes back to the 4KB
+figures: 329 FPS at 200x200 against 876 with the carveout.
+
+| | carveout (r56) | MDP IOMMU (r74) |
+|---|---|---|
+| `CmaFree` | 65152 kB | 261760 kB |
+| glxgears 200x200 | - | 329 FPS (876 with carveout) |
+
+`CmaFree` is the honest number: exactly 192MiB handed back. Net usable memory gains
+less than that, because the display and GPU buffers now come out of ordinary memory
+instead of a reservation - about 24MB of them were mapped during a run.
+
+Shmem huge pages would fix the page size and give both, but they are not reachable
+here: `HAVE_ARCH_TRANSPARENT_HUGEPAGE` is selected only `if ARM_LPAE`, and LPAE is off
+- which is also why the IOMMU uses the v7s short-descriptor format. Getting large
+pages back alongside the reclaimed memory would mean a CMA-backed GEM allocator rather
+than shmem, which is a real divergence from upstream.
+
+So the choice is roughly 192MB of CMA against about 2.7x of GPU throughput, on a
+device whose heaviest graphics load is an Xfce desktop. Both `0036` and `0037` stay
+out of the build until that is decided deliberately.
 
 It went unsolved for a long time partly because upstream has not solved it either:
 Matti Lehtimaki's `qcom-msm8974-5.19.y-iommu` branch is, in Luca

@@ -1,0 +1,68 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -1958,6 +1958,20 @@
+ 				interconnects = <&mmssnoc MNOC_MAS_MDP_PORT0 &bimc BIMC_SLV_EBI_CH0>;
+ 				interconnect-names = "mdp0-mem";
+ 
++				/*
++				 * Stock maps two stream IDs here, mdp_0 and
++				 * mdp_1. msm_kms_init_aspace() looks for the
++				 * IOMMU on the MDP device first and falls back
++				 * to MDSS, so it belongs on this node.
++				 *
++				 * This is what actually reclaims msm.vram:
++				 * msm_use_mmu() tests the display controller,
++				 * not the GPU, so the carveout survives a
++				 * perfectly good GPU IOMMU and only goes away
++				 * here.
++				 */
++				iommus = <&mdp_smmu 0>, <&mdp_smmu 1>;
++
+ 				ports {
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
+@@ -2264,6 +2278,44 @@
+ 			power-domains = <&mmcc OXILICX_GDSC>;
+ 		};
+ 
++		/*
++		 * The display controller's SMMU. Same hardware as the GPU's, so
++		 * the same compatible carries the quirks it needs: context banks
++		 * at base + 0x8000 (stock puts mdp_0 at 0xfd930000, which is
++		 * exactly that) and SCTLR.AFE cleared.
++		 *
++		 * This SMMU sits in the display's path whether or not anything
++		 * attaches to it, and arm_smmu_device_reset() rewrites every
++		 * S2CR before impl->reset runs - so with the bypass disabled it
++		 * blanks the panel just by probing. Any MDSS master not named
++		 * here still needs to get through, so keep
++		 * arm-smmu.disable_bypass=0 until every one of them is mapped.
++		 *
++		 * Interrupts are stock's: global SPI 73, contexts on 46 and 47.
++		 * arm-smmu indexes the context list by CBAR.IRPTNDX and hands
++		 * those out from 1, so which entry is which still has to be
++		 * measured on the hardware - see the GPU's node.
++		 */
++		mdp_smmu: iommu@fd928000 {
++			compatible = "qcom,msm8974-smmu-v1", "arm,smmu-v1";
++			reg = <0xfd928000 0x10000>;
++
++			#global-interrupts = <1>;
++			#iommu-cells = <1>;
++
++			interrupts = <GIC_SPI 73 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 45 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 46 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 47 IRQ_TYPE_LEVEL_HIGH>;
++
++			clocks = <&mmcc MDSS_AHB_CLK>,
++				 <&mmcc MDSS_AXI_CLK>,
++				 <&mmcc MDSS_MDP_CLK>;
++			clock-names = "iface", "bus", "core";
++
++			power-domains = <&mmcc MDSS_GDSC>;
++		};
++
+ 		sram@fdd00000 {
+ 			compatible = "qcom,msm8974-ocmem";
+ 			reg = <0xfdd00000 0x2000>,

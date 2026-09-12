@@ -198,3 +198,18 @@ screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
 - `THERMAL_EMULATION` is still enabled. It is how the thermal trips were tested, and
   it also lets root feed the thermal core a fake low reading. Worth dropping once the
   frequency ceiling can reach 75 C honestly.
+
+**The MDP IOMMU is done too (`0037`), and the carveout is gone.** Same hardware as the
+GPU's SMMU, so no new driver code; TrustZone does not block it despite
+`qcom,iommu-secure-id = <1>`; display fine, zero faults. `CmaFree` goes from 65152 kB
+to 261760 kB - exactly 192MiB back.
+
+It costs the page-size win: without a carveout, GEM comes from shmem as scattered
+order-0 pages, so nothing coalesces and throughput returns to the 4KB figures (329 FPS
+at 200x200 against 876). Huge pages are not reachable -
+`HAVE_ARCH_TRANSPARENT_HUGEPAGE` needs `ARM_LPAE`, which is off. Having both would
+mean a CMA-backed GEM allocator instead of shmem.
+
+**Boot with `arm-smmu.disable_bypass=0`** for anything involving the MDP SMMU: it sits
+in the display path regardless of attachment, `arm_smmu_device_reset()` rewrites every
+S2CR before `impl->reset`, and undescribed MDSS masters still need to get through.
