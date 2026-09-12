@@ -1,119 +1,138 @@
 # Next steps
 
-Written 2026-09-12, after the session that added CPU thermal throttling, fixed the
-core-wedging bug in our own cpufreq patches, and produced the first power numbers.
+Rewritten 2026-09-12, after a long session that fixed a core-wedging bug of our own
+making, produced the first power numbers, and ruled out five plausible explanations
+for two problems that remain open.
 
-Ordered by what is worth doing next, not by how hard it is.
+The headline change since the last version: **stop building for a while.** Both live
+threads have converged on needing a source rather than another cycle, and the cost of
+guessing has been measured — five dead ends, one build each.
 
-## What we can measure now
+## Where the port stands
 
-Worth knowing before picking anything up, because these did not exist yesterday and
-they change what is cheap:
+Working: panel, touch, Xfce on freedreno, WiFi, Bluetooth, charging (on a real
+supply), battery percentage, USB networking, sensors bar proximity, the notification
+LED, suspend (s2idle), GPU and CPU frequency scaling, and CPU thermal throttling.
 
-- **An ammeter.** `0023` fixed `qcom-spmi-iadc`, so
-  `/sys/bus/iio/devices/iio:device0/in_current1_raw` reports real battery current in
-  microamps, signed, at about 0.55 mA resolution. Two independent sense resistors
-  agree within 5-7%, which is why the numbers are trustworthy. Anything that claims
-  to save power can now be A/B'd in minutes instead of argued about.
-- **pstore.** `ramoops@3e8e0000` is live with a 1 MB console buffer. A panic or a
-  soft reboot leaves the log in `/var/lib/systemd/pstore/` (systemd-pstore *moves* it
-  out of `/sys/fs/pstore`). It does not survive a forced power-off - photograph the
-  screen for a hard hang.
-- **A panic net.** The standard command line carries
-  `sysctl.kernel.panic_on_rcu_stall=1 panic=10 rcupdate.rcu_exp_cpu_stall_timeout=21000`,
-  so a wedged core reboots itself with a record rather than needing the battery
-  pulled. Keep all three together - see the README for why the third is not optional.
-- **A test pattern that works.** Flash a known-good kernel, `fastboot boot` the
-  experiment so the flashed one stays as the fallback, change one variable, soak past
-  the known failure point. That is what found the cpufreq bug.
+Not working: audio, proximity, ambient light, deep suspend, the GPU IOMMU.
 
-## 1. GPU IOMMU
+## What is instrumented
 
-The biggest single win left: `msm.vram=192m` costs 192 MB on a 2 GB phone.
+These did not exist before and they change which experiments are cheap:
 
-`0017`, `0018` and `0019` are written and in `patches/` but out of the build.
-`0017` makes `qcom,iommu-secure-id` optional, which is required because downstream's
-`kgsl_iommu` has none; `0018` adds the node; `0019` adds the `alt` clock.
+- **An ammeter.** `0023` fixed `qcom-spmi-iadc`; battery current is signed microamps
+  at ~0.55 mA resolution, cross-checked between two sense resistors to 5-7%.
+  Measuring needs the USB cable **out** - on a host port the battery floats.
+- **pstore.** `ramoops` with a 1 MB console buffer. Survives a panic or soft reboot,
+  not a forced power-off. `systemd-pstore` moves records to
+  `/var/lib/systemd/pstore/`.
+- **A panic net** in the standard command line:
+  `sysctl.kernel.panic_on_rcu_stall=1 panic=10 rcupdate.rcu_exp_cpu_stall_timeout=21000`.
+  Keep all three together; the third is in **milliseconds** and its default fires on a
+  harmless expedited stall every boot.
+- **A test pattern.** Flash a known-good kernel, `fastboot boot` the experiment, change
+  one variable, soak past the known failure point. That found the cpufreq bug.
+- **`no_hash_pointers`** on the command line when a `%p` needs to be real. That is what
+  turned the IOMMU `-EBUSY` from a guess into a fact.
 
-Start by putting `0018` back in the build **with** `0019`, because the first attempt
-hung the boot with only the OXILICX interface and bus clocks and the GFX3D clock is
-the obvious suspect. Use `fastboot boot`, not a flash. If it hangs, pstore now
-answers why instead of leaving us blind as it did the first time.
+## Phase 1: read before building
 
-Expect this to be open-ended. Upstream has not solved it either: Matti Lehtimaki's
-`qcom-msm8974-5.19.y-iommu` branch is, in Luca Weiss's words, "a semi-working branch
-but hitting random issues with it". One thing worth keeping from reading it - the
-`#if 0` block of register pokes there is not guesswork, it is downstream's
-`qcom,iommu-bfb-regs`/`-data` pair for `kgsl_iommu` verbatim, and that is the
-non-secure init the GPU IOMMU needs.
+Both open problems need an external source. Produce a written finding first; no
+flashing until there is one.
 
-**Done when:** the GPU renders with `iommus` bound and `msm.vram` dropped from the
-command line, and `free` shows the 192 MB back.
+### Why the GPU will not idle behind its IOMMU
 
-## 2. Where 252 mA of idle draw goes
+Everything in software now works - the IOMMU probes, the GPU attaches, the domain
+allocates, the address space is built (`0026` fixed the `-EBUSY`, which was the ARM32
+DMA glue claiming the group first). Then `a3xx_hw_init` reports `timeout waiting for
+GPU to idle!` and `adreno_load_gpu` fails with `-22`.
 
-Idle with the screen off measures 252 mA. That is high for an idle phone and the
-number is suspicious rather than explanatory - something is probably busy that need
-not be. Worth an hour with the ammeter before any bigger power work, because it may
-be one runaway wakeup rather than anything structural.
+Already ruled out, do not repeat: OCMEM contention (`active=0x0`, allocates cleanly);
+mainline's `0xffffffff` write to 0x2000 secretly halting the IOMMU (skipping it
+changed nothing); the missing non-secure BFB init (`applied 12 bfb settings`, failed
+identically).
 
-Places to look: `/proc/interrupts` deltas over a quiet minute, `/sys/kernel/debug/wakeup_sources`,
-the DSP and WCNSS remoteprocs, and whether the GPU is actually reaching its lowest
-devfreq state when nothing is drawing.
+Where to look: downstream `msm_iommu-v1.c` for what those registers actually mean -
+the prior art's claim that 0x2000 is `MICRO_MMU_CTRL` is **contradicted by
+experiment**, so its offsets and its BFB table are both suspect; how kgsl sets up its
+context banks and what it expects of the aperture; Matti Lehtimäki's
+`qcom-msm8974-5.19.y-iommu` read commit by commit rather than skimmed.
 
-**Done when:** either the draw is explained and reduced, or we can say what each
-major consumer costs.
+Not yet eliminated: whether `iommus` should name one context bank rather than two,
+and whether faults are being raised but never reported.
 
-## 3. A suspend number, and deep suspend
+**Note the payoff is smaller than it looks.** `msm_use_mmu()` tests the *display*
+controller and its parent, not the GPU, so the 192 MB carveout only goes away once the
+**MDP** has an IOMMU. A flawless GPU IOMMU reclaims nothing by itself.
 
-Everything measured so far is *awake*. There is no s2idle standby figure at all, and
-standby is what decides whether the phone survives a night on the shelf.
+### Why sensor 0x28 reports nothing
 
-Measuring it needs care: the logger cannot sample while suspended, so take voltage
-and capacity either side of a timed `rtcwake`, over long enough that OCV noise does
-not swamp the delta. Bear in mind `capacity` is OCV-derived and recovers after load,
-so it is not a fuel gauge.
+Proximity enumerates correctly and registers an IIO device - which is why it passed
+for working - and then never delivers a sample. Zero bytes in 25 s with a hand over
+it, against tens of kilobytes in five from the accelerometer.
 
-Then the real question: the port only does `s2idle`, never deep suspend. That likely
-touches the same SPM machinery as the core-wedging bug, so doing it after #2 means
-arriving with better instincts about this hardware.
+Already ruled out: that only the primary data type is subscribed. True, and it is why
+an ambient light channel alone can never work, but subscribing to both (`0031`) leaves
+it just as silent.
 
-**Done when:** we know the standby drain in mA, and whether deep suspend is
-reachable.
+Where to look: the APDS-9930 configuration in a working ROM; what actually sits at the
+unmapped registry offsets; and whether any other msm8974 device in postmarketOS has
+proximity working - if one does, the diff is the answer. Upstream lists proximity as
+supported, which points at this device's configuration rather than the driver.
 
-## 4. Raise the 960 MHz cap
+Weak lead, resist without a source: nine registry groups are requested and unmapped
+(2001, 2500, 2610, 2650, 2680, 2970, 2971, 2980, 2990), and `group_map[]` leaves
+`0x2900`-`0x2cff` unused - four pages against four unmapped `29xx` groups. `0007`
+proved one missing group can disable a sensor, but that cost the accelerometer its
+*enumeration*, and proximity enumerates fine.
 
-The CPU runs at 960 MHz of an available 2150.4 MHz. The full PVS table is recovered
-and recorded in the README; the blocker is that nothing in mainline drives VDD_APC,
-and the rail cannot even be read - PM8841 returns zeroes over SPMI.
+## Phase 2: deep suspend
 
-Now partly easier: with per-CPU cpufreq policies and a working ammeter we could at
-least characterise what higher OPPs cost thermally and electrically before deciding.
-But without rail control, raising the ceiling is an under-volted overclock. Do not
-ship one.
+**The biggest remaining lever on this phone**, bigger than the IOMMU. It is why idle
+costs 252 mA and why there is no standby to speak of: cores collapse individually
+while the SoC never does, so the RPM stays up, rails stay put and DDR stays refreshed.
 
-**Done when:** either the rail is controllable, or we have written down clearly why
-960 MHz stands.
+It is unimplemented, not unconfigured. Nothing in mainline calls `suspend_set_ops()`
+with `PM_SUSPEND_MEM` for Qualcomm ARM32 - there is no such call under
+`drivers/soc/qcom`, `drivers/firmware` or `arch/arm/mach-qcom`, and that directory
+holds only `Kconfig`, `Makefile` and `platsmp.c`. `ARM_PSCI` is off, so there is no
+firmware route either.
 
-## 5. Audio
+Scope it by reading how arm64 Qualcomm gets there through PSCI, and what downstream
+msm8974 does instead. Then platform suspend ops, SPM programming for system-wide
+power collapse rather than the per-core standalone kind, and RPM coordination.
 
-Unchanged and still the largest untouched area: no APR/SLIMbus device tree and no
-WCD9320 codec driver. A project, not a task. The DSP boots and every sensor on it
-works, so the groundwork is not nothing.
+## Phase 3: audio
+
+Unchanged and still the largest untouched area: no APR/SLIMbus device tree, no WCD9320
+codec driver. The DSP boots and every sensor on it works, so the groundwork exists.
+
+## Parked patches
+
+Out of the build, kept because the data in them was expensive to recover:
+
+- `0018`, `0025` - the GPU IOMMU node and the GPU's binding to it.
+- `0027` - the non-secure BFB settings.
+- `0031` - subscribing to every data type, a prerequisite for ambient light.
+
+In the build but inert without those: `0017` (optional secure id), `0019` (the `alt`
+clock, which is what stopped the first attempt hanging the phone), `0026` (detaching
+the ARM DMA mapping).
+
+**A kernel with the IOMMU bound is a regression** - the display still works but the
+GPU falls back to `llvmpipe`. Check `glxinfo -B` reports `FD330` after touching any of
+this, not merely that the screen lights up.
 
 ## Smaller loose ends
 
-- **The CPU wedge is fixed but only partly explained.** `0022` removes the cause, but
-  the two observed failures had different signatures - one printed RCU stalls for 26
-  minutes with two cores alive, the other printed nothing at all. There may be a
-  second bug hiding behind the first.
-- **`reboot bootloader` is a dead end.** The `reboot-mode` node exists and
-  `syscon-reboot-mode` binds, but Sony's S1Boot ignores the Qualcomm magics at offset
-  `0x65c`. Getting to fastboot still means holding Volume Up while plugging in. Do not
-  spend more time here without S1Boot internals.
-- **`BAT_THERM` sits close to the limit.** 642 mV needed the extended jeita band to be
-  accepted. It works, but it is not understood *why* a normal reading lands that near
-  the edge - a wrong assumption about the reference or the thermistor curve would be
-  worth knowing before trusting the charger in the cold.
-- **Charging is supply-sensitive.** A PC USB port cannot both run this phone and
-  charge it. Always test charging on a real supply.
+- The CPU wedge is fixed but only partly explained: the two observed failures had
+  different signatures, so there may be a second bug behind the first.
+- `reboot bootloader` is a dead end - S1Boot ignores the Qualcomm magics at `0x65c`.
+  Getting to fastboot still means holding Volume Up while plugging in.
+- `BAT_THERM` sits at 642 mV, close enough to the limit that the narrow jeita band
+  rejected it. It works with the extended band, but *why* a normal reading lands that
+  near the edge is not understood, and that matters before trusting the charger in the
+  cold.
+- `THERMAL_EMULATION` is still enabled. It is how the thermal trips were tested, and
+  it also lets root feed the thermal core a fake low reading. Worth dropping once the
+  frequency ceiling can reach 75 C honestly.
