@@ -17,7 +17,7 @@ LED, suspend (s2idle), GPU and CPU frequency scaling, and CPU thermal throttling
 Not working: audio, proximity, ambient light, deep suspend.
 
 Both IOMMUs work as of `0034`-`0037`, and the 192MB carveout can be reclaimed, but
-they are **in the build as of r76** and the 192MB carveout is gone; see below.
+they are out of the build pending a throughput-against-memory decision; see below.
 
 ## What is instrumented
 
@@ -43,7 +43,7 @@ These did not exist before and they change which experiments are cheap:
 The GPU IOMMU is done - and it was solved by instrumenting the running hardware, not
 by finding a source, which is worth remembering. Proximity still needs one.
 
-### The GPU IOMMU: solved, and in the build
+### The GPU IOMMU: solved, and deliberately not in the build
 
 `0034` and `0035` make the GPU render through its SMMU. Three-minute soak: zero
 hangchecks, 55,145 GPU interrupts, fences retiring within three of submission, no
@@ -64,7 +64,7 @@ rebuilding:
   worse: the fault lands on a line bound to another bank, whose handler sees a clean
   FSR, and the level-triggered line storms until the kernel says `nobody cared`.
 
-It cost throughput, measured like-for-like at
+**It stays out of the build**, and now for a measured reason. Like-for-like at
 320MHz, `vblank_mode=0`: 780 FPS on the carveout kernel against 154 FPS behind the
 SMMU, both with zero hangchecks. Five times the cost, and it reclaims nothing until
 the **MDP** has an IOMMU, because `msm_use_mmu()` tests the display controller.
@@ -158,15 +158,25 @@ and are not reachable: `HAVE_ARCH_TRANSPARENT_HUGEPAGE` is selected only `if
 ARM_LPAE`, which is off - which is also why the IOMMU uses v7s short descriptors.
 Having both would need a CMA-backed GEM allocator rather than shmem.
 
-That was the trade: 192MB of RAM against about 2.7x of GPU throughput, on a 2GB device
-whose heaviest graphics load is an Xfce desktop. **The memory won.** `0034` through
-`0037` are in the build as of r76, flashed and verified across a real reboot -
-`MemAvailable` 1395404 kB against 1217868 kB, about 172MB more, with CMA entirely free
-and zero faults under load.
+**`0037` is not finished: the panel is black.** The SMMU attaches, the carveout goes
+away and about 172MB comes back, but nothing reaches the screen. It was briefly turned
+on by default on the strength of console checks - `fb0` registered, backlight lit,
+`FD330`, 151 FPS, zero faults - none of which test scanout. The one line `0037`
+removes is `no IOMMU, fallback to phys contig buffers for scanout`.
 
-Needs `CONFIG_ARM_SMMU_DISABLE_BYPASS_BY_DEFAULT` **off in the config**, not on the
-command line: `boot-deploy` rewrites the command line, and undescribed MDSS masters
-losing bypass means a dark panel.
+Most likely an unmapped stream. `0037` maps SIDs 0 and 1 from stock's `mdp_0`/`mdp_1`;
+MDSS has masters not described here, and with the bypass off they do not fault, they
+use the IOVA as a physical address and read garbage.
+
+**Next step, and it is a measurement:** rebuild with
+`CONFIG_ARM_SMMU_DISABLE_BYPASS_BY_DEFAULT=y` so unmatched streams fault, then read
+the faulting stream ID from `sGFSYNR1` (and check the MDP SMMU's own interrupt numbers
+the same way the GPU's were - global SPI 73 and contexts 45/46/47 are still a guess).
+Add the discovered SIDs to `iommus` and try again.
+
+**Rule for this one: no claim about the display until someone has looked at the
+panel.** `fb0`, `bl_power`, `glxinfo` and a frame counter all pass while the screen is
+black.
 
 ### Why sensor 0x28 reports nothing
 
@@ -214,8 +224,8 @@ codec driver. The DSP boots and every sensor on it works, so the groundwork exis
 
 Out of the build, kept because the data in them was expensive to recover:
 
-- `0018`, `0025` - the earlier `qcom_iommu` node and the GPU's binding to it,
-  superseded by `0034`-`0037` but kept for the device-tree data in them.
+- `0034`, `0035`, `0036`, `0037` - the GPU and MDP IOMMUs, and the page-size fix.
+- `0018`, `0025` - the earlier `qcom_iommu` node and the GPU's binding to it.
 - `0027` - the non-secure BFB settings.
 - `0031` - subscribing to every data type, a prerequisite for ambient light.
 - `debug/9004` - dumps the whole SMMU state after a successful attach.
