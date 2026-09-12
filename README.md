@@ -1180,6 +1180,61 @@ non-secure init the GPU IOMMU needs.
 Where the port goes next, and what is already instrumented to get it there, is in
 [`docs/next-steps.md`](docs/next-steps.md).
 
+## Audio
+
+The codec is a **WCD9320 (Taiko) on SLIMbus** - stock's tree calls it `taiko_codec`,
+`compatible = "qcom,taiko-slim-pgd"`, with the bus at `slim@fe12f000` (`qcom,slim-ngd`)
+and a card called `qcom,msm8974-audio-taiko`.
+
+Mainline has the APR transport, the whole Q6 stack, the SLIMbus core and two SLIMbus
+controllers. **It does not have a WCD9320 driver** - the codecs in tree are wcd9335,
+wcd934x and wcd937x/938x/939x, all later parts. Nothing makes sound without that
+driver, and writing it is the bulk of the work.
+
+`0039` does the part underneath it: an `apr` node on the ADSP's existing `smd-edge`,
+the same edge the sensor manager already uses, with `q6core`, `q6afe`, `q6asm` and
+`q6adm`. The ADSP is enabled on rhine and reports `running`, so the transport should
+come up; `q6core` reporting the ADSP's version is the check. It produces no sound by
+itself.
+
+SLIMbus is the middle step and needs a compatible of its own: stock calls this
+controller NGD, but mainline's NGD driver knows only `qcom,slim-ngd-v1.5.0` (8996) and
+`-v2.1.0` (SDM845), with a separate non-NGD driver for apq8064. msm8974 sits between
+them.
+
+## Battery temperature, and why the jeita band had to be widened
+
+`0024` sets `qcom,jeita-extended-temp-range`, and that turns out to be the correct
+setting for this battery rather than a workaround.
+
+The PM8941's battery temperature comparator comes with two fixed windows, expressed as
+percentages of the thermistor's reference: [35%:70%] or [25%:80%]. Calibrating the
+VADC from its own `REF_625MV`, `REF_1250MV` and `GND_REF` channels gives 97.37
+uV/count, and against `VDD_VADC` at 1781.7 mV the thermistor reads:
+
+| | raw | mV | % of reference |
+|---|---|---|---|
+| at rest | 30949 | 606.5 | 34.0% |
+| after ten minutes of four-core load | 30499 | 562.7 | 31.6% |
+
+**606.5 mV is already below the narrow band's 35% floor of 623.6 mV**, so that window
+inhibits charging at ordinary room temperature - permanently, not marginally. The
+extended window's floor is 25%, or 445.4 mV.
+
+The load moved it 43.8 mV for a 7.1 C rise in PMIC die temperature, about -6.2 mV/C,
+and `BAT_THERM` kept falling for a while after the CPU started cooling, so the battery
+warmed by less than that and the true slope per battery-degree is steeper. Either way
+there is 26 C or more of headroom before the extended hot threshold trips, putting it
+somewhere near 50 C, which is about where charging should stop anyway.
+
+The reason a normal reading sits so low is that those thresholds are sized for
+Qualcomm's reference battery and amami's thermistor is not it. Worth knowing on top:
+**mainline has no `SCALE_BATT_THERM`**. Downstream declares this channel with
+`qcom,scale-function = <1>`, a dedicated battery-thermistor table; mainline offers only
+`DEFAULT`, `THERM_100K_PULLUP`, `PMIC_THERM`, `XOTHERM` and the HW_CALIB variants.
+That is why `LR_MUX1_BAT_THERM` has no `_input` attribute and why `qcom_smbb` reports
+no battery `temp` at all.
+
 ## Debugging notes
 
 A few dead ends worth not repeating.

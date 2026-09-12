@@ -228,8 +228,36 @@ power collapse rather than the per-core standalone kind, and RPM coordination.
 
 ## Phase 3: audio
 
-Unchanged and still the largest untouched area: no APR/SLIMbus device tree, no WCD9320
-codec driver. The DSP boots and every sensor on it works, so the groundwork exists.
+Surveyed properly, and the shape of the work is now known rather than guessed.
+
+**The hardware**, from stock's device tree: the codec is `taiko_codec`,
+`compatible = "qcom,taiko-slim-pgd"` - a **WCD9320 (Taiko) on SLIMbus**. The bus is
+`slim@fe12f000`, `qcom,slim-ngd`, reg `0xfe12f000` (0x35000) and `0xfe104000`
+(0x20000). The card is `qcom,msm8974-audio-taiko`, with the usual pile of
+`qcom,msm-dai-q6-sb-*` SLIMbus DAIs and a quaternary MI2S.
+
+**What mainline has:** APR over SMD (`qcom,apr-v2`), the full Q6 stack
+(`q6core`/`q6afe`/`q6asm`/`q6adm`/`q6routing`), the SLIMbus core, an NGD controller
+(`qcom,slim-ngd-v1.5.0` for 8996, `-v2.1.0` for SDM845) and a non-NGD one for
+apq8064.
+
+**What mainline does not have: a WCD9320 driver.** The codecs present are wcd9335,
+wcd934x, wcd937x/938x/939x - all later parts. That is the blocker, and it is a large
+one; nothing downstream of it can make sound without it.
+
+So the work splits into three milestones, and only the first two are small:
+
+1. **APR and the Q6 services** - `0039` adds the `apr` node under the ADSP's existing
+   `smd-edge`, the same edge `qcom_smgr` already uses for sensors, with `q6core`,
+   `q6afe`, `q6asm` and `q6adm`. The ADSP is already enabled on rhine and reports
+   `running`. This makes no sound, but it is the layer everything else sits on and it
+   is independently checkable: `q6core` reports the ADSP's version once APR is up.
+   Needs `CONFIG_QCOM_APR` and the `SND_SOC_QDSP6_*` symbols. **Built as r82, not yet
+   booted.**
+2. **SLIMbus.** msm8974 sits between the two controllers mainline supports - stock
+   calls it NGD, but the NGD driver only knows 8996 and SDM845 - so it needs a
+   compatible of its own and then has to be shown enumerating the Taiko.
+3. **The WCD9320 driver.** New, large, and the only route to actual audio.
 
 ## Parked patches
 
@@ -254,10 +282,29 @@ screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
   different signatures, so there may be a second bug behind the first.
 - `reboot bootloader` is a dead end - S1Boot ignores the Qualcomm magics at `0x65c`.
   Getting to fastboot still means holding Volume Up while plugging in.
-- `BAT_THERM` sits at 642 mV, close enough to the limit that the narrow jeita band
-  rejected it. It works with the extended band, but *why* a normal reading lands that
-  near the edge is not understood, and that matters before trusting the charger in the
-  cold.
+- ~~`BAT_THERM` sits at 642 mV...~~ **Resolved, and the extended band is correct
+  rather than a workaround.** Calibrated from the VADC's own references
+  (97.37 uV/count) against `VDD_VADC` = 1781.7 mV, the thermistor reads **606.5 mV at
+  rest, 34.0% of the reference**. The narrow jeita floor is 35% = 623.6 mV, so this
+  battery reads *below* it at ordinary room temperature - the narrow band inhibits
+  charging permanently, not marginally. The extended floor is 25% = 445.4 mV.
+  Ten minutes of four-core load moved it to 562.7 mV for a +7.1 C rise in PMIC die
+  temperature, about **-6.2 mV/C**, and the battery kept cooling more slowly than the
+  SoC afterwards, so it warmed less than 7 C and the true per-battery-degree slope is
+  steeper still. Either way there is roughly 26 C or more of headroom before the
+  extended hot threshold trips, which puts it near 50 C - about where a charger should
+  stop anyway. Nothing to fix.
+
+  The underlying reason is that the PM8941 BTC thresholds are fixed percentages of the
+  thermistor reference, sized for Qualcomm's reference battery, and amami's sits
+  lower. Worth knowing: **mainline has no `SCALE_BATT_THERM`.** Downstream declares
+  this channel with `qcom,scale-function = <1>` (a dedicated battery-thermistor
+  table); mainline only offers `DEFAULT`, `THERM_100K_PULLUP`, `PMIC_THERM`,
+  `XOTHERM` and the HW_CALIB variants. That is why `LR_MUX1_BAT_THERM` has no
+  `_input` attribute and why `qcom_smbb` reports no battery `temp` at all.
+  Follow-up worth one boot: declare the channel with `SCALE_THERM_100K_PULLUP` and
+  check the reported temperature against a cold and a warm reference. If the battery's
+  NTC is a 100k part the existing table may be close enough to give a real `temp`.
 - `THERMAL_EMULATION` is still enabled. It is how the thermal trips were tested, and
   it also lets root feed the thermal core a fake low reading. Worth dropping once the
   frequency ceiling can reach 75 C honestly.

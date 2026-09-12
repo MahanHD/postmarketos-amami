@@ -1,0 +1,74 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -10,6 +10,7 @@
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
+ #include <dt-bindings/power/qcom-rpmpd.h>
+ #include <dt-bindings/reset/qcom,gcc-msm8974.h>
++#include <dt-bindings/soc/qcom,apr.h>
+ #include <dt-bindings/thermal/thermal.h>
+ 
+ / {
+@@ -2399,6 +2400,63 @@
+ 				mboxes = <&apcs 8>;
+ 				qcom,smd-edge = <1>;
+ 				label = "lpass";
++
++				/*
++				 * The audio services, on the same edge the
++				 * sensor manager already talks over. Nothing
++				 * here produces sound on its own: the codec is
++				 * a WCD9320 on SLIMbus and mainline has no
++				 * driver for it. What this does give is the
++				 * layer everything else has to sit on, and it
++				 * is independently checkable - q6core reports
++				 * the ADSP's version once APR is up.
++				 */
++				apr {
++					compatible = "qcom,apr-v2";
++					qcom,smd-channels = "apr_audio_svc";
++					qcom,domain = <APR_DOMAIN_ADSP>;
++					#address-cells = <1>;
++					#size-cells = <0>;
++
++					q6core: service@3 {
++						compatible = "qcom,q6core";
++						reg = <APR_SVC_ADSP_CORE>;
++					};
++
++					q6afe: service@4 {
++						compatible = "qcom,q6afe";
++						reg = <APR_SVC_AFE>;
++
++						q6afedai: dais {
++							compatible = "qcom,q6afe-dais";
++							#address-cells = <1>;
++							#size-cells = <0>;
++							#sound-dai-cells = <1>;
++						};
++					};
++
++					q6asm: service@7 {
++						compatible = "qcom,q6asm";
++						reg = <APR_SVC_ASM>;
++
++						q6asmdai: dais {
++							compatible = "qcom,q6asm-dais";
++							#address-cells = <1>;
++							#size-cells = <0>;
++							#sound-dai-cells = <1>;
++						};
++					};
++
++					q6adm: service@8 {
++						compatible = "qcom,q6adm";
++						reg = <APR_SVC_ADM>;
++
++						q6routing: routing {
++							compatible = "qcom,q6adm-routing";
++							#sound-dai-cells = <0>;
++						};
++					};
++				};
+ 			};
+ 		};
+ 
