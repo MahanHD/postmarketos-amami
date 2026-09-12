@@ -56,27 +56,63 @@ rebuilding:
   ringbuffer. `0035` clears the bit, which also yields the permissions the mappings
   asked for rather than merely silencing the fault.
 - **Both SMMU interrupt numbers were wrong**, which is why none of it was ever
-  visible. Global fault is SPI 37, not 38 (38 is the secure line, which is what
-  downstream lists); context banks take one line each from 241 up, not 241 three
-  times. Getting this wrong is silent - FSR latches, the transaction is terminated,
-  and a faulting GPU looks like an idle one.
+  visible. Global fault is SPI 38; the context list is indexed by `CBAR.IRPTNDX`
+  rather than by bank number, and the hardware raises on SPI 240 + IRPTNDX, so it has
+  to start at 240. Getting this wrong is silent - FSR latches, the transaction is
+  terminated, and a faulting GPU looks like an idle one. Getting it off by one is
+  worse: the fault lands on a line bound to another bank, whose handler sees a clean
+  FSR, and the level-triggered line storms until the kernel says `nobody cared`.
 
 **It stays out of the build**, and now for a measured reason. Like-for-like at
 320MHz, `vblank_mode=0`: 780 FPS on the carveout kernel against 154 FPS behind the
 SMMU, both with zero hangchecks. Five times the cost, and it reclaims nothing until
 the **MDP** has an IOMMU, because `msm_use_mmu()` tests the display controller.
 
-Worth doing before turning it on: find where the five-fold cost goes. The suspects -
-non-coherent page-table walks, TLB maintenance on every map and unmap, a runtime-PM
-round trip per operation - are all unmeasured. And `msm8974_smmu_write_s2cr` forces
-`NSCFG`/`MEMATTR` on a theory that later proved wrong; it has never been tested on
-its own.
+**Where the five-fold cost goes is now measured: translation itself.** Zero SMMU
+maintenance calls in five seconds of load, glxgears blocked on the GPU rather than the
+CPU (94.5% of a core down to 26.7%), and throughput inversely proportional to pixel
+count while a 64x64 window reaches the carveout kernel's own CPU-bound ceiling. No
+fixed per-frame cost; a cost on every memory access, i.e. TLB misses walking uncached
+page tables.
+
+Ruled out: runtime PM (pinned vs auto is identical to three decimal places), and
+`dma-coherent` - `IDR0.CTTW` claims coherent walks are supported, but turning it on
+kills the GPU outright and storms both fault lines, because the interconnect is not
+coherent with the CPU.
+
+The one lever left is page size. Every mapping is a 4KB small page because
+`msm_gem_init_vma()` allocates IOVAs with only `PAGE_SIZE` alignment, so
+`iommu_pgsize()` can never coalesce; `pgsize_bitmap` is `0x41311000`, so 64KB and 1MB
+are sitting unused. Untested, and it is a drm/msm change rather than a DT one.
+
+Also still untested on its own: `msm8974_smmu_write_s2cr` forces `NSCFG`/`MEMATTR` on
+a theory that later proved wrong.
 
 The technique is the reusable part. `CONFIG_STRICT_DEVMEM` is off, so `/dev/mem`
 reaches any register block directly - but pin its runtime PM first
 (`echo on > /sys/bus/platform/devices/<dev>/power/control`) or the read hangs the
-bus on an unclocked block. Fault injection plus a scan of the GIC's pending-and-
-disabled set is how both interrupt numbers were recovered without a vendor tree.
+bus on an unclocked block.
+
+Two cautions learned the hard way. A GIC pending scan is only evidence if the line was
+*not* already pending beforehand - the first pass at the interrupt numbers accepted
+SPI 37 while it had been pending from boot, and it was another device's. And a zero
+fault counter proves nothing once the faults are fixed; verify delivery by *injecting*
+one. Forcing `SCTLR.AFE` back on for a bank is a reliable fault generator here.
+
+Downstream's device tree is worth having as a cross-check and is one command away:
+the LineageOS `boot.img` carries a QCDT container of DTBs, and `mdp_iommu` /
+`kgsl_iommu` sit in it with real addresses, SIDs and interrupts. It is not the final
+authority - its `kgsl_iommu` lists SPI 241 for all three GPU contexts, which is only
+right for whichever one lands on IRPTNDX 1 - but it is what flagged the first
+interrupt guess as wrong. Prefer **stock** firmware to LineageOS where it matters:
+Lineage descends from Sony's GPL tree but drifts, while stock pairs with the
+TrustZone image the phone actually boots. Stock is an FTF of `.sin` containers, so it
+needs an extra unpacking step.
+
+For the MDP IOMMU, downstream says: base `fd928000`, contexts at `fd930000`+ (the same
+base+0x8000 layout, so the `numpage` quirk carries over), global SPI 73, context
+interrupts SPI 47 and 46 - and `qcom,iommu-secure-id = <1>`, which `kgsl_iommu` does
+not have. TrustZone owns that one.
 
 ### Why sensor 0x28 reports nothing
 

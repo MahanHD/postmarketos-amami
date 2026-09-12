@@ -931,14 +931,45 @@ mappings asked for. v7s always sets `AP[0]`, so with AFE off the encodings becom
 exactly right, and incidentally explains why the ringbuffer's descriptor differs from
 the fence page's: `msm_ringbuffer_new` asks for `MSM_BO_GPU_READONLY`.
 
-The interrupt numbers came from the GIC rather than from a vendor tree, by leaving a
-fault latched and asking which line was stuck pending with nobody listening. Clearing
-`sGFSR` dropped **SPI 37**; clearing cb1's `FSR` dropped **SPI 242**. So the global
-fault is 37 - 38 is the *secure* line, which is what downstream's `kgsl_iommu` lists
-and what `0018` had copied - and the context banks take one line each from 241 up,
-where the node had listed 241 three times. Note `arm-smmu` indexes that list by
-`CBAR.IRPTNDX`, not by context bank number; on SMMUv1 it assigns `irptndx` round-robin
-from 1, so cb0 and cb1 come out on indices 1 and 2.
+The interrupt numbers took two attempts and the first one was wrong, which is worth
+recording because of *why* it was wrong.
+
+`arm-smmu` indexes the context interrupt list by `CBAR.IRPTNDX`, not by context bank
+number, and on SMMUv1 it hands out `IRPTNDX` round-robin starting at 1. The hardware
+raises a bank's fault on **SPI 240 + IRPTNDX**, so the list has to begin at 240 even
+though index 0 is never assigned. With the global fault on **SPI 38**, the node wants:
+
+    interrupts = <GIC_SPI 38  IRQ_TYPE_LEVEL_HIGH>,   /* global */
+                 <GIC_SPI 240 IRQ_TYPE_LEVEL_HIGH>,   /* IRPTNDX 0 */
+                 <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>,   /* IRPTNDX 1 */
+                 <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>;   /* IRPTNDX 2 */
+
+The first attempt read the GIC's pending set with a fault latched and concluded 37 for
+the global and 241 upwards for the contexts. The context half was off by one and the
+global was simply another device's line - SPI 37 was *already* pending before any
+fault was injected, with `sGFSR` reading zero, and that anomaly should have been
+enough to reject it.
+
+Off by one is worse than the original bug rather than better. The fault arrives on a
+line bound to a *different* bank, whose handler reads a clean `FSR` and returns
+`IRQ_NONE`; the level-triggered line then storms until the kernel gives up with
+`irq 63: nobody cared` and disables it.
+
+What settled it was unpacking downstream's device tree out of the LineageOS
+`boot.img` QCDT container - its `kgsl_iommu` lists global 38 and SPI 241 for all three
+contexts - and then letting the hardware arbitrate between that and the measurement.
+With context bank 1 alone latching a translation fault and bank 0 idle as a control,
+`CBAR(1)` read `IRPTNDX 2` and SPI 242 alone went pending. So downstream's 38 is
+right, its 241-for-everything is only accidentally right for whichever context lands
+on index 1, and the rule is 240 + `IRPTNDX`.
+
+Delivery is now verified rather than assumed, which the first attempt never was: with
+no faults left to raise, zero on a fault counter proves nothing. Forcing `SCTLR.AFE`
+back on for bank 1 manufactures an access flag fault on demand, and it comes out the
+whole way - the bank's own line increments, the handler clears `FSR` instead of
+storming, and drm/msm prints the faulting address:
+
+    *** fault: iova=         1001000, flags=0
 
 `0034` and `0035` carry both fixes. **The GPU now renders through its IOMMU.** A
 three-minute glxgears soak gives zero hangchecks, 55,145 GPU interrupts, fences
@@ -953,9 +984,35 @@ than a suspicion. Like-for-like at 320MHz with `vblank_mode=0`:
 | r66, GPU behind the SMMU | 154 FPS | 0 |
 
 A five-fold cost, for no reclaimed memory at all until the **MDP** has an IOMMU too -
-see below. Non-coherent page-table walks, TLB maintenance on every map and unmap, and
-a runtime-PM round trip per operation are the obvious suspects, and none of them has
-been measured yet.
+see below.
+
+**Where the cost goes is now measured, and it is translation itself.** In five seconds
+of load there are *zero* calls to `arm_smmu_map_pages`, `unmap_pages`, `iotlb_sync`,
+`tlb_inv_*` or `runtime_resume` - the only thing firing is `msm_gem_vma_map`, 33784
+times, every one of them returning early on `vma->mapped`. So there is no maintenance
+in steady state at all. glxgears drops from 94.5% of a core to 26.7%, meaning it is
+blocked on the GPU rather than on the CPU. And throughput scales inversely with pixel
+count - 866 FPS at 64x64, 335 at 200x200, 89 at 400x400 - where 64x64 reaches the same
+CPU-bound ceiling as the carveout kernel. The SMMU adds no fixed per-frame cost
+whatsoever; it adds a cost to every memory access, which is what TLB misses walking
+uncached page tables look like.
+
+Runtime PM is ruled out by direct A/B: pinning `power/control` to `on` gives
+153.887-153.951 FPS against 153.884-153.951 on `auto`.
+
+**`dma-coherent` is not the answer, and the hardware lies about it.** `IDR0.CTTW`
+reads 1, and the driver only treats the walk as non-coherent because the node lacks
+the property - it says so, `(IDR0.CTTW overridden by FW configuration)`. Adding it
+makes the driver report `coherent table walk` and leaves `TTBR0` cacheable, and the
+GPU then produces no frames at all: glxgears never prints, hangchecks climb, and both
+fault lines storm. The interconnect is not coherent with the CPU, so the walker reads
+stale descriptors. The driver's own comment warns about exactly this - trust the
+firmware description over the ID register - and this SoC is the case it means.
+
+That leaves page size. Every mapping is a 4KB small page, because
+`msm_gem_init_vma()` allocates IOVAs with `PAGE_SIZE` alignment and `iommu_pgsize()`
+can only coalesce when IOVA and physical address share the larger alignment.
+`pgsize_bitmap` is `0x41311000`, so 64KB and 1MB are available and unused. Untested.
 
 One honest loose end: `msm8974_smmu_write_s2cr` forces `NSCFG` and `MEMATTR` because
 downstream does, and it was originally added on a theory - that unmarked transactions

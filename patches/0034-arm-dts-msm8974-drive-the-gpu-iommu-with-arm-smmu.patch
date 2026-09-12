@@ -18,7 +18,7 @@
  
  			status = "disabled";
  
-@@ -2201,6 +2210,50 @@
+@@ -2201,6 +2210,60 @@
  			};
  		};
  
@@ -39,24 +39,34 @@
 +			#iommu-cells = <1>;
 +
 +			/*
-+			 * Found by fault injection rather than from a vendor
-+			 * tree: with a fault latched and the line still
-+			 * asserted, clearing sGFSR dropped SPI 37 out of the
-+			 * GIC's pending set and clearing context bank 1's FSR
-+			 * dropped SPI 242. So the global fault is 37 - 38 is
-+			 * the secure one, which is what downstream's
-+			 * kgsl_iommu node lists - and the context banks take
-+			 * one line each from 241 up.
++			 * The global fault is SPI 38, as downstream's
++			 * kgsl_iommu node says. The context banks are the
++			 * subtle part: arm-smmu indexes this list by
++			 * CBAR.IRPTNDX, not by context bank number, and on
++			 * SMMUv1 it hands out IRPTNDX round-robin from 1. The
++			 * hardware raises a bank's fault on SPI 240 + IRPTNDX,
++			 * so the list has to start at 240 even though nothing
++			 * is ever assigned index 0.
 +			 *
-+			 * Getting this wrong is silent: the SMMU still latches
-+			 * FSR and terminates the transaction, but nothing is
-+			 * ever reported, so a faulting GPU looks like an idle
-+			 * one.
++			 * Measured, with the other bank idle as a control:
++			 * context bank 1 carries IRPTNDX 2, and when it alone
++			 * latched a translation fault, SPI 242 alone went
++			 * pending. Downstream lists 241 for all three of its
++			 * contexts, which only happens to be right for the one
++			 * that lands on index 1.
++			 *
++			 * Getting this wrong is nearly silent: the SMMU latches
++			 * FSR and terminates the transaction either way. Off by
++			 * one it is worse than silent - the fault arrives on a
++			 * line bound to a different bank, whose handler reads a
++			 * clean FSR and returns IRQ_NONE, so the level-triggered
++			 * line storms until the kernel disables it with
++			 * "nobody cared".
 +			 */
-+			interrupts = <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>,
++			interrupts = <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 240 IRQ_TYPE_LEVEL_HIGH>,
 +				     <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>,
-+				     <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>,
-+				     <GIC_SPI 243 IRQ_TYPE_LEVEL_HIGH>;
++				     <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>;
 +
 +			clocks = <&mmcc OXILICX_AHB_CLK>,
 +				 <&mmcc OXILICX_AXI_CLK>,
