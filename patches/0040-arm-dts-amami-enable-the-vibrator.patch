@@ -1,0 +1,13 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -23,6 +23,10 @@
+ 	};
+ };
+ 
++&pm8941_vib {
++	status = "okay";
++};
++
+ &smbb {
+ 	qcom,fast-charge-safe-current = <1300000>;
+ 	qcom,fast-charge-current-limit = <1300000>;

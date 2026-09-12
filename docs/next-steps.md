@@ -288,6 +288,33 @@ So the work splits into three milestones, and only the first two are small:
    compatible of its own and then has to be shown enumerating the Taiko.
 3. **The WCD9320 driver.** New, large, and the only route to actual audio.
 
+## Vibrator
+
+`0040`, one line. Mainline already has the driver (`pm8xxx-vibrator.c`), the config
+already had `CONFIG_INPUT_PM8XXX_VIBRATOR=y`, and `pm8941.dtsi` already carries
+`pm8941_vib: vibrator@c000` with the right compatible - it is just left
+`status = "disabled"`, and no msm8974 board in the tree enables it. Both stock and
+LineageOS run this exact node (`qcom,vib@c000`, `qcom,qpnp-vibrator`, okay), so the
+hardware is there. Built in r83, not yet booted; the check is an input device
+appearing that is neither gpio-keys, the power key, nor the touchscreen.
+
+Enabled on amami only rather than rhine-wide, since honami and togari cannot be
+tested here.
+
+## Camera: bigger than audio
+
+Surveyed, not started. Mainline's CAMSS driver matches `qcom,msm8916-camss`,
+`msm8953`, `msm8996`, `sc7280`, `sc8280xp` and `sdm660` - **there is no msm8974
+support**, so it would need a new resource table and version alongside those.
+
+Worse, the sensors are not described in any standard way. Stock binds
+`qcom,camera@20` and `@6c` as `qcom,sony_camera_0` / `_1`, Sony's own binding, with
+the actual parts identified only by module codes and per-module power sequences -
+`SOI08BS2` and `SOI20BS0` at the rear, `LGI02BN1` and `SEM02BN1` at the front. So
+even after CAMSS, each module needs identifying and a sensor driver wiring up.
+
+That makes camera the largest single area left, ahead of audio.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:
