@@ -54,9 +54,12 @@ comparator refuses to charge at all. `0023` fixes the current ADC, which had bee
 an amp and mangling the sign on discharge; it is what made any power measurement
 possible.
 
-`0018`, `0025`, `0027`, `0031` through `0035` are **not in the build**. They are the start of GPU IOMMU
-support and are kept here because the device-tree data in them was expensive to
-recover; see the IOMMU section below for why they are parked.
+`0018`, `0025`, `0027`, `0031` through `0035` are **not in the build**. `0034` and
+`0035` are the working GPU IOMMU - the GPU renders through it with no faults and no
+hangchecks - but they cost about five times the throughput and reclaim no memory
+until the display controller has an IOMMU too, so they stay out until that is worth
+paying for. The rest are earlier attempts, kept because the device-tree data in them
+was expensive to recover. See the IOMMU section below.
 
 `0031` is **not in the build**. It makes the sensor manager subscribe to every data
 type a sensor reports rather than only the primary one, which is a prerequisite for
@@ -771,7 +774,7 @@ power collapse rather than the per-core standalone kind, and coordinating with t
 RPM to drop rails. That is a project on the scale of the GPU IOMMU. It is the single
 biggest lever on battery life that remains.
 
-## The GPU IOMMU, and why it is parked
+## The GPU IOMMU
 
 `msm.vram=192m` costs 192MB on a 2GB phone, and an IOMMU would give it back.
 `0017` makes `qcom,iommu-secure-id` optional - downstream's `kgsl_iommu` has no
@@ -872,35 +875,92 @@ is gone, the device gains an `iommu` symlink pointing at `smmu.0xfdb10000`, mesa
 `gpu->aspace` is NULL, so a real address space is being built and used. That is the
 furthest this has ever got.
 
-What remains is a hangcheck lockup on real submissions, and measuring it narrows the
-problem considerably. During a hang `rptr` equals `wptr`, so the command processor
-walks the entire ringbuffer and catches up; `rbbm-status` reads `0x00000001`, and bit
-31 is GPU_BUSY, so the GPU is idle; `gpu-irq` is registered at `GIC-0 65` and records
-**zero** interrupts after ten seconds of glxgears; and the SMMU's global-fault and
-context-fault lines record zero as well. Meanwhile `last-fence` climbs and
-`retired-fence` trails behind it.
+What remained was a hangcheck lockup on real submissions, and the measurements were
+strange enough to be worth keeping. During a hang `rptr` equalled `wptr`, so the
+command processor walked the whole ringbuffer and caught up; `rbbm-status` read
+`0x00000001`, idle; `gpu-irq` recorded **zero** interrupts after ten seconds of
+glxgears; and the SMMU's global-fault and context-fault lines recorded zero as well,
+while `last-fence` climbed and `retired-fence` trailed behind it. The control settles
+that the interrupt really is the completion path: the same counter on the working
+carveout kernel goes from 62 to 21,334 in twelve seconds.
 
-So the processor consumes the ring without executing anything - no fence write, no
-interrupt, no fault - which is what reading stale or zero data looks like, given the
-debugfs dump shows the CPU's view of that same ring holding real packets.
+So the processor consumed the ring without executing anything - no fence write, no
+interrupt, no fault.
 
-That also undermines the earlier claim that init succeeds. `a3xx_idle()` waits for
-GPU_BUSY to clear, so a command processor that never starts is trivially idle and
-`a3xx_hw_init` reports success without proving anything.
+**Both halves of that turned out to be bugs, and the "no fault" half was hiding the
+other one.**
 
-Two things did not help. Mapping all three stream IDs downstream uses - gfx3d_user,
-gfx3d_priv and gfx3d_spare - fails identically to mapping one. And forcing
-`S2CR.NSCFG` to non-secure with `MEMATTR` set, which downstream does on every stream
-and neither mainline driver does, changes nothing either; the theory there was that
-unmarked transactions were landing on the unconfigured secure context banks, which
-would have explained garbage reads with no non-secure fault.
+The way in was to stop rebuilding and read the hardware on a running system.
+`CONFIG_STRICT_DEVMEM` is off, so `/dev/mem` reaches the SMMU directly - but only
+while it is clocked, and it is runtime-suspended between operations, so pin it first
+or the read hangs the bus:
 
-The control worth running before anything else is whether `gpu-irq` fires at all on
-the working carveout kernel. If it reads zero there too then the interrupt is not the
-completion path, and a good deal of the reasoning above needs redoing.
+    echo on > /sys/bus/platform/devices/fdb10000.iommu/power/control
 
-A kernel in this state still renders by hanging and recovering, so it is not usable
-day to day and both patches stay out of the build.
+With that, everything checked out. `SMR(0..2)` held `0x8000000{0,1,2}` - valid, stream
+IDs 0, 1 and 2 - and `S2CR(0..2)` read `0x000ca001`: type TRANS, aimed at context bank
+1, with the forced `NSCFG` and `MEMATTR`. The unused fourth slot read FAULT, and
+`sCR0` had `CLIENTPD` clear and `USFCFG` set, so the SMMU was enabled and unmatched
+streams would fault. Walking cb1's page tables in DRAM by hand resolved the
+ringbuffer's `iova 0x1001000` to `PA 0x70101000`, inside the `70100000->7c100000`
+carveout the display driver prints, readable and writable. `TCR` reading zero is
+correct rather than a failed write - `io-pgtable-arm-v7s` sets `tcr = 0` deliberately.
+
+That leaves "the SMMU is perfect and sees nothing" against "the SMMU is lying".
+Forcing all three streams to FAULT and running glxgears decided it: `sGFSR` became
+`0x80000001` - an invalid-context fault - so GPU traffic **does** reach the SMMU.
+But `/proc/interrupts` still showed zero on both fault lines.
+
+**Bug one: the fault interrupts were never delivered**, so every fault this hardware
+raised was invisible. Clearing the status and rerunning caught the real one:
+
+    cb1 FSR 0x00000004  FAR 0x01001000  FSYNR0 0x00000582
+
+An **access flag fault**, on the ringbuffer, on every fetch. `CFCFG` is clear, so each
+faulting transaction was terminated silently and the command processor read nothing.
+
+**Bug two: `SCTLR.AFE` does not work on this SMMU.** `io-pgtable-arm-v7s` sets `AP[0]`
+- which *is* the access flag once AFE is on - in every descriptor it writes, and the
+walk still faults. Clearing the bit by hand on the running system settled it
+immediately: `gpu-irq` went from one interrupt ever to **702 in twelve seconds**, and
+`last-fence` met `retired-fence` for the first time.
+
+Clearing AFE is not just silencing the fault, it also produces the permissions the
+mappings asked for. v7s always sets `AP[0]`, so with AFE off the encodings become
+`AP[2:0] = 0b011` for a writable page and `0b111` for a read-only one - which is
+exactly right, and incidentally explains why the ringbuffer's descriptor differs from
+the fence page's: `msm_ringbuffer_new` asks for `MSM_BO_GPU_READONLY`.
+
+The interrupt numbers came from the GIC rather than from a vendor tree, by leaving a
+fault latched and asking which line was stuck pending with nobody listening. Clearing
+`sGFSR` dropped **SPI 37**; clearing cb1's `FSR` dropped **SPI 242**. So the global
+fault is 37 - 38 is the *secure* line, which is what downstream's `kgsl_iommu` lists
+and what `0018` had copied - and the context banks take one line each from 241 up,
+where the node had listed 241 three times. Note `arm-smmu` indexes that list by
+`CBAR.IRPTNDX`, not by context bank number; on SMMUv1 it assigns `irptndx` round-robin
+from 1, so cb0 and cb1 come out on indices 1 and 2.
+
+`0034` and `0035` carry both fixes. **The GPU now renders through its IOMMU.** A
+three-minute glxgears soak gives zero hangchecks, 55,145 GPU interrupts, fences
+retiring within three of submission, and no fault on any line.
+
+It is still out of the default build, for a reason that is now a measurement rather
+than a suspicion. Like-for-like at 320MHz with `vblank_mode=0`:
+
+| kernel | glxgears | hangchecks |
+|---|---|---|
+| r56, carveout, no IOMMU | 780 FPS | 0 |
+| r66, GPU behind the SMMU | 154 FPS | 0 |
+
+A five-fold cost, for no reclaimed memory at all until the **MDP** has an IOMMU too -
+see below. Non-coherent page-table walks, TLB maintenance on every map and unmap, and
+a runtime-PM round trip per operation are the obvious suspects, and none of them has
+been measured yet.
+
+One honest loose end: `msm8974_smmu_write_s2cr` forces `NSCFG` and `MEMATTR` because
+downstream does, and it was originally added on a theory - that unmarked transactions
+were landing on the secure context banks - which the AFE finding disproves. Whether
+the hardware needs it has never been tested on its own.
 
 Two register facts settled along the way, both from downstream's `iommu_hw-v1.h`.
 `0x2000` is `MICRO_MMU_CTRL` with halt-request at bit 2 and idle at bit 3, so the
@@ -920,8 +980,8 @@ itself; that needs `mdp_iommu@fd928000`, whose probe fires
 `qcom_scm_restore_sec_cfg` at the SMMU behind a live display. Worth weighing before
 spending more on this.
 
-It is parked because the CPU wedge above outranked it, and because upstream has not
-solved it either: Matti Lehtimaki's `qcom-msm8974-5.19.y-iommu` branch is, in Luca
+It went unsolved for a long time partly because upstream has not solved it either:
+Matti Lehtimaki's `qcom-msm8974-5.19.y-iommu` branch is, in Luca
 Weiss's words on the freedreno list, "a semi-working branch but hitting random
 issues with it". One thing worth keeping from reading it - the `#if 0` block of
 register pokes in that branch is not guesswork, it is downstream's

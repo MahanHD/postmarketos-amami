@@ -1,6 +1,6 @@
 --- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
 +++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
-@@ -2329,7 +2329,16 @@
+@@ -2180,7 +2180,16 @@
  					<&ocmemnoc OCMEM_VNOC_MAS_GFX3D &ocmemnoc OCMEM_SLV_OCMEM>;
  			interconnect-names = "gfx-mem", "ocmem";
  
@@ -18,7 +18,7 @@
  
  			status = "disabled";
  
-@@ -2350,6 +2359,35 @@
+@@ -2201,6 +2210,50 @@
  			};
  		};
  
@@ -38,10 +38,25 @@
 +			#global-interrupts = <1>;
 +			#iommu-cells = <1>;
 +
-+			interrupts = <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH>,
++			/*
++			 * Found by fault injection rather than from a vendor
++			 * tree: with a fault latched and the line still
++			 * asserted, clearing sGFSR dropped SPI 37 out of the
++			 * GIC's pending set and clearing context bank 1's FSR
++			 * dropped SPI 242. So the global fault is 37 - 38 is
++			 * the secure one, which is what downstream's
++			 * kgsl_iommu node lists - and the context banks take
++			 * one line each from 241 up.
++			 *
++			 * Getting this wrong is silent: the SMMU still latches
++			 * FSR and terminates the transaction, but nothing is
++			 * ever reported, so a faulting GPU looks like an idle
++			 * one.
++			 */
++			interrupts = <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>,
 +				     <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>,
-+				     <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>,
-+				     <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
++				     <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 243 IRQ_TYPE_LEVEL_HIGH>;
 +
 +			clocks = <&mmcc OXILICX_AHB_CLK>,
 +				 <&mmcc OXILICX_AXI_CLK>,

@@ -1,16 +1,19 @@
 --- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
 +++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
-@@ -662,6 +662,79 @@
+@@ -662,6 +662,108 @@
   * It is not yet possible to use MDP SMMU with the bypass quirk on the msm8996,
   * there are not enough context banks.
   */
 +/*
-+ * Implementation-defined S2CR fields on this SoC. NSCFG is the one that matters:
-+ * left at 0 the stream carries whatever NS attribute the client emits, and the
-+ * GPU's transactions then land on the secure context banks, which nothing here has
-+ * configured. Reads come back as garbage, the CP walks its ringbuffer without
-+ * executing anything, no fence is written, no interrupt is raised and no non-secure
-+ * fault is reported. Downstream forces both fields on every stream.
++ * Implementation-defined S2CR fields on this SoC, forced the way downstream
++ * forces them on every stream: write-back memory attributes and a non-secure
++ * NS attribute rather than whatever the client emits.
++ *
++ * This was originally added on the theory that leaving NSCFG alone sent the
++ * GPU's traffic to the secure context banks. That theory was wrong - the real
++ * cause of the silent GPU was SCTLR.AFE, below - so this is kept because it
++ * matches downstream, not because it is known to be required. Whether the
++ * hardware needs it has not been tested on its own.
 + */
 +#define MSM8974_S2CR_MEMATTR		GENMASK(15, 12)
 +#define MSM8974_S2CR_NSCFG		GENMASK(19, 18)
@@ -64,23 +67,49 @@
 +	return 0;
 +}
 +
++/*
++ * SCTLR.AFE does not work here. io-pgtable-arm-v7s sets AP[0] - which is the
++ * access flag once AFE is on - in every descriptor it writes, and the walk
++ * still ends in an access flag fault: FSR reads 0x4 with FAR pointing at the
++ * ringbuffer, every transaction is terminated, and the GPU fetches nothing.
++ * Measured by clearing this bit by hand on a running system, at which point
++ * the GPU went from one interrupt ever to 702 in twelve seconds and its
++ * fences retired for the first time.
++ *
++ * Clearing AFE is not merely silencing the fault, it also gives the
++ * permissions the mappings asked for. v7s always sets AP[0], so with AFE off
++ * the encodings become AP[2:0] = 0b011 for a writable page and 0b111 for a
++ * read-only one, which is read/write and read-only respectively.
++ */
++static void msm8974_smmu_write_sctlr(struct arm_smmu_device *smmu, int idx,
++				     u32 reg)
++{
++	arm_smmu_cb_write(smmu, idx, ARM_SMMU_CB_SCTLR,
++			  reg & ~ARM_SMMU_SCTLR_AFE);
++}
++
 +static const struct arm_smmu_impl msm8974_smmu_impl = {
 +	.init_context = qcom_smmu_init_context,
 +	.cfg_probe = msm8974_smmu_cfg_probe,
 +	.def_domain_type = qcom_smmu_def_domain_type,
 +	.write_s2cr = msm8974_smmu_write_s2cr,
++	.write_sctlr = msm8974_smmu_write_sctlr,
 +	.tlb_sync = qcom_smmu_tlb_sync,
 +};
 +
++/*
++ * No adreno_impl: qcom_smmu_create() picks that one only for a node compatible
++ * with "qcom,adreno-smmu", and this is a plain SMMU whose GPU happens to be the
++ * only master. Listing one here would be dead code.
++ */
 +static const struct qcom_smmu_match_data msm8974_smmu_data = {
 +	.impl = &msm8974_smmu_impl,
-+	.adreno_impl = &qcom_adreno_smmu_v2_impl,
 +};
 +
  static const struct qcom_smmu_match_data msm8996_smmu_data = {
  	.impl = NULL,
  	.adreno_impl = &qcom_adreno_smmu_v2_impl,
-@@ -693,6 +766,7 @@
+@@ -693,6 +795,7 @@
   * special handling and can not be covered by the qcom,smmu-500 entry.
   */
  static const struct of_device_id __maybe_unused qcom_smmu_impl_of_match[] = {

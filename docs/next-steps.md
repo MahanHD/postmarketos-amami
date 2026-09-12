@@ -1,12 +1,12 @@
 # Next steps
 
 Rewritten 2026-09-12, after a long session that fixed a core-wedging bug of our own
-making, produced the first power numbers, and ruled out five plausible explanations
-for two problems that remain open.
+making, produced the first power numbers, and then solved the GPU IOMMU.
 
-The headline change since the last version: **stop building for a while.** Both live
-threads have converged on needing a source rather than another cycle, and the cost of
-guessing has been measured — five dead ends, one build each.
+The headline change since the last version: **the GPU IOMMU works**, and the thing
+that cracked it was not another build. Five rebuild-and-guess cycles had failed;
+reading the SMMU's own registers on a running phone through `/dev/mem` found both
+bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Where the port stands
 
@@ -14,7 +14,9 @@ Working: panel, touch, Xfce on freedreno, WiFi, Bluetooth, charging (on a real
 supply), battery percentage, USB networking, sensors bar proximity, the notification
 LED, suspend (s2idle), GPU and CPU frequency scaling, and CPU thermal throttling.
 
-Not working: audio, proximity, ambient light, deep suspend, the GPU IOMMU.
+Not working: audio, proximity, ambient light, deep suspend.
+
+The GPU IOMMU works as of `0034`/`0035` but is out of the build; see below.
 
 ## What is instrumented
 
@@ -37,33 +39,44 @@ These did not exist before and they change which experiments are cheap:
 
 ## Phase 1: read before building
 
-Both open problems need an external source. Produce a written finding first; no
-flashing until there is one.
+The GPU IOMMU is done - and it was solved by instrumenting the running hardware, not
+by finding a source, which is worth remembering. Proximity still needs one.
 
-### Why the GPU will not idle behind its IOMMU
+### The GPU IOMMU: solved, and deliberately not in the build
 
-Everything in software now works - the IOMMU probes, the GPU attaches, the domain
-allocates, the address space is built (`0026` fixed the `-EBUSY`, which was the ARM32
-DMA glue claiming the group first). Then `a3xx_hw_init` reports `timeout waiting for
-GPU to idle!` and `adreno_load_gpu` fails with `-22`.
+`0034` and `0035` make the GPU render through its SMMU. Three-minute soak: zero
+hangchecks, 55,145 GPU interrupts, fences retiring within three of submission, no
+fault on any line.
 
-Already ruled out, do not repeat: OCMEM contention (`active=0x0`, allocates cleanly);
-mainline's `0xffffffff` write to 0x2000 secretly halting the IOMMU (skipping it
-changed nothing); the missing non-secure BFB init (`applied 12 bfb settings`, failed
-identically).
+Two bugs, both found by reading the hardware on a running system rather than by
+rebuilding:
 
-Where to look: downstream `msm_iommu-v1.c` for what those registers actually mean -
-the prior art's claim that 0x2000 is `MICRO_MMU_CTRL` is **contradicted by
-experiment**, so its offsets and its BFB table are both suspect; how kgsl sets up its
-context banks and what it expects of the aperture; Matti Lehtimäki's
-`qcom-msm8974-5.19.y-iommu` read commit by commit rather than skimmed.
+- **`SCTLR.AFE` does not work.** `io-pgtable-arm-v7s` sets `AP[0]` - the access flag -
+  in every descriptor, and the walk still ends in an access flag fault on the
+  ringbuffer. `0035` clears the bit, which also yields the permissions the mappings
+  asked for rather than merely silencing the fault.
+- **Both SMMU interrupt numbers were wrong**, which is why none of it was ever
+  visible. Global fault is SPI 37, not 38 (38 is the secure line, which is what
+  downstream lists); context banks take one line each from 241 up, not 241 three
+  times. Getting this wrong is silent - FSR latches, the transaction is terminated,
+  and a faulting GPU looks like an idle one.
 
-Not yet eliminated: whether `iommus` should name one context bank rather than two,
-and whether faults are being raised but never reported.
+**It stays out of the build**, and now for a measured reason. Like-for-like at
+320MHz, `vblank_mode=0`: 780 FPS on the carveout kernel against 154 FPS behind the
+SMMU, both with zero hangchecks. Five times the cost, and it reclaims nothing until
+the **MDP** has an IOMMU, because `msm_use_mmu()` tests the display controller.
 
-**Note the payoff is smaller than it looks.** `msm_use_mmu()` tests the *display*
-controller and its parent, not the GPU, so the 192 MB carveout only goes away once the
-**MDP** has an IOMMU. A flawless GPU IOMMU reclaims nothing by itself.
+Worth doing before turning it on: find where the five-fold cost goes. The suspects -
+non-coherent page-table walks, TLB maintenance on every map and unmap, a runtime-PM
+round trip per operation - are all unmeasured. And `msm8974_smmu_write_s2cr` forces
+`NSCFG`/`MEMATTR` on a theory that later proved wrong; it has never been tested on
+its own.
+
+The technique is the reusable part. `CONFIG_STRICT_DEVMEM` is off, so `/dev/mem`
+reaches any register block directly - but pin its runtime PM first
+(`echo on > /sys/bus/platform/devices/<dev>/power/control`) or the read hangs the
+bus on an unclocked block. Fault injection plus a scan of the GIC's pending-and-
+disabled set is how both interrupt numbers were recovered without a vendor tree.
 
 ### Why sensor 0x28 reports nothing
 
@@ -111,17 +124,18 @@ codec driver. The DSP boots and every sensor on it works, so the groundwork exis
 
 Out of the build, kept because the data in them was expensive to recover:
 
-- `0018`, `0025` - the GPU IOMMU node and the GPU's binding to it.
+- `0034`, `0035` - the working GPU IOMMU, held back on throughput cost.
+- `0018`, `0025` - the earlier `qcom_iommu` node and the GPU's binding to it.
 - `0027` - the non-secure BFB settings.
 - `0031` - subscribing to every data type, a prerequisite for ambient light.
+- `debug/9004` - dumps the whole SMMU state after a successful attach.
 
 In the build but inert without those: `0017` (optional secure id), `0019` (the `alt`
 clock, which is what stopped the first attempt hanging the phone), `0026` (detaching
 the ARM DMA mapping).
 
-**A kernel with the IOMMU bound is a regression** - the display still works but the
-GPU falls back to `llvmpipe`. Check `glxinfo -B` reports `FD330` after touching any of
-this, not merely that the screen lights up.
+Check `glxinfo -B` reports `FD330` after touching any of this, not merely that the
+screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
 
 ## Smaller loose ends
 

@@ -1,0 +1,67 @@
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -1162,6 +1162,56 @@
+ 	}
+ }
+ 
++/*
++ * DEBUG: dump what actually reached the hardware once the GPU has attached.
++ * Answers the only question left in the msm8974 GPU IOMMU hang that is readable
++ * rather than guessable: whether stream matching happens at all.
++ */
++static void arm_smmu_debug_dump(struct arm_smmu_device *smmu,
++				struct iommu_fwspec *fwspec, u8 cbndx)
++{
++	unsigned int i;
++
++	dev_info(smmu->dev,
++		 "dump: version %u features 0x%x numpage %u pgshift %u smrs %u cbs %u\n",
++		 smmu->version, smmu->features, smmu->numpage, smmu->pgshift,
++		 smmu->num_mapping_groups, smmu->num_context_banks);
++	dev_info(smmu->dev,
++		 "dump: sCR0 0x%08x sGFSR 0x%08x ID0 0x%08x ID1 0x%08x\n",
++		 arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_sCR0),
++		 arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_sGFSR),
++		 arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_ID0),
++		 arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_ID1));
++
++	for (i = 0; i < fwspec->num_ids; i++)
++		dev_info(smmu->dev, "dump: fwspec id[%u] 0x%08x\n",
++			 i, fwspec->ids[i]);
++
++	for (i = 0; i < smmu->num_mapping_groups && i < 16; i++)
++		dev_info(smmu->dev, "dump: SMR(%u) 0x%08x S2CR(%u) 0x%08x\n",
++			 i, arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(i)),
++			 i, arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(i)));
++
++	for (i = 0; i < smmu->num_context_banks && i < 8; i++)
++		dev_info(smmu->dev, "dump: CBAR(%u) 0x%08x\n",
++			 i, arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(i)));
++
++	dev_info(smmu->dev,
++		 "dump: cb%u SCTLR 0x%08x ACTLR 0x%08x TCR 0x%08x TCR2 0x%08x\n",
++		 cbndx,
++		 arm_smmu_cb_read(smmu, cbndx, ARM_SMMU_CB_SCTLR),
++		 arm_smmu_cb_read(smmu, cbndx, ARM_SMMU_CB_ACTLR),
++		 arm_smmu_cb_read(smmu, cbndx, ARM_SMMU_CB_TCR),
++		 arm_smmu_cb_read(smmu, cbndx, ARM_SMMU_CB_TCR2));
++	dev_info(smmu->dev,
++		 "dump: cb%u TTBR0 0x%08x%08x CONTEXTIDR 0x%08x FSR 0x%08x\n",
++		 cbndx,
++		 arm_smmu_cb_read(smmu, cbndx, ARM_SMMU_CB_TTBR0 + 4),
++		 arm_smmu_cb_read(smmu, cbndx, ARM_SMMU_CB_TTBR0),
++		 arm_smmu_cb_read(smmu, cbndx, ARM_SMMU_CB_CONTEXTIDR),
++		 arm_smmu_cb_read(smmu, cbndx, ARM_SMMU_CB_FSR));
++}
++
+ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
+ {
+ 	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
+@@ -1204,6 +1254,7 @@
+ 	/* Looks ok, so add the device to the domain */
+ 	arm_smmu_master_install_s2crs(cfg, S2CR_TYPE_TRANS,
+ 				      smmu_domain->cfg.cbndx, fwspec);
++	arm_smmu_debug_dump(smmu, fwspec, smmu_domain->cfg.cbndx);
+ rpm_put:
+ 	arm_smmu_rpm_put(smmu);
+ 	return ret;
