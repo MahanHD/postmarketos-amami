@@ -164,15 +164,26 @@ on by default on the strength of console checks - `fb0` registered, backlight li
 `FD330`, 151 FPS, zero faults - none of which test scanout. The one line `0037`
 removes is `no IOMMU, fallback to phys contig buffers for scanout`.
 
-Most likely an unmapped stream. `0037` maps SIDs 0 and 1 from stock's `mdp_0`/`mdp_1`;
-MDSS has masters not described here, and with the bypass off they do not fault, they
-use the IOVA as a physical address and read garbage.
+**Measured: the fault is on the page-table walk.** With the bypass enabled so anything
+unmatched faults loudly, `cb1 FSR 0x10` (external fault) with `FSYNR0 0x581` - bit 10
+is PTWF, `PLVL` 1. The SMMU aborts fetching its own level-1 descriptor. `sGFSR` stays
+0, so nothing is unmatched.
 
-**Next step, and it is a measurement:** rebuild with
-`CONFIG_ARM_SMMU_DISABLE_BYPASS_BY_DEFAULT=y` so unmatched streams fault, then read
-the faulting stream ID from `sGFSYNR1` (and check the MDP SMMU's own interrupt numbers
-the same way the GPU's were - global SPI 73 and contexts 45/46/47 are still a guess).
-Add the discovered SIDs to `iommus` and try again.
+The display is not failing to read its framebuffer; **the SMMU cannot read its own
+page tables**. Walking them from the CPU works fine, which is what made the first four
+attempts chase the wrong transaction.
+
+Dead ends, all tested on hardware: an unmapped MDSS stream (`sGFSR` is 0);
+`qcom_scm_restore_sec_cfg` (collapses the stream ID mask to 0 from `cfg_probe`, and
+wedges the phone with mmc timeouts and an RCU stall from `init_context` - Sony's TZ is
+on the legacy SCM convention and does not mean what `qcom_iommu.c` expects); and
+downstream's 18 BFB registers, applied verbatim and read back correctly, with the
+fault unchanged.
+
+**The question to answer next:** why can this SMMU's table-walk master not read normal
+memory when the GPU's identical SMMU can? Same IP, tables in the same low physical
+range. What differs is the clocks, the power domain and the NoC path - so start there,
+and compare against how downstream sets up MDSS bus votes before first use.
 
 **Rule for this one: no claim about the display until someone has looked at the
 panel.** `fb0`, `bl_power`, `glxinfo` and a frame counter all pass while the screen is

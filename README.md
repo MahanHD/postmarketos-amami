@@ -1114,17 +1114,56 @@ screen still shows nothing. None of those checks touch scanout, which is the one
 `0037` changes: the line that disappears when the MDP attaches is precisely
 `no IOMMU, fallback to phys contig buffers for scanout`.
 
-The likely cause is in the setup rather than the hardware. `0037` maps stream IDs 0
-and 1, from stock's `mdp_0` and `mdp_1`, and MDSS has masters that are not described
-here at all. With `CONFIG_ARM_SMMU_DISABLE_BYPASS_BY_DEFAULT` off - which the node
-needs, or probing alone blanks the panel - an unmatched stream does not fault. It
-bypasses translation and uses the IOVA as a physical address, reading whatever happens
-to live there. Black screen, no fault, every other indicator green.
+**The fault is on the page-table walk, not on the display's reads.** Booting with the
+bypass *enabled*, so that anything unmatched faults loudly, gives:
 
-That is a measurement, not a guess, and the instrument already exists: turn the bypass
-back **on** so unmatched streams fault loudly, and read the faulting stream ID out of
-`sGFSYNR1`. Until that is done and **someone has looked at the panel**, `0034` through
-`0037` stay out of the build.
+    cb1 FSR 0x00000010  FSYNR0 0x00000581  FAR 0x00001000
+
+`FSR` bit 4 is EF, an external fault rather than a translation fault, and `FSYNR0`
+bit 10 is **PTWF** with `PLVL` 1: the abort happened while the SMMU was fetching the
+**level-1 descriptor**, on a read, non-secure. `sGFSR` is zero throughout, so no
+stream went unmatched - which kills the obvious theory that MDSS has a master we have
+not described.
+
+The display is not failing to read its framebuffer. **The SMMU cannot read its own
+page tables.** Walking those tables by hand from the CPU works perfectly -
+`iova 0x1000` resolves to `PA 0x30291000`, ordinary System RAM with real content in
+it - which is exactly the trap: the CPU can reach that memory and the MDP SMMU's
+table-walk master cannot. Four attempts were aimed at the wrong transaction before
+this was measured.
+
+Three theories tested and dead, each on hardware:
+
+- **An unmapped MDSS stream.** `sGFSR` is 0 with `USFCFG` set, so nothing is going
+  unmatched.
+- **The TrustZone handover.** `mdp_iommu` carries `qcom,iommu-secure-id = <1>` and the
+  GPU's does not, so `qcom_scm_restore_sec_cfg()` - which `qcom_iommu.c` has always
+  called for this hardware - looked compelling. It is actively harmful here. Called
+  from `cfg_probe` it collapses the stream ID mask to zero, because
+  `arm_smmu_test_smr_masks()` runs afterwards and derives the mask by writing an SMR
+  and reading it back; the MDP then loses its IOMMU entirely with
+  `stream ID 0x1 out of range for SMMU (0x0)`. Called per context at attach instead,
+  the phone runs about two minutes and then dies with mmc timeouts and an RCU stall.
+  Sony's TrustZone uses the legacy SCM convention and does not mean by that call what
+  `qcom_iommu.c` expects.
+- **The BFB settings.** Downstream programs 18 implementation-defined registers on
+  this instance against 12 on the GPU's, with `0x204c` at `0xffffffff` rather than
+  `0x3`. `0038` applies stock's table verbatim from the reset hook, they read back
+  correctly, and the fault is bit-for-bit identical.
+
+So the open question is narrow and worth stating precisely: **why can this SMMU's
+table-walk master not read normal memory, when the GPU's identical SMMU can?** Both
+tables live in the same low physical range and the GPU's instance walks them happily.
+The remaining differences are the clocks, the power domain, and the NoC path.
+
+`0034` through `0038` stay out of the build.
+
+**And the process lesson, which cost more than the bug.** This was declared working
+and *flashed as the default kernel* while the panel showed nothing but backlight.
+`fb0` registering, `bl_power`, `glxinfo` reporting `FD330`, glxgears at 151 FPS with
+`last-fence` equal to `retired-fence`, and zero faults on every line - every one of
+those passed, and not one of them tests scanout. A display change is verified by
+looking at the panel and by nothing else.
 
 The lesson is worth more than the patch. A display change is not verifiable from the
 console. `fb0`, `bl_power`, `glxinfo` and a frame counter are all proxies that pass

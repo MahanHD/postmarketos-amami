@@ -21,7 +21,7 @@
  				ports {
  					#address-cells = <1>;
  					#size-cells = <0>;
-@@ -2264,6 +2278,44 @@
+@@ -2264,6 +2278,72 @@
  			power-domains = <&mmcc OXILICX_GDSC>;
  		};
  
@@ -61,6 +61,34 @@
 +			clock-names = "iface", "bus", "core";
 +
 +			power-domains = <&mmcc MDSS_GDSC>;
++
++			/*
++			 * Downstream's own table for this instance, verbatim
++			 * from stock's mdp_iommu. Eighteen registers where the
++			 * GPU's instance gets twelve, and 0x204c is 0xffffffff
++			 * here against 0x3 there.
++			 *
++			 * Note this node deliberately does *not* carry
++			 * qcom,iommu-secure-id, even though downstream gives it
++			 * <1>. Acting on it - calling qcom_scm_restore_sec_cfg
++			 * the way qcom_iommu.c does - wedges this firmware:
++			 * with the call at probe the stream ID mask collapses
++			 * to zero and the MDP loses its IOMMU, and with it at
++			 * attach the phone dies a couple of minutes later with
++			 * mmc timeouts and an RCU stall. Sony's TrustZone uses
++			 * the legacy SCM convention and evidently does not mean
++			 * by that call what qcom_iommu.c expects.
++			 */
++			qcom,iommu-bfb-regs = <0x204c 0x2050 0x2514 0x2540
++					       0x256c 0x20ac 0x215c 0x220c
++					       0x2314 0x2394 0x2414 0x2008
++					       0x200c 0x2010 0x2014 0x2018
++					       0x201c 0x2020>;
++			qcom,iommu-bfb-data = <0xffffffff 0x00000000 0x00000004 0x00000010
++					       0x00000000 0x00006800 0x00006221 0x00016231
++					       0x00000000 0x00000034 0x00000074 0x00000000
++					       0x00000000 0x00000000 0x00000000 0x00000000
++					       0x00000000 0x00000000>;
 +		};
 +
  		sram@fdd00000 {

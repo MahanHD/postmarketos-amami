@@ -1,0 +1,58 @@
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -693,6 +693,47 @@
+ }
+ 
+ /*
++ * Downstream programs a table of implementation-defined registers before it uses
++ * either of these SMMUs - "BFB settings" in its device tree - and the two instances
++ * get materially different values. The GPU's gets 12 registers with 0x204c = 0x3;
++ * the display's gets 18, including six more in the 0x200c-0x2020 range, and
++ * 0x204c = 0xffffffff. Mainline programs neither, which the GPU survives and the
++ * display may not.
++ *
++ * Applied from the reset hook rather than at probe so that it is reapplied after a
++ * runtime resume, which re-runs arm_smmu_device_reset() and would otherwise leave
++ * the implementation-defined space back at its power-on values.
++ */
++static int msm8974_smmu_reset(struct arm_smmu_device *smmu)
++{
++	struct device_node *np = smmu->dev->of_node;
++	int nregs, ndata, i;
++
++	nregs = of_property_count_u32_elems(np, "qcom,iommu-bfb-regs");
++	ndata = of_property_count_u32_elems(np, "qcom,iommu-bfb-data");
++	if (nregs <= 0 || ndata <= 0)
++		return 0;
++	if (nregs != ndata) {
++		dev_err(smmu->dev, "bfb regs/data length mismatch (%d vs %d)\n",
++			nregs, ndata);
++		return -EINVAL;
++	}
++
++	for (i = 0; i < nregs; i++) {
++		u32 off, val;
++
++		of_property_read_u32_index(np, "qcom,iommu-bfb-regs", i, &off);
++		of_property_read_u32_index(np, "qcom,iommu-bfb-data", i, &val);
++
++		writel_relaxed(val, smmu->base + off);
++	}
++
++	dev_info(smmu->dev, "applied %d bfb settings\n", nregs);
++
++	return 0;
++}
++
++/*
+  * msm8974's IDR1.NUMPAGENDXB reports four pages, which would put context bank n at
+  * base + 0x4000 + n * 0x1000. Downstream addresses the banks at 0xfdb18000 on a
+  * base of 0xfdb10000, i.e. base + 0x8000, so the register under-reports. Probe both
+@@ -750,6 +791,7 @@
+ 	.init_context = qcom_smmu_init_context,
+ 	.cfg_probe = msm8974_smmu_cfg_probe,
+ 	.def_domain_type = qcom_smmu_def_domain_type,
++	.reset = msm8974_smmu_reset,
+ 	.write_s2cr = msm8974_smmu_write_s2cr,
+ 	.write_sctlr = msm8974_smmu_write_sctlr,
+ 	.tlb_sync = qcom_smmu_tlb_sync,
