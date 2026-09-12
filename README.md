@@ -872,13 +872,32 @@ is gone, the device gains an `iommu` symlink pointing at `smmu.0xfdb10000`, mesa
 `gpu->aspace` is NULL, so a real address space is being built and used. That is the
 furthest this has ever got.
 
-What remains is a hangcheck lockup on real submissions: the GPU runs its init command
-stream through the IOMMU and then cannot complete ordinary work, with the completed
-fence trailing the submitted one and recovery looping. Mapping all three stream IDs
-downstream uses - gfx3d_user, gfx3d_priv, gfx3d_spare - changes nothing; it fails the
-same with one or three, and no fault is reported either way. Worth examining next:
-the IOVA range the address space is built over, TLB maintenance, and whether fault
-reporting is reaching us at all.
+What remains is a hangcheck lockup on real submissions, and measuring it narrows the
+problem considerably. During a hang `rptr` equals `wptr`, so the command processor
+walks the entire ringbuffer and catches up; `rbbm-status` reads `0x00000001`, and bit
+31 is GPU_BUSY, so the GPU is idle; `gpu-irq` is registered at `GIC-0 65` and records
+**zero** interrupts after ten seconds of glxgears; and the SMMU's global-fault and
+context-fault lines record zero as well. Meanwhile `last-fence` climbs and
+`retired-fence` trails behind it.
+
+So the processor consumes the ring without executing anything - no fence write, no
+interrupt, no fault - which is what reading stale or zero data looks like, given the
+debugfs dump shows the CPU's view of that same ring holding real packets.
+
+That also undermines the earlier claim that init succeeds. `a3xx_idle()` waits for
+GPU_BUSY to clear, so a command processor that never starts is trivially idle and
+`a3xx_hw_init` reports success without proving anything.
+
+Two things did not help. Mapping all three stream IDs downstream uses - gfx3d_user,
+gfx3d_priv and gfx3d_spare - fails identically to mapping one. And forcing
+`S2CR.NSCFG` to non-secure with `MEMATTR` set, which downstream does on every stream
+and neither mainline driver does, changes nothing either; the theory there was that
+unmarked transactions were landing on the unconfigured secure context banks, which
+would have explained garbage reads with no non-secure fault.
+
+The control worth running before anything else is whether `gpu-irq` fires at all on
+the working carveout kernel. If it reads zero there too then the interrupt is not the
+completion path, and a good deal of the reasoning above needs redoing.
 
 A kernel in this state still renders by hanging and recovering, so it is not usable
 day to day and both patches stay out of the build.

@@ -1,15 +1,41 @@
 --- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
 +++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
-@@ -662,6 +662,53 @@
+@@ -662,6 +662,79 @@
   * It is not yet possible to use MDP SMMU with the bypass quirk on the msm8996,
   * there are not enough context banks.
   */
 +/*
++ * Implementation-defined S2CR fields on this SoC. NSCFG is the one that matters:
++ * left at 0 the stream carries whatever NS attribute the client emits, and the
++ * GPU's transactions then land on the secure context banks, which nothing here has
++ * configured. Reads come back as garbage, the CP walks its ringbuffer without
++ * executing anything, no fence is written, no interrupt is raised and no non-secure
++ * fault is reported. Downstream forces both fields on every stream.
++ */
++#define MSM8974_S2CR_MEMATTR		GENMASK(15, 12)
++#define MSM8974_S2CR_NSCFG		GENMASK(19, 18)
++#define MSM8974_S2CR_NSCFG_NONSECURE	3
++#define MSM8974_S2CR_MEMATTR_WB		0x0a
++
++static void msm8974_smmu_write_s2cr(struct arm_smmu_device *smmu, int idx)
++{
++	struct arm_smmu_s2cr *s2cr = smmu->s2crs + idx;
++	u32 reg;
++
++	reg = FIELD_PREP(ARM_SMMU_S2CR_TYPE, s2cr->type) |
++	      FIELD_PREP(ARM_SMMU_S2CR_CBNDX, s2cr->cbndx) |
++	      FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, s2cr->privcfg) |
++	      FIELD_PREP(MSM8974_S2CR_MEMATTR, MSM8974_S2CR_MEMATTR_WB) |
++	      FIELD_PREP(MSM8974_S2CR_NSCFG, MSM8974_S2CR_NSCFG_NONSECURE);
++
++	arm_smmu_gr0_write(smmu, ARM_SMMU_GR0_S2CR(idx), reg);
++}
++
++/*
 + * msm8974's IDR1.NUMPAGENDXB reports four pages, which would put context bank n at
 + * base + 0x4000 + n * 0x1000. Downstream addresses the banks at 0xfdb18000 on a
-+ * base of 0xfdb10000, i.e. base + 0x8000, so the register under-reports and the
-+ * generic calculation programs the wrong addresses entirely. Probe both candidates
-+ * before overriding, so the correction is measured rather than assumed.
++ * base of 0xfdb10000, i.e. base + 0x8000, so the register under-reports. Probe both
++ * candidates before overriding, so the correction stays measured.
 + */
 +static int msm8974_smmu_cfg_probe(struct arm_smmu_device *smmu)
 +{
@@ -42,7 +68,7 @@
 +	.init_context = qcom_smmu_init_context,
 +	.cfg_probe = msm8974_smmu_cfg_probe,
 +	.def_domain_type = qcom_smmu_def_domain_type,
-+	.write_s2cr = qcom_smmu_write_s2cr,
++	.write_s2cr = msm8974_smmu_write_s2cr,
 +	.tlb_sync = qcom_smmu_tlb_sync,
 +};
 +
@@ -54,7 +80,7 @@
  static const struct qcom_smmu_match_data msm8996_smmu_data = {
  	.impl = NULL,
  	.adreno_impl = &qcom_adreno_smmu_v2_impl,
-@@ -693,6 +740,7 @@
+@@ -693,6 +766,7 @@
   * special handling and can not be covered by the qcom,smmu-500 entry.
   */
  static const struct of_device_id __maybe_unused qcom_smmu_impl_of_match[] = {
