@@ -1,0 +1,53 @@
+--- a/drivers/iommu/arm/arm-smmu/qcom_iommu.c
++++ b/drivers/iommu/arm/arm-smmu/qcom_iommu.c
+@@ -34,6 +34,16 @@
+ 
+ #define SMMU_INTR_SEL_NS     0x2000
+ 
++/*
++ * The same offset is MICRO_MMU_CTRL on msm8974: bit 2 requests a halt and bit 3
++ * reads back as idle. Downstream never halts these instances - not one of the
++ * ten in its device tree carries qcom,iommu-enable-halt - so writing 0xffffffff
++ * here does not select interrupts, it parks the IOMMU.
++ */
++#define SMMU_MICRO_MMU_CTRL	0x2000
++#define MMU_CTRL_HALT_REQ	BIT(2)
++#define MMU_CTRL_IDLE		BIT(3)
++
+ enum qcom_iommu_clk {
+ 	CLK_IFACE,
+ 	CLK_BUS,
+@@ -894,7 +904,32 @@
+ 
+ 	if (qcom_iommu->local_base) {
+ 		pm_runtime_get_sync(dev);
+-		writel_relaxed(0xffffffff, qcom_iommu->local_base + SMMU_INTR_SEL_NS);
++
++		if (of_device_is_compatible(dev->of_node, "qcom,msm8974-iommu")) {
++			u32 val = readl_relaxed(qcom_iommu->local_base +
++						SMMU_MICRO_MMU_CTRL);
++
++			dev_info(dev, "MICRO_MMU_CTRL on entry 0x%08x\n", val);
++
++			/*
++			 * Release the halt rather than merely declining to
++			 * request one: the bootloader may have left it set, and
++			 * a parked IOMMU means the GPU behind it never reaches
++			 * idle.
++			 */
++			writel_relaxed(val & ~MMU_CTRL_HALT_REQ,
++				       qcom_iommu->local_base +
++				       SMMU_MICRO_MMU_CTRL);
++
++			val = readl_relaxed(qcom_iommu->local_base +
++					    SMMU_MICRO_MMU_CTRL);
++			dev_info(dev, "MICRO_MMU_CTRL after unhalt 0x%08x\n",
++				 val);
++		} else {
++			writel_relaxed(0xffffffff,
++				       qcom_iommu->local_base + SMMU_INTR_SEL_NS);
++		}
++
+ 		pm_runtime_put_sync(dev);
+ 	}
+ 

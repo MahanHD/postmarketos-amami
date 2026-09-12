@@ -54,7 +54,7 @@ comparator refuses to charge at all. `0023` fixes the current ADC, which had bee
 an amp and mangling the sign on discharge; it is what made any power measurement
 possible.
 
-`0017` through `0019`, `0025`, `0026` and `0027` are **not in the build**. They are the start of GPU IOMMU
+`0018`, `0025`, `0027`, `0031`, `0032` and `0033` are **not in the build**. They are the start of GPU IOMMU
 support and are kept here because the device-tree data in them was expensive to
 recover; see the IOMMU section below for why they are parked.
 
@@ -824,10 +824,30 @@ offsets should be treated as unverified. And `0027` applies downstream's non-sec
 BFB table from `qcom,iommu-bfb-regs`/`-data`, reporting `applied 12 bfb settings`,
 with the GPU failing identically.
 
-Whatever stops the GPU idling is somewhere else. Things not yet eliminated: whether
-`iommus` should name one context bank rather than two, whether the aperture the
-address space is built over suits a3xx, and whether faults are being raised but never
-reported.
+**The cause, found by reading downstream rather than guessing: nothing maps the GPU's
+stream IDs to a context bank.** `msm_iommu-v1.c` programs the stream match table per
+context from `qcom,iommu-ctx-sids` - `SET_SMR_VALID`, `SET_SMR_MASK`, `SET_SMR_ID`,
+then `SET_S2CR_CBNDX` to aim that slot at the context bank and `SET_S2CR_NSCFG(3)` to
+force non-secure. Mainline's `qcom_iommu.c` has none of that: on msm8916 TrustZone
+does it inside `qcom_scm_restore_sec_cfg()`, and this IOMMU has no secure id, so the
+call is skipped. The GPU's transactions therefore match no stream and reach no
+context bank, which accounts for the hang *and* for the complete absence of fault
+reports - no context bank owns the transaction, so nothing is there to report one.
+
+Worth weighing before writing that code: this is ordinary ARM SMMU stream matching,
+and mainline's generic `arm-smmu.c` already does it. `qcom_iommu.c` is the cut-down
+msm8916 variant that assumes TrustZone handles it. Driving this IOMMU with `arm-smmu`
+may be a much shorter road than teaching `qcom_iommu` stream mapping.
+
+Two register facts settled along the way, both from downstream's `iommu_hw-v1.h`.
+`0x2000` is `MICRO_MMU_CTRL` with halt-request at bit 2 and idle at bit 3, so the
+earlier suspicion of the prior art's offsets was misplaced - and `INTR_SEL_NS` does
+not exist on this SoC at all, which means mainline's `writel(0xffffffff, 0x2000)` is
+writing all-ones into the halt control register. That is a real latent bug, though
+measurement shows it is not this one: `MICRO_MMU_CTRL` reads `0x00000008` on entry,
+idle and unhalted, and clearing halt-request explicitly changes nothing. Downstream
+never halts these instances either - `qcom,iommu-enable-halt` appears zero times
+across all ten of them.
 
 **And the prize is not where it looked.** `msm_use_mmu()` tests
 `device_iommu_mapped(dev->dev) || device_iommu_mapped(dev->dev->parent)`, where

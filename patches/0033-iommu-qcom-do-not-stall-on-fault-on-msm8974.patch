@@ -1,0 +1,21 @@
+--- a/drivers/iommu/arm/arm-smmu/qcom_iommu.c
++++ b/drivers/iommu/arm/arm-smmu/qcom_iommu.c
+@@ -318,6 +318,18 @@
+ 		      ARM_SMMU_SCTLR_M | ARM_SMMU_SCTLR_S1_ASIDPNE |
+ 		      ARM_SMMU_SCTLR_CFCFG;
+ 
++		/*
++		 * CFCFG stalls a faulting transaction until software writes
++		 * CB_RESUME. Downstream never sets it on msm8974 - it programs
++		 * CFIE, TRE, ASIDPNE and M and nothing else - and with it set
++		 * a single fault parks the client forever, which is what the
++		 * GPU's "timeout waiting for GPU to idle" turns out to be.
++		 * Terminate the transaction instead so a fault is survivable.
++		 */
++		if (of_device_is_compatible(qcom_iommu->dev->of_node,
++					    "qcom,msm8974-iommu"))
++			reg &= ~ARM_SMMU_SCTLR_CFCFG;
++
+ 		if (IS_ENABLED(CONFIG_CPU_BIG_ENDIAN))
+ 			reg |= ARM_SMMU_SCTLR_E;
+ 
