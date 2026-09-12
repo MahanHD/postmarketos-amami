@@ -80,10 +80,22 @@ Ruled out: runtime PM (pinned vs auto is identical to three decimal places), and
 kills the GPU outright and storms both fault lines, because the interconnect is not
 coherent with the CPU.
 
-The one lever left is page size. Every mapping is a 4KB small page because
-`msm_gem_init_vma()` allocates IOVAs with only `PAGE_SIZE` alignment, so
-`iommu_pgsize()` can never coalesce; `pgsize_bitmap` is `0x41311000`, so 64KB and 1MB
-are sitting unused. Untested, and it is a drm/msm change rather than a DT one.
+**Page size was the lever, and `0036` took the gap from 5.1x to 1.53x.** IOVAs were
+allocated with `PAGE_SIZE` alignment, so `iommu_pgsize()` could never coalesce and
+every mapping was a 4KB page. `0036` aligns both the IOVA allocator and the VRAM
+carveout allocator to the largest page an object can fill; aligning one without the
+other does nothing. Verified in the page tables - 7 sections of 1MB and 92 large pages
+of 64KB now, against none before.
+
+| window | carveout | IOMMU, 4KB | IOMMU, `0036` |
+|---|---|---|---|
+| 200x200 | 855 FPS | 340 FPS | 876 FPS |
+| 300x300 | 783 FPS | 154 FPS | 511 FPS |
+| 400x400 | 834 FPS | 88 FPS | 276 FPS |
+
+The rest of the gap is the 366 remaining small pages and the cost of translating at
+all. Whether to turn the IOMMU on is now a real judgement call rather than an obvious
+no - it buys GPU memory protection that the carveout cannot.
 
 Also still untested on its own: `msm8974_smmu_write_s2cr` forces `NSCFG`/`MEMATTR` on
 a theory that later proved wrong.
@@ -160,7 +172,7 @@ codec driver. The DSP boots and every sensor on it works, so the groundwork exis
 
 Out of the build, kept because the data in them was expensive to recover:
 
-- `0034`, `0035` - the working GPU IOMMU, held back on throughput cost.
+- `0034`, `0035`, `0036` - the working GPU IOMMU and its page-size fix.
 - `0018`, `0025` - the earlier `qcom_iommu` node and the GPU's binding to it.
 - `0027` - the non-secure BFB settings.
 - `0031` - subscribing to every data type, a prerequisite for ambient light.

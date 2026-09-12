@@ -1,0 +1,58 @@
+--- a/drivers/gpu/drm/msm/msm_gem.h
++++ b/drivers/gpu/drm/msm/msm_gem.h
+@@ -67,6 +67,30 @@
+ };
+ 
+ struct msm_gem_vma *msm_gem_vma_new(struct msm_gem_address_space *aspace);
++/*
++ * Alignment to hand both the IOVA allocator and the VRAM carveout allocator.
++ *
++ * iommu_pgsize() can only fold a mapping into a larger page when the IOVA and
++ * the physical address share that page's alignment and the remaining size
++ * covers it. Allocating both ends at PAGE_SIZE means that never happens, so
++ * every mapping is built out of 4K pages no matter how big the object is. On
++ * an SMMU whose table walks are uncached, that multiplies the TLB miss rate
++ * for no reason - msm8974's pgsize_bitmap offers 64K and 1M and neither was
++ * ever reachable.
++ *
++ * Ask for the largest page the object can actually fill. drm_mm places an
++ * aligned node in the first hole that fits rather than padding, so the space
++ * skipped stays available to smaller objects.
++ */
++static inline u64 msm_gem_pgsize_align(u64 size)
++{
++	if (size >= SZ_1M)
++		return SZ_1M;
++	if (size >= SZ_64K)
++		return SZ_64K;
++	return PAGE_SIZE;
++}
++
+ int msm_gem_vma_init(struct msm_gem_vma *vma, int size,
+ 		u64 range_start, u64 range_end);
+ void msm_gem_vma_purge(struct msm_gem_vma *vma);
+--- a/drivers/gpu/drm/msm/msm_gem.c
++++ b/drivers/gpu/drm/msm/msm_gem.c
+@@ -149,7 +149,10 @@
+ 		return ERR_PTR(-ENOMEM);
+ 
+ 	spin_lock(&priv->vram.lock);
+-	ret = drm_mm_insert_node(&priv->vram.mm, msm_obj->vram_node, npages);
++	ret = drm_mm_insert_node_generic(&priv->vram.mm, msm_obj->vram_node,
++					 npages,
++					 msm_gem_pgsize_align(obj->size) >> PAGE_SHIFT,
++					 0, 0);
+ 	spin_unlock(&priv->vram.lock);
+ 	if (ret) {
+ 		kvfree(p);
+--- a/drivers/gpu/drm/msm/msm_gem_vma.c
++++ b/drivers/gpu/drm/msm/msm_gem_vma.c
+@@ -135,7 +135,7 @@
+ 
+ 	spin_lock(&aspace->lock);
+ 	ret = drm_mm_insert_node_in_range(&aspace->mm, &vma->node,
+-					  size, PAGE_SIZE, 0,
++					  size, msm_gem_pgsize_align(size), 0,
+ 					  range_start, range_end, 0);
+ 	spin_unlock(&aspace->lock);
+ 

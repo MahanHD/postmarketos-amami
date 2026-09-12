@@ -1009,10 +1009,39 @@ fault lines storm. The interconnect is not coherent with the CPU, so the walker 
 stale descriptors. The driver's own comment warns about exactly this - trust the
 firmware description over the ID register - and this SoC is the case it means.
 
-That leaves page size. Every mapping is a 4KB small page, because
-`msm_gem_init_vma()` allocates IOVAs with `PAGE_SIZE` alignment and `iommu_pgsize()`
-can only coalesce when IOVA and physical address share the larger alignment.
-`pgsize_bitmap` is `0x41311000`, so 64KB and 1MB are available and unused. Untested.
+**Page size was the answer, and `0036` is worth three times the throughput.** Every
+mapping used to be a 4KB small page, because `msm_gem_vma_init()` allocated IOVAs with
+`PAGE_SIZE` alignment and `iommu_pgsize()` can only fold a mapping into a larger page
+when the IOVA *and* the physical address share that alignment and the size covers it.
+`pgsize_bitmap` is `0x41311000`, so 64KB and 1MB were available and unreachable.
+
+`0036` asks for the largest page an object can fill, at both ends - the IOVA allocator
+and the VRAM carveout allocator - since aligning only one of them changes nothing. It
+costs no memory worth naming: `drm_mm` places an aligned node in the first hole that
+fits rather than padding, so the skipped space stays available to smaller objects, and
+the carveout base is already 1MB-aligned at `0x70100000`.
+
+Confirmed in the page tables rather than inferred from the frame rate. Walking context
+bank 1 during a run now finds **7 sections of 1MB and 92 large pages of 64KB**
+alongside 366 small ones, where before there was nothing but small ones - about 465
+TLB entries covering what used to need roughly 3600.
+
+Like-for-like, `vblank_mode=0`, GPU pinned at 320MHz. Note the carveout kernel is
+CPU-bound at every size here, which is why its numbers barely move:
+
+| window | carveout | IOMMU, 4KB pages | IOMMU, `0036` |
+|---|---|---|---|
+| 200x200 | 855 FPS | 340 FPS | 876 FPS |
+| 300x300 | 783 FPS | 154 FPS | 511 FPS |
+| 400x400 | 834 FPS | 88 FPS | 276 FPS |
+
+So the gap at the default size falls from 5.1x to **1.53x**, and at 400x400 from 9.5x
+to 3.0x. A 150 second soak at 300x300 gives zero hangchecks, zero faults on any line,
+and `last-fence` equal to `retired-fence` at 264505.
+
+What is left of the gap is the 366 small pages and the irreducible cost of translating
+at all. Still out of the build, but the trade is now arguable rather than obviously
+bad - and it buys the GPU real memory protection, which the carveout cannot.
 
 One honest loose end: `msm8974_smmu_write_s2cr` forces `NSCFG` and `MEMATTR` because
 downstream does, and it was originally added on a theory - that unmarked transactions
