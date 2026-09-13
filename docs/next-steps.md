@@ -8,6 +8,51 @@ that cracked it was not another build. Five rebuild-and-guess cycles had failed;
 reading the SMMU's own registers on a running phone through `/dev/mem` found both
 bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
+## Start here
+
+**Device state: powered off.** The r83 kernel the last session tested was
+`fastboot boot`-ed, so it lived in RAM only and is gone. Powering on gives the
+flashed **r56** (`uname -v` = `#57`), which has neither the vibrator nor APR.
+
+Nothing is half-applied and there is nothing to repair. Boot partition md5 is
+`69b89a70e0a216cc128579bea40f5561`.
+
+**Rebuild r83 before jobs 1 and 2** - `boot-r83.img` was in a scratch directory that
+did not survive either. The apk is still on disk:
+
+    ~/.local/var/pmbootstrap/packages/v26.06/armv7/linux-postmarketos-qcom-msm8974-6.16.12-r83.apk
+
+Untar it, take the phone's current `/boot/initramfs` (the phone has r56 installed and
+the module ABI is unchanged between these, so it is fine to reuse), and build with
+`tools/mkbootimg.py`. The pmaports recipe on disk is already at r83, so
+`pmbootstrap build` would also reproduce it.
+
+**Sequencing note that matters.** `fastboot boot` needs the cable in; the s2idle
+measurement needs it *out*, because on a host port the battery floats and current
+does not respond at all. So: boot r83 over fastboot with the cable, then unplug, then
+work over WiFi at `192.168.1.221`. Doing it the other way round wastes a boot.
+
+1. **Measure s2idle power.** There is still *no* suspended figure at all, only awake
+   ones (252/400/689 mA), so there is no way to say what deep suspend is worth - and
+   that decides whether the largest remaining battery item is worth a project. Use an
+   RTC wake alarm and compare before and after; `capacity` is OCV-derived and sags
+   under load, so prefer `voltage_now` over a long enough window, or read current
+   directly either side. This one does not actually need r83 - r56 suspends the same
+   way - so it can be done on the flashed kernel with no fastboot at all, which makes
+   it the cheapest of the three.
+2. **Feel the vibrator.** `pm8xxx_vib_ffmemless` enumerates as `event0` on r83, but an
+   ff-memless device can enumerate without the motor being wired to that PMIC output,
+   so enumeration is not the same as working. Needs an `EVIOCSFF` upload then an
+   `EV_FF` play. `sizeof(struct ff_effect)` is **44** on arm32, not 40 - `custom_len`
+   is a `__u32`, making the union 28 bytes on a 16-byte header. 40 returns `EFAULT`.
+3. **Fix `q6asm-dai`,** which fails with `No dais found in DT`. Add the `dai@N`
+   children to the `dais` container; on working boards they live in the board DTS
+   rather than the SoC dtsi, so amami's `.dts` is the place. Needs a build and a
+   fastboot cycle.
+
+The scratchpad from that session is gone, but the two scripts worth keeping were
+moved into `tools/` - `mkbootimg.py` and `romdtb.py`. See `tools/README.md`.
+
 ## Where the port stands
 
 Working: panel, touch, Xfce on freedreno, WiFi, Bluetooth, charging (on a real
@@ -16,8 +61,29 @@ LED, suspend (s2idle), GPU and CPU frequency scaling, and CPU thermal throttling
 
 Not working: audio, proximity, ambient light, deep suspend.
 
-Both IOMMUs work as of `0034`-`0037`, and the 192MB carveout can be reclaimed, but
-they are out of the build pending a throughput-against-memory decision; see below.
+The vibrator enumerates as of `0040`, and the ADSP audio transport is up as of `0039`
+- neither makes the phone do anything a user would notice yet; see below.
+
+The GPU IOMMU works as of `0034`-`0036`. The MDP half (`0037`) reclaims the 192MB
+carveout but blanks the panel, and all of it is out of the build.
+
+### Where the build recipe actually is
+
+Worth stating because it lives on disk in pmaports, not in this repo, so nothing here
+records it and a new session would have to look:
+
+- **Flashed on the phone: r56** - none of the IOMMU work, no audio, no vibrator. This
+  is the known-good kernel and the one to come back to. Boot partition md5
+  `69b89a70e0a216cc128579bea40f5561`.
+- **pmaports recipe: r83** - `0001`-`0029` as usual, plus `0039` (APR) and `0040`
+  (vibrator), with `CONFIG_QCOM_APR` and the `SND_SOC_QDSP6_*` symbols on. No IOMMU
+  patches, `# CONFIG_ARM_SMMU is not set`.
+- So **the recipe and the flashed kernel differ**. Rebuilding and installing without
+  noticing would quietly add APR and the vibrator. That is harmless, but it is not
+  what is on the phone.
+- Apks r57-r83 in `~/.local/var/pmbootstrap/packages/` are a mix of experiments;
+  several are IOMMU builds. Numbering is monotonic but the contents are not a
+  progression - check the config inside one before trusting it.
 
 ## What is instrumented
 
@@ -276,13 +342,29 @@ one; nothing downstream of it can make sound without it.
 
 So the work splits into three milestones, and only the first two are small:
 
-1. **APR and the Q6 services** - `0039` adds the `apr` node under the ADSP's existing
-   `smd-edge`, the same edge `qcom_smgr` already uses for sensors, with `q6core`,
-   `q6afe`, `q6asm` and `q6adm`. The ADSP is already enabled on rhine and reports
-   `running`. This makes no sound, but it is the layer everything else sits on and it
-   is independently checkable: `q6core` reports the ADSP's version once APR is up.
-   Needs `CONFIG_QCOM_APR` and the `SND_SOC_QDSP6_*` symbols. **Built as r82, not yet
-   booted.**
+1. **APR and the Q6 services - done, booted and working.** `0039` adds the `apr` node
+   under the ADSP's existing `smd-edge`, the same edge `qcom_smgr` already uses for
+   sensors, with `q6core`, `q6afe`, `q6asm` and `q6adm`. Needs `CONFIG_QCOM_APR` and
+   the `SND_SOC_QDSP6_*` symbols. Booted as r83:
+
+        remoteproc remoteproc2: remote processor adsp is now up
+        qcom,apr ...: Adding APR/GPR dev: aprsvc:service:4:3    (q6core)
+        qcom,apr ...: Adding APR/GPR dev: aprsvc:service:4:4    (q6afe)
+        qcom,apr ...: Adding APR/GPR dev: aprsvc:service:4:7    (q6asm)
+        qcom,apr ...: Adding APR/GPR dev: aprsvc:service:4:8    (q6adm)
+
+   The transport to the DSP works. No sound card appears, which is expected with no
+   codec driver.
+
+   **One thing left over from it, and it is the next small job:**
+
+        q6asm-dai ...:dais: No dais found in DT
+        q6asm-dai ...:dais: probe with driver q6asm-dai failed with error -22
+
+   `0039` declares the `dais` containers but not their children. On the boards that
+   work, the `dai@N` nodes live in the *board* DTS rather than the SoC dtsi - see
+   `apq8016-sbc.dts` for the pattern - so the fix is to add them for amami. The other
+   three services attach fine without it; only `q6asm` needs its DAIs to probe.
 2. **SLIMbus.** msm8974 sits between the two controllers mainline supports - stock
    calls it NGD, but the NGD driver only knows 8996 and SDM845 - so it needs a
    compatible of its own and then has to be shown enumerating the Taiko.
@@ -295,8 +377,18 @@ already had `CONFIG_INPUT_PM8XXX_VIBRATOR=y`, and `pm8941.dtsi` already carries
 `pm8941_vib: vibrator@c000` with the right compatible - it is just left
 `status = "disabled"`, and no msm8974 board in the tree enables it. Both stock and
 LineageOS run this exact node (`qcom,vib@c000`, `qcom,qpnp-vibrator`, okay), so the
-hardware is there. Built in r83, not yet booted; the check is an input device
-appearing that is neither gpio-keys, the power key, nor the touchscreen.
+hardware is there.
+
+**Booted as r83 and it enumerates:** `pm8xxx_vib_ffmemless` appears as `event0`,
+alongside gpio-keys, the power key and the touchscreen. **Not yet felt** - driving it
+takes an `EVIOCSFF` upload plus an `EV_FF` play on the event node, and that is still
+outstanding, so "the device exists" is all that is proven. Worth doing before calling
+it finished: an ff-memless device can enumerate without the motor being wired to that
+PMIC output.
+
+Note for whoever writes that test: `sizeof(struct ff_effect)` is **44** on arm32, not
+40 - `custom_len` in `ff_periodic_effect` is a `__u32`, which makes the union 28 bytes
+on top of a 16-byte header. Getting it wrong returns `EFAULT`.
 
 Enabled on amami only rather than rhine-wide, since honami and togari cannot be
 tested here.
