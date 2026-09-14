@@ -62,3 +62,17 @@ instead. Copy it to the phone and run it there; the USB cable has to be **out**.
 
     scp tools/s2idle-test.sh mahan@<phone>:/tmp/
     ssh mahan@<phone> 'sudo systemd-run --unit=s2idle /tmp/s2idle-test.sh'
+
+`ff-test.py` drives a force-feedback device, which is the only way to tell a
+motor that works from one that merely enumerates - an ff-memless device appears
+in `/dev/input` whether or not anything is wired to the output it drives. It
+scans for the node advertising `FF_RUMBLE`, uploads an effect and plays three
+bursts at different magnitudes. Run it on the phone; it needs no compiler there.
+
+    scp tools/ff-test.py mahan@<phone>:/tmp/
+    ssh -t mahan@<phone> 'sudo python3 /tmp/ff-test.py'
+
+The reason it packs its own structs rather than leaning on a library:
+`sizeof(struct ff_effect)` is **44** on arm32, not 40, and `EVIOCSFF` encodes
+that size in the ioctl number (`0x402c4580`), so a wrong guess returns `EFAULT`
+and reads like a driver bug. The script asserts its own packing.

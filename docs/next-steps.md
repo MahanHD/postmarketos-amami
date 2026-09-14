@@ -15,47 +15,60 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 repair. Boot partition md5 is `69b89a70e0a216cc128579bea40f5561`. r56 has neither
 the vibrator nor APR, and it remains the known-good kernel to come back to.
 
-**Charge it first.** The s2idle run ended at 17% and the pack is down to ~1750 mAh
-(see Phase 2), so there is well under two hours of awake time in it. Charging needs
-a **wall charger** - a 500 mA host port does not cover the ~400 mA the phone draws
-just to run, and net battery current sits at exactly zero, which looks like a broken
-charger and is not.
+**Both remaining jobs are built and staged; what is left is one `fastboot boot`.**
+`~/Devices/Xperia-Z1-Compact/boot-images/boot-r84.img` (md5
+`d4550bf58700118ce0b3ee31aee67999`) is r83 plus `0041`, so it carries the vibrator,
+APR *and* the q6asm frontend DAIs. Testing both on one boot is deliberate - see the
+battery note below. It is `fastboot boot` only; nothing is flashed, so a power cycle
+returns to r56.
 
-**Rebuild r83 before jobs 1 and 2** - `boot-r83.img` was in a scratch directory that
-did not survive. The apk is still on disk:
+**Two things need a hand on the phone, and nothing can proceed without them:**
 
-    ~/.local/var/pmbootstrap/packages/v26.06/armv7/linux-postmarketos-qcom-msm8974-6.16.12-r83.apk
+1. **Charge it, on a wall charger.** The s2idle run ended at **17%**, and the pack is
+   down to ~1750 mAh (see Phase 2), so there is well under two hours of awake time in
+   it. A 500 mA host port does not cover the ~400 mA the phone draws just to run: net
+   battery current sits at exactly zero, which looks like a broken charger and is not.
+2. **Get to fastboot by holding Volume Up while plugging in.** `reboot bootloader` is
+   a dead end here - S1Boot ignores the Qualcomm magics at `0x65c`.
 
-Untar it, take the phone's current `/boot/initramfs` (the phone has r56 installed and
-the module ABI is unchanged between these, so it is fine to reuse), and build with
-`tools/mkbootimg.py`. The pmaports recipe on disk is already at r83, so
-`pmbootstrap build` would also reproduce it.
+Then:
+
+    fastboot boot ~/Devices/Xperia-Z1-Compact/boot-images/boot-r84.img
+    # unplug once it is up, then work over WiFi
 
 **Sequencing note that matters.** `fastboot boot` needs the cable in, and charging
 needs it in too, while any current measurement needs it *out* - on a host port the
-battery floats and current does not respond at all. So: charge, boot r83 over
-fastboot with the cable, then unplug, then work over WiFi. Doing it the other way
-round wastes a boot.
+battery floats and current does not respond at all.
 
-1. **Feel the vibrator.** `pm8xxx_vib_ffmemless` enumerates as `event0` on r83, but an
-   ff-memless device can enumerate without the motor being wired to that PMIC output,
-   so enumeration is not the same as working. Needs an `EVIOCSFF` upload then an
-   `EV_FF` play. `sizeof(struct ff_effect)` is **44** on arm32, not 40 - `custom_len`
-   is a `__u32`, making the union 28 bytes on a 16-byte header. 40 returns `EFAULT`.
-2. **Fix `q6asm-dai`,** which fails with `No dais found in DT`. Add the `dai@N`
-   children to the `dais` container; on working boards they live in the board DTS
-   rather than the SoC dtsi, so amami's `.dts` is the place. Needs a build and a
-   fastboot cycle.
+Once r84 is up, both jobs are one command each:
 
-**Done 2026-09-14: the s2idle measurement** that used to be job 1. The answer is
-156 mA suspended against 248 mA awake screen-off - 37% saved, so deep suspend is
-worth a project - and the pack turned out to be at 56% health, which rescaled every
-runtime figure in this document. See Phase 2, and
-`docs/measurements/s2idle-2026-09-14/`.
+1. **Feel the vibrator.** `scp tools/ff-test.py` to the phone and
+   `sudo python3 /tmp/ff-test.py`. It should find `pm8xxx_vib_ffmemless` advertising
+   `FF_RUMBLE`, then play three bursts. **The question is whether the motor moves** -
+   an ff-memless device enumerates whether or not a motor is wired to that PMIC
+   output, so if the uploads succeed and nothing is felt, the driver is fine and the
+   hardware is not.
+2. **Check `q6asm-dai` probes.** `dmesg | grep q6asm` should no longer say
+   `No dais found in DT`, and `/sys/kernel/debug/asoc/` should show the component.
+   No sound card is expected either way - the codec is a WCD9320 on SLIMbus and
+   mainline has no driver for it.
 
-The scratchpad from the r83 session is gone, but the scripts worth keeping are in
-`tools/` - `mkbootimg.py`, `romdtb.py` and now `s2idle-test.sh`. See
-`tools/README.md`.
+**Done 2026-09-14:**
+
+- **The s2idle measurement** that used to be job 1. 156 mA suspended against 248 mA
+  awake screen-off - 37% saved, so deep suspend is worth a project - and the pack
+  turned out to be at 56% health, which rescaled every runtime figure in this
+  document. See Phase 2 and `docs/measurements/s2idle-2026-09-14/`.
+- **`tools/mkbootimg.py` is now verified byte-for-byte,** which its own docstring
+  listed as outstanding because it needed the phone's `/boot/initramfs` and the phone
+  was off. Rebuilding r56 from its apk plus the real initramfs reproduces md5
+  `69b89a70e0a216cc128579bea40f5561` exactly. If that ever stops matching, suspect
+  the tool before suspecting the flash.
+- **`0041`** (q6asm frontend DAIs) and **`tools/ff-test.py`**, both described below.
+  Neither has been on hardware yet.
+
+The scripts worth keeping are in `tools/` - `mkbootimg.py`, `romdtb.py`,
+`s2idle-test.sh` and `ff-test.py`. See `tools/README.md`.
 
 ## Where the port stands
 
@@ -79,13 +92,15 @@ records it and a new session would have to look:
 - **Flashed on the phone: r56** - none of the IOMMU work, no audio, no vibrator. This
   is the known-good kernel and the one to come back to. Boot partition md5
   `69b89a70e0a216cc128579bea40f5561`.
-- **pmaports recipe: r83** - `0001`-`0029` as usual, plus `0039` (APR) and `0040`
-  (vibrator), with `CONFIG_QCOM_APR` and the `SND_SOC_QDSP6_*` symbols on. No IOMMU
-  patches, `# CONFIG_ARM_SMMU is not set`.
+- **pmaports recipe: r84** - `0001`-`0029` as usual, plus `0039` (APR), `0040`
+  (vibrator) and `0041` (the q6asm frontend DAIs), with `CONFIG_QCOM_APR` and the
+  `SND_SOC_QDSP6_*` symbols on. No IOMMU patches,
+  `# CONFIG_ARM_SMMU is not set`. Built, and the boot image is staged at
+  `~/Devices/Xperia-Z1-Compact/boot-images/boot-r84.img`.
 - So **the recipe and the flashed kernel differ**. Rebuilding and installing without
   noticing would quietly add APR and the vibrator. That is harmless, but it is not
   what is on the phone.
-- Apks r57-r83 in `~/.local/var/pmbootstrap/packages/` are a mix of experiments;
+- Apks r57-r84 in `~/.local/var/pmbootstrap/packages/` are a mix of experiments;
   several are IOMMU builds. Numbering is monotonic but the contents are not a
   progression - check the config inside one before trusting it.
 
@@ -382,15 +397,29 @@ So the work splits into three milestones, and only the first two are small:
    The transport to the DSP works. No sound card appears, which is expected with no
    codec driver.
 
-   **One thing left over from it, and it is the next small job:**
+   **One thing was left over from it:**
 
         q6asm-dai ...:dais: No dais found in DT
         q6asm-dai ...:dais: probe with driver q6asm-dai failed with error -22
 
-   `0039` declares the `dais` containers but not their children. On the boards that
-   work, the `dai@N` nodes live in the *board* DTS rather than the SoC dtsi - see
-   `apq8016-sbc.dts` for the pattern - so the fix is to add them for amami. The other
-   three services attach fine without it; only `q6asm` needs its DAIs to probe.
+   `0039` declares the `dais` containers but not their children, and `q6asm-dai`
+   counts them with `of_get_child_count()` and returns `-EINVAL` on zero. On the
+   boards that work, the `dai@N` nodes live in the *board* DTS rather than the SoC
+   dtsi - `msm8916-modem-qdsp6.dtsi` is the closest-in-era example - because they
+   describe how many streams the board wants, not anything the SoC fixes.
+
+   **`0041` adds them to amami's `.dts`,** four frontend DAIs matching msm8916's set:
+   MULTIMEDIA1 playback, MULTIMEDIA2 capture, MULTIMEDIA3 playback, MULTIMEDIA4
+   compressed. `reg` is a session id and `q6asm.h` caps `MAX_SESSIONS` at 8, so they
+   have to stay inside MULTIMEDIA1..8 - the driver skips any child outside that
+   without saying so.
+
+   Only `q6asm` needs this. `q6afe-dai` builds its DAI list from
+   `q6dsp_audio_ports_set_config()` rather than from DT children, so it probes fine
+   with an empty container, and `q6core`/`q6adm` have no DAIs at all.
+
+   **Built as r84 and the four `dai@N` nodes are confirmed present in the dtb**
+   (`tools/romdtb.py show ... dais`), but **not yet booted** - see Start here.
 2. **SLIMbus.** msm8974 sits between the two controllers mainline supports - stock
    calls it NGD, but the NGD driver only knows 8996 and SDM845 - so it needs a
    compatible of its own and then has to be shown enumerating the Taiko.
@@ -412,9 +441,23 @@ outstanding, so "the device exists" is all that is proven. Worth doing before ca
 it finished: an ff-memless device can enumerate without the motor being wired to that
 PMIC output.
 
-Note for whoever writes that test: `sizeof(struct ff_effect)` is **44** on arm32, not
-40 - `custom_len` in `ff_periodic_effect` is a `__u32`, which makes the union 28 bytes
-on top of a 16-byte header. Getting it wrong returns `EFAULT`.
+**That test is now written: `tools/ff-test.py`.** It needs no compiler on the phone -
+it packs the struct and the ioctl numbers itself - and it scans `/dev/input`, reports
+which node advertises `FF_RUMBLE`, then uploads and plays three bursts at different
+magnitudes. Its scan half is already exercised against r56, where it correctly finds
+`gpio-keys`, `pm8941_pwrkey` and the Synaptics touchscreen and no FF device at all;
+what is untested is the upload, which needs the vibrator present.
+
+`sizeof(struct ff_effect)` is **44** on arm32, not 40 - `custom_len` in
+`ff_periodic_effect` is a `__u32`, which makes the union 28 bytes on top of a 16-byte
+header (14 bytes of shorts, padded to 16 for the union's alignment). `EVIOCSFF`
+encodes that size in the ioctl number, so getting it wrong does not fail cleanly: it
+returns `EFAULT`, which reads like a driver bug rather than an arithmetic one. The
+correct number is `0x402c4580`, and the script asserts its own packing.
+
+`pm8xxx-vibrator` accepts **`FF_RUMBLE` only** and takes its level from
+`strong_magnitude >> 8`, so `0xffff` is full scale and anything below `0x0100` rounds
+to a stop.
 
 Enabled on amami only rather than rhine-wide, since honami and togari cannot be
 tested here.

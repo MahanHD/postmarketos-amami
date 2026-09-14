@@ -1,0 +1,57 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -2,6 +2,7 @@
+ #include "qcom-msm8974-sony-xperia-rhine.dtsi"
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/iio/qcom,spmi-vadc.h>
++#include <dt-bindings/sound/qcom,q6asm.h>
+ 
+ / {
+ 	model = "Sony Xperia Z1 Compact";
+@@ -118,6 +119,46 @@
+ 	status = "okay";
+ };
+ 
++/*
++ * q6asm-dai counts the children of the "dais" container and refuses to probe
++ * without at least one, so 0039 left it failing with "No dais found in DT" and
++ * -EINVAL while q6core, q6afe and q6adm all attached. The frontend DAIs are a
++ * board-level property on every board that has them - see
++ * msm8916-modem-qdsp6.dtsi - because they describe how many streams the board
++ * wants rather than anything the SoC fixes, so amami has to declare its own.
++ *
++ * Four is the usual complement and the same set msm8916 uses: two-way playback,
++ * one capture, a second playback and a compressed one. They cannot carry audio
++ * yet - the codec is a WCD9320 on SLIMbus and mainline has no driver for it -
++ * so what this buys is q6asm-dai probing and registering its component, which
++ * is the last piece of the APR stack that was not coming up.
++ *
++ * reg is a session id and q6asm.h caps MAX_SESSIONS at 8, so these have to stay
++ * inside MULTIMEDIA1..MULTIMEDIA8; the driver skips any child outside that.
++ */
++&q6asmdai {
++	dai@0 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
++		direction = <Q6ASM_DAI_RX>;
++	};
++
++	dai@1 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
++		direction = <Q6ASM_DAI_TX>;
++	};
++
++	dai@2 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA3>;
++		direction = <Q6ASM_DAI_RX>;
++	};
++
++	dai@3 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA4>;
++		direction = <Q6ASM_DAI_RX>;
++		is-compress-dai;
++	};
++};
++
+ &smbb {
+ 	qcom,fast-charge-safe-current = <1300000>;
+ 	qcom,fast-charge-current-limit = <1300000>;
