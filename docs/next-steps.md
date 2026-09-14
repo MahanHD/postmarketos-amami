@@ -10,15 +10,19 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state: powered off.** The r83 kernel the last session tested was
-`fastboot boot`-ed, so it lived in RAM only and is gone. Powering on gives the
-flashed **r56** (`uname -v` = `#57`), which has neither the vibrator nor APR.
+**Device state: running the flashed r56** (`uname -v` = `#57`), on WiFi at
+`192.168.1.221`, USB cable out. Nothing is half-applied and there is nothing to
+repair. Boot partition md5 is `69b89a70e0a216cc128579bea40f5561`. r56 has neither
+the vibrator nor APR, and it remains the known-good kernel to come back to.
 
-Nothing is half-applied and there is nothing to repair. Boot partition md5 is
-`69b89a70e0a216cc128579bea40f5561`.
+**Charge it first.** The s2idle run ended at 17% and the pack is down to ~1750 mAh
+(see Phase 2), so there is well under two hours of awake time in it. Charging needs
+a **wall charger** - a 500 mA host port does not cover the ~400 mA the phone draws
+just to run, and net battery current sits at exactly zero, which looks like a broken
+charger and is not.
 
 **Rebuild r83 before jobs 1 and 2** - `boot-r83.img` was in a scratch directory that
-did not survive either. The apk is still on disk:
+did not survive. The apk is still on disk:
 
     ~/.local/var/pmbootstrap/packages/v26.06/armv7/linux-postmarketos-qcom-msm8974-6.16.12-r83.apk
 
@@ -27,31 +31,31 @@ the module ABI is unchanged between these, so it is fine to reuse), and build wi
 `tools/mkbootimg.py`. The pmaports recipe on disk is already at r83, so
 `pmbootstrap build` would also reproduce it.
 
-**Sequencing note that matters.** `fastboot boot` needs the cable in; the s2idle
-measurement needs it *out*, because on a host port the battery floats and current
-does not respond at all. So: boot r83 over fastboot with the cable, then unplug, then
-work over WiFi at `192.168.1.221`. Doing it the other way round wastes a boot.
+**Sequencing note that matters.** `fastboot boot` needs the cable in, and charging
+needs it in too, while any current measurement needs it *out* - on a host port the
+battery floats and current does not respond at all. So: charge, boot r83 over
+fastboot with the cable, then unplug, then work over WiFi. Doing it the other way
+round wastes a boot.
 
-1. **Measure s2idle power.** There is still *no* suspended figure at all, only awake
-   ones (252/400/689 mA), so there is no way to say what deep suspend is worth - and
-   that decides whether the largest remaining battery item is worth a project. Use an
-   RTC wake alarm and compare before and after; `capacity` is OCV-derived and sags
-   under load, so prefer `voltage_now` over a long enough window, or read current
-   directly either side. This one does not actually need r83 - r56 suspends the same
-   way - so it can be done on the flashed kernel with no fastboot at all, which makes
-   it the cheapest of the three.
-2. **Feel the vibrator.** `pm8xxx_vib_ffmemless` enumerates as `event0` on r83, but an
+1. **Feel the vibrator.** `pm8xxx_vib_ffmemless` enumerates as `event0` on r83, but an
    ff-memless device can enumerate without the motor being wired to that PMIC output,
    so enumeration is not the same as working. Needs an `EVIOCSFF` upload then an
    `EV_FF` play. `sizeof(struct ff_effect)` is **44** on arm32, not 40 - `custom_len`
    is a `__u32`, making the union 28 bytes on a 16-byte header. 40 returns `EFAULT`.
-3. **Fix `q6asm-dai`,** which fails with `No dais found in DT`. Add the `dai@N`
+2. **Fix `q6asm-dai`,** which fails with `No dais found in DT`. Add the `dai@N`
    children to the `dais` container; on working boards they live in the board DTS
    rather than the SoC dtsi, so amami's `.dts` is the place. Needs a build and a
    fastboot cycle.
 
-The scratchpad from that session is gone, but the two scripts worth keeping were
-moved into `tools/` - `mkbootimg.py` and `romdtb.py`. See `tools/README.md`.
+**Done 2026-09-14: the s2idle measurement** that used to be job 1. The answer is
+156 mA suspended against 248 mA awake screen-off - 37% saved, so deep suspend is
+worth a project - and the pack turned out to be at 56% health, which rescaled every
+runtime figure in this document. See Phase 2, and
+`docs/measurements/s2idle-2026-09-14/`.
+
+The scratchpad from the r83 session is gone, but the scripts worth keeping are in
+`tools/` - `mkbootimg.py`, `romdtb.py` and now `s2idle-test.sh`. See
+`tools/README.md`.
 
 ## Where the port stands
 
@@ -278,9 +282,10 @@ proved one missing group can disable a sensor, but that cost the accelerometer i
 
 ## Phase 2: deep suspend
 
-**The biggest remaining lever on this phone**, bigger than the IOMMU. It is why idle
-costs 252 mA and why there is no standby to speak of: cores collapse individually
-while the SoC never does, so the RPM stays up, rails stay put and DDR stays refreshed.
+**The biggest remaining lever on this phone**, bigger than the IOMMU, and as of
+2026-09-14 that is measured rather than asserted. It is why idle costs ~248 mA and
+why suspending saves only 37% of it: cores collapse individually while the SoC never
+does, so the RPM stays up, rails stay put and DDR stays refreshed.
 
 It is unimplemented, not unconfigured, and that is now verified three ways rather
 than assumed. `arch/arm/mach-qcom` holds only `Kconfig`, `Makefile` and `platsmp.c`;
@@ -315,11 +320,32 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
-**Before any of it, take the measurement that is still missing:** the battery baseline
-has no s2idle figure at all, only awake ones. That needs the USB cable *out* (see
-[[xperia-z1c-battery-baseline]] - on a host port the battery floats and current does
-not respond), so it needs a hand on the phone. Without it there is no way to tell how
-much of the 252 mA a working deep suspend would actually remove.
+**Measured 2026-09-14, and the answer is that this is worth doing.**
+
+| state | current | real runtime |
+|---|---|---|
+| suspended (s2idle) | **156 mA** | 11.2 h |
+| idle, screen off | 248 mA | 7.1 h |
+| idle, screen on | 400 mA | 4.4 h |
+
+s2idle removes only **37%** of the draw, because the cores collapse and the SoC does
+not. 156 mA of standby is dire for this class of phone - a real suspend should be
+single-digit milliamps - and the gap between those two numbers is the whole prize:
+roughly 11 hours of standby against several days.
+
+**And the pack is at about 56% health,** ~1750 mAh against 3140 nameplate. Phase A of
+that run consumed a measured 166.2 mAh while the OCV curve said 9.48% of the pack had
+gone. Every runtime figure recorded before this was optimistic by ~1.8x; the currents
+were right, the divisor was not. Worth knowing before attributing any future
+improvement to software.
+
+Method matters here and is written up in [[xperia-z1c-battery-baseline]] - in short,
+`capacity` is OCV-derived from instantaneous voltage so it tracks *load* rather than
+charge, every endpoint has to be read at a matched load, and the conversion needs
+Sony's OCV table because voltage is not linear in charge over this range. The raw
+data and the derivation are in `docs/measurements/s2idle-2026-09-14/`, and the
+script that produced them is `tools/s2idle-test.sh`, so the run can be repeated
+against any future suspend work rather than re-invented.
 
 ## Phase 3: audio
 

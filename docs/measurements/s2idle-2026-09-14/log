@@ -1,0 +1,11 @@
+1789375801 === settle 0: reach the awake screen-off load state ===
+V0 t=1789375982 cap=63 uV=3954075 bl=4 i0=-248728 i1=-242200
+1789375982 === PHASE A: awake, screen off, 2400s, IADC sampled ===
+V1 t=1789378394 cap=53 uV=3878352 bl=4 i0=-251021 i1=-243900
+1789378394 === PHASE B: suspend 2400s ===
+rtcwake: assuming RTC uses UTC ...
+rtcwake: wakeup from "mem" using /dev/rtc0 at Sat Feb 21 12:55:36 1970
+wake_immediate t=1789380802 cap=43 uV=3822507 bl=4 i0=-381218 i1=-378400
+1789380802 === settle 1: back to the same load state before reading V2 ===
+V2 t=1789380983 cap=44 uV=3828354 bl=4 i0=-303858 i1=-298600
+1789380983 === DONE ===

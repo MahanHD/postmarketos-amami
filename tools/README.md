@@ -49,3 +49,16 @@ Prefer stock where it matters: LineageOS descends from Sony's GPL tree but drift
 while stock pairs with the TrustZone image the phone actually boots. And treat either
 as a source of candidates rather than truth - stock lists SPI 241 for all three GPU
 context banks, which is only correct for whichever one lands on `IRPTNDX` 1.
+
+`s2idle-test.sh` measures suspended draw on a phone with no coulomb counter. It
+runs an awake window with the IADC sampled directly, then an `rtcwake` suspend of
+the same length, and reads both endpoints at the *same* load state - awake, screen
+off, after a settle - because `capacity` and `voltage_now` here follow load rather
+than charge. It samples *through* each settle so the flattening can be checked
+instead of assumed, which matters: the run in
+`docs/measurements/s2idle-2026-09-14/` had its scripted end-of-suspend snapshot
+land on a current spike, and the matched-load row from `settle.csv` had to be used
+instead. Copy it to the phone and run it there; the USB cable has to be **out**.
+
+    scp tools/s2idle-test.sh mahan@<phone>:/tmp/
+    ssh mahan@<phone> 'sudo systemd-run --unit=s2idle /tmp/s2idle-test.sh'
