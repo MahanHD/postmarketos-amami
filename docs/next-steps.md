@@ -611,7 +611,58 @@ So the work splits into three milestones, and only the first two are small:
    `modprobe` dies on `kobject_add_internal failed ... -EEXIST` and the controller
    never probes again. Looks like a SLIMbus failure and is not one.
 
-3. **The WCD9320 driver.** New, large, and the only route to actual audio.
+3. **The WCD9320 driver - it already exists, and it compiles.** `0049`.
+
+   **Do not write this from scratch.** `msm8974-mainline/linux` carries a Taiko
+   driver on branch `old-4.18.0/qcom-audio-wip`: `wcd9320.c`, `wcd9320.h`,
+   `wcd9320-registers.h`, `wcd9320-regmap.c`, `wcd9320-slim.c`, plus `wcd-clsh.c`
+   and `wcd-slim.h`. 8252 lines, and checking for it took one API call against
+   several sessions of writing.
+
+   **It forward-ports to 6.16 in nine small changes**, which is the surprise - it
+   was written after the `snd_soc_codec` to `snd_soc_component` conversion, so the
+   one genuinely painful ASoC migration was already done. What it needed:
+
+   - `#include <linux/of_platform.h>` for `of_platform_populate()`
+   - `snd_soc_component_read32()` -> `snd_soc_component_read()`, 21 sites, same
+     signature and return semantics
+   - the `WCD9335_IS_1_1`/`IS_2_0` macros, which `wcd-clsh.c` reaches for because
+     it is shared with the WCD9335 in its home tree. Carried in `wcd-clsh.h`
+     rather than pulling in a wcd9335 header. **Both are dead code here**: the
+     WCD9320 never assigns `codec_version` - the assignment is commented out
+     upstream - so it stays 0, `WCD9335_VERSION_1_0`, and neither macro matches.
+   - `slim_stream_config` lost its `prot` field; the assignment is dropped
+   - `slim_stream_allocate()` takes a name now, and the config goes to
+     `slim_stream_prepare()`
+   - `set_channel_map`/`get_channel_map` gained `const` qualifiers, propagated
+     into `mywcd_slim_init_slimslave()`
+   - `platform_driver::remove` returns void
+   - a missing `return ret` in `mywcd_slim_init_slimslave()`
+   - the two halves each had a module entry point, which does not link when they
+     are one module. The SLIMbus half now owns `module_init`/`module_exit` and
+     registers the platform driver too, which matches the order things have to
+     happen in anyway: the slim probe is what calls `of_platform_populate()` to
+     create the device the codec driver binds to.
+   - `MODULE_DEVICE_TABLE(slim, ...)` was missing, so it could never autoload
+
+   **Its device ID table is `{0x217, 0xa0, 0x1, 0x0}` and `{0x217, 0xa0, 0x0, 0x0}`
+   - exactly the two addresses already enumerating on this phone's bus**, and the
+   built module carries `alias: slim:217:a0:*`. It is aimed at this hardware.
+
+   **Built as r88 and deliberately NOT flashed.** The module autoloads on that
+   alias, and there is no DT node for it yet, so probing it on the phone is a
+   fresh-session job rather than a 3am one.
+
+   **What is left before sound:**
+   1. The DT node. The codec wants supplies, a reset GPIO, clocks and interrupts,
+      plus the child node `of_platform_populate()` turns into the
+      `qcom,wcd9320` platform device. Stock's `taiko_codec` node has all of it -
+      `qcom,cdc-reset-gpio`, the `cdc-vdd-*` supplies, `qcom,cdc-micbias-*` - and
+      `tools/romdtb.py` reads it.
+   2. A sound card binding the codec's DAIs to the q6afe backends.
+      `sound/soc/qcom/apq8096.c` is the closest template: msm8996 with a WCD9335
+      over SLIMbus in front of the same Q6 stack.
+   3. Then it can be tested.
 
 ## Vibrator
 
