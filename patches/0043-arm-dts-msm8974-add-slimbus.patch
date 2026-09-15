@@ -1,0 +1,46 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -1546,6 +1546,43 @@
+ 			qcom,powered-remotely;
+ 		};
+ 
++		/*
++		 * SLIMbus, and the BAM that moves data for it. Both addresses
++		 * and both interrupts come from stock's own slim@fe12f000:
++		 * reg-names there are "slimbus_physical" 0xfe12f000 0x35000 and
++		 * "slimbus_bam_physical" 0xfe104000 0x20000, with SPI 163 and
++		 * 164 named "slimbus_irq" and "slimbus_bam_irq".
++		 *
++		 * The ADSP owns this bus - the AP is a satellite on it, which
++		 * is what "NGD" means - so the BAM is controlled remotely and
++		 * the AP takes execution environment 1 of 2, exactly as 8996
++		 * does. Nothing here works without the ADSP up, and the
++		 * controller talks to it over QMI rather than by touching the
++		 * hardware directly.
++		 */
++		slimbam: dma-controller@fe104000 {
++			compatible = "qcom,bam-v1.4.0";
++			qcom,controlled-remotely;
++			reg = <0xfe104000 0x20000>;
++			num-channels = <31>;
++			interrupts = <GIC_SPI 164 IRQ_TYPE_LEVEL_HIGH>;
++			#dma-cells = <1>;
++			qcom,ee = <1>;
++			qcom,num-ees = <2>;
++		};
++
++		slim_msm: slim-ngd@fe12f000 {
++			compatible = "qcom,slim-ngd-v1.4.0";
++			reg = <0xfe12f000 0x35000>;
++			interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH>;
++			dmas = <&slimbam 3>, <&slimbam 4>;
++			dma-names = "rx", "tx";
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			status = "disabled";
++		};
++
+ 		remoteproc_mss: remoteproc@fc880000 {
+ 			compatible = "qcom,msm8974-mss-pil";
+ 			reg = <0xfc880000 0x100>, <0xfc820000 0x020>;

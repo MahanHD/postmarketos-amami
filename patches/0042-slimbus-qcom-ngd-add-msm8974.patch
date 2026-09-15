@@ -1,0 +1,12 @@
+--- a/drivers/slimbus/qcom-ngd-ctrl.c
++++ b/drivers/slimbus/qcom-ngd-ctrl.c
+@@ -1426,6 +1426,9 @@
+ 
+ static const struct of_device_id qcom_slim_ngd_dt_match[] = {
+ 	{
++		.compatible = "qcom,slim-ngd-v1.4.0",
++		.data = &ngd_v1_5_offset_info,
++	},{
+ 		.compatible = "qcom,slim-ngd-v1.5.0",
+ 		.data = &ngd_v1_5_offset_info,
+ 	},{

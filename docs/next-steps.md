@@ -10,16 +10,22 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state: r84 is flashed and is now the known-good kernel.** Flashed
-2026-09-15 from the running system, verified by readback, and confirmed to boot from
-flash (`uname -v` = `#85`). It is r56 plus the vibrator (`0040`), APR (`0039`) and
-the q6asm frontend DAIs (`0041`), every one of them tested on the device. Nothing is
-half-applied.
+**Device state: r85 is flashed and running.** Flashed 2026-09-15, verified by
+readback, confirmed booting from flash. It is r84 plus SLIMbus (`0042`-`0044`).
+Nothing is half-applied.
+
+**Mind the numbering: `pkgrel` + 1 is what `uname -v` prints.** r84 reports `#85`
+and r85 reports `#86`, which is an easy way to think you booted the wrong thing.
+
+r84 (`#85`) remains the fallback worth keeping - it is the last build whose every
+feature was tested - and its image is still at
+`boot-images/boot-r84.img`, md5 `d4550bf58700118ce0b3ee31aee67999`.
 
     boot partition:  /dev/disk/by-partlabel/boot  ->  mmcblk0p14  (20971520 bytes)
-    md5 over the image length (18219008):  d4550bf58700118ce0b3ee31aee67999
-    the old r56:     69b89a70e0a216cc128579bea40f5561  (18153472 bytes)
-    restore image:   ~/Devices/Xperia-Z1-Compact/boot-images/boot-r56-rebuilt.img
+    r85, flashed now:  a9bb0fcb4c1b0e9624fbb6ff8bf3f48b  (18225152 bytes)
+    r84:               d4550bf58700118ce0b3ee31aee67999  (18219008 bytes)
+    r56:               69b89a70e0a216cc128579bea40f5561  (18153472 bytes)
+    all three images kept in ~/Devices/Xperia-Z1-Compact/boot-images/
 
 **Flashing from the running phone works and is cheaper than a fastboot cycle.** No
 cable-holding, no Volume Up. Stage the image to `/tmp` first and check its md5 there,
@@ -36,18 +42,43 @@ a whole-device `md5sum` gives `fa97d700...` and not the documented number. And t
 bytes past the new image are left over from whatever was there before; harmless,
 since the bootloader reads the length from the header.
 
-**`dd` to boot is enough here, and that is checked rather than assumed.** `uname -r`
-is `6.16.12` for both r56 and r84 - `pkgrel` only moves `uname -v` - so they share
-`/lib/modules/6.16.12`, and r84 ran for half an hour on r56's modules with `wcn36xx`,
-`mac80211` and bluetooth loaded and `wlan0` connected. Had a needed driver been `=m`
-and new, this would not have held; see [[xperia-z1c-flashing-modules]].
+**`dd` to boot is enough only when nothing new is a module.** `uname -r` is
+`6.16.12` for every one of these builds - `pkgrel` only moves `uname -v` - so they
+share `/lib/modules/6.16.12`, and r84 ran happily on r56's modules with `wcn36xx`,
+`mac80211` and bluetooth loaded and `wlan0` connected.
+
+**r85 broke that, and the reason is worth knowing.** `SLIM_QCOM_NGD_CTRL` cannot be
+built in here: it `depends on QCOM_RPROC_COMMON`, which the remoteproc drivers
+`select` while themselves being `=m`, and a `select` from a module caps the selected
+symbol at `m`. So setting it `=y` in the config is silently downgraded, and the
+driver ships as `slim-qcom-ngd-ctrl.ko`. Since `CONFIG_MODVERSIONS=y` and r85 also
+moves the QMI and PDR helpers from `m` to `y`, reusing the old `/lib/modules` was not
+safe either. The full path, which is what was done:
+
+    scp linux-...-r85.apk mahan@172.16.42.1:/tmp/
+    ssh ... 'sudo apk add --allow-untrusted /tmp/linux-...-r85.apk'   # modules + initramfs
+    ssh ... 'cat /boot/initramfs' > initramfs                          # AFTER apk add
+    tools/mkbootimg.py --kernel vmlinuz --dtb ...amami.dtb --initramfs initramfs -o boot-r85.img
+    # then stage, verify and dd as above
+
+`apk add` regenerates the initramfs and runs `boot-deploy`, which writes
+`/boot/boot.img` as a **file** and does not touch the partition - checked, the
+partition still held r84 afterwards. Its image is unusable anyway, since it carries
+`boot-deploy`'s own `quiet splash plymouth` command line instead of the one this port
+needs. See [[xperia-z1c-flashing-modules]].
+
+**Blacklist a new driver for its first boot.** `/etc/modprobe.d/` with
+`blacklist slim_qcom_ngd_ctrl` meant the first r85 boot exercised only the DT, and
+the driver went in afterwards by hand with dmesg watched - a crash then costs a
+`modprobe`, not a boot loop. An explicit `modprobe` ignores the blacklist, which is
+what makes this work. Removed once it was known safe.
 
 ### The next jobs
 
-1. **SLIMbus**, the second audio milestone. msm8974 sits between the two controllers
-   mainline supports - stock calls it NGD, but the NGD driver only knows 8996 and
-   SDM845 - so it needs a compatible of its own and then has to be shown enumerating
-   the Taiko. See Phase 3.
+1. **Find out why the ADSP advertises no QMI services.** This is what blocks
+   SLIMbus, which is otherwise done - the controller binds and only the QMI
+   handshake is missing. Start by validating `tools/qrtr-services.py` itself,
+   since a zero from an unvalidated probe is weak evidence. See Phase 3.
 2. **Deep suspend**, now measured to be worth it: s2idle saves only 37%, and the gap
    between 156 mA and single-digit standby is the largest remaining battery item. See
    Phase 2.
@@ -423,9 +454,44 @@ So the work splits into three milestones, and only the first two are small:
 
    Check the binding and the DAI list rather than the absence of the error message:
    a driver that never probed at all also logs nothing.
-2. **SLIMbus.** msm8974 sits between the two controllers mainline supports - stock
-   calls it NGD, but the NGD driver only knows 8996 and SDM845 - so it needs a
-   compatible of its own and then has to be shown enumerating the Taiko.
+2. **SLIMbus - started 2026-09-15, controller binds, enumeration does not.**
+   `0042`-`0044`, in the build as r85 and on the device.
+
+   The controller turned out to be the easy half. Both NGD compatibles mainline
+   already had point at the *same* `ngd_v1_5_offset_info`, so the version in the
+   name carries no register differences at all and `qcom,slim-ngd-v1.4.0` is
+   simply a third entry against the same data (`0042`). `0043` adds the bus and
+   its BAM to the SoC dtsi, every address and interrupt taken from stock's own
+   `slim@fe12f000`: `0xfe12f000 0x35000` and `0xfe104000 0x20000`, SPI 163 and
+   164. The ADSP owns the bus and the AP is a satellite on it, so the BAM is
+   `qcom,controlled-remotely` on execution environment 1 of 2, as on 8996.
+
+   `0044` declares the Taiko. Both enumeration addresses come from stock's
+   `taiko_codec`, which stores them as the raw 6-byte `struct slim_eaddr` -
+   `__packed`, little-endian, `{ instance, dev_index, prod_code, manf_id }`:
+
+        elemental-addr                   = 00 01 a0 00 17 02   the PGD
+        qcom,cdc-slim-ifd-elemental-addr = 00 00 a0 00 17 02   the interface dev
+
+   so both are manufacturer `0x217` product `0xa0`, differing only in device
+   index, which mainline spells `compatible = "slim217,a0"` with `reg = <1 0>`
+   and `<0 0>`.
+
+   **What works:** the module loads clean, `qcom,slim-ngd.1` binds, and the
+   controller finds its `slim@1` child. No errors anywhere.
+
+   **What does not:** `/sys/bus/slimbus/devices/` stays empty and the driver says
+   nothing, because it is waiting for QMI service `0x301` from the ADSP before it
+   registers the controller or enumerates anything. `tools/qrtr-services.py`
+   reports **zero QMI services advertised on QRTR by any node**, so the handshake
+   never starts. QRTR itself is fine: `qcom_smd_qrtr` is bound to both
+   `remoteproc0:smd-edge.IPCRTR` and `remoteproc2:smd-edge.IPCRTR`.
+
+   So the next question is why the ADSP publishes no QMI services, not anything
+   about SLIMbus. Worth being careful here: there is no known-good service on this
+   device to validate that probe against, since wcn36xx uses `WCNSS_CTRL` over SMD
+   rather than QMI, so a zero could still be the probe rather than the ADSP.
+   Confirming that is the first job, before concluding anything about firmware.
 3. **The WCD9320 driver.** New, large, and the only route to actual audio.
 
 ## Vibrator

@@ -76,3 +76,22 @@ The reason it packs its own structs rather than leaning on a library:
 `sizeof(struct ff_effect)` is **44** on arm32, not 40, and `EVIOCSFF` encodes
 that size in the ioctl number (`0x402c4580`), so a wrong guess returns `EFAULT`
 and reads like a driver bug. The script asserts its own packing.
+
+`qrtr-services.py` lists every QMI service advertised over QRTR, by node. It
+exists because the SLIMbus NGD controller waits for QMI service `0x301` from the
+ADSP and waits *silently* - so an empty `/sys/bus/slimbus/devices/` with nothing
+in dmesg cannot, on its own, tell "the service is missing" from "the driver is
+broken". This asks the router instead of guessing.
+
+    scp tools/qrtr-services.py mahan@<phone>:/tmp/
+    ssh mahan@<phone> 'sudo python3 /tmp/qrtr-services.py'
+
+Two details that cost time. `bind()` rejects any node but the local one, so
+`(0, 0)` is not a wildcard - the script probes for it and the answer here is
+node 1. And the `NEW_LOOKUP` goes to the control port of that *local* node, not
+to some remote one.
+
+**It currently reports zero services on amami**, which is the open question for
+audio milestone 2. Treat a zero from an unvalidated probe with suspicion: there
+is no known-good service on this device to test it against, because wcn36xx
+talks over `WCNSS_CTRL` on SMD rather than QMI.

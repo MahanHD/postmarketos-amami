@@ -1,0 +1,48 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -159,6 +159,45 @@
+ 	};
+ };
+ 
++/*
++ * The WCD9320 (Taiko) sits on SLIMbus, and both of its enumeration addresses
++ * come straight out of stock's taiko_codec node. Downstream stores them as the
++ * raw 6-byte struct slim_eaddr, which is __packed and little-endian as
++ * { instance, dev_index, prod_code, manf_id }:
++ *
++ *   elemental-addr                   = 00 01 a0 00 17 02  -> the PGD
++ *   qcom,cdc-slim-ifd-elemental-addr = 00 00 a0 00 17 02  -> the interface dev
++ *
++ * so both are manufacturer 0x217 product 0xa0, differing only in device index.
++ * Mainline spells the first pair in the compatible and the second as reg,
++ * <dev_index instance>, which is what core.c parses back out with
++ * sscanf("slim%x,%x") - so "slim217,a0" with reg <1 0> and <0 0>.
++ *
++ * Nothing binds to these yet: mainline has wcd9335 and later, not the WCD9320,
++ * so the point of declaring them is to see the controller enumerate the parts
++ * and hand out logical addresses. That is milestone 2 of audio; the codec
++ * driver is milestone 3 and much larger.
++ */
++&slim_msm {
++	status = "okay";
++
++	slim@1 {
++		reg = <1>;
++		#address-cells = <2>;
++		#size-cells = <0>;
++
++		taiko_ifd: ifd@0,0 {
++			compatible = "slim217,a0";
++			reg = <0 0>;
++		};
++
++		wcd9320: codec@1,0 {
++			compatible = "slim217,a0";
++			reg = <1 0>;
++		};
++	};
++};
++
+ &smbb {
+ 	qcom,fast-charge-safe-current = <1300000>;
+ 	qcom,fast-charge-current-limit = <1300000>;
