@@ -346,11 +346,41 @@ sensor. Stock's own `dumpsys` shows only two proximity events in a session, both
 `0.00`, which is what an on-change sensor looks like when nothing approaches it -
 so that capture never contradicted this either.
 
-**What to do about it.** The fix belongs in `qcom_smgr`: when a sensor is enabled,
-keep a second subscription alive so the DSP keeps scheduling. Worth checking first
-whether *any* second sensor works or only some, and whether one at the lowest rate
-is enough, since the cost is the co-active sensor's power. Nothing here needs a
-new DT or a firmware change.
+**`0047` implements the fix, and it half-works - verified.** When a PROX_LIGHT
+sensor is enabled, the driver now takes out a second subscription on the same
+chip's ambient light channel at 1 Hz under report ID `0xfe`, waits 100 ms, and
+only then subscribes proximity. With it, **proximity enabled entirely on its own
+reaches `buffer/data_available = 1`**, where it was 0 in every previous
+measurement. That part is solid and reproducible.
+
+Three things were measured to get there, each with a control:
+
+- **Any partner works, and 1 Hz is enough.** Accelerometer at 50 Hz and at 1 Hz,
+  gyroscope at 1 Hz, magnetometer at 1 Hz and this chip's own light channel at
+  1 Hz all produce the on-enable report; no partner produces nothing, twice.
+  Light is used because it powers no other part - 175uA, and the chip is already
+  on.
+- **It must be a separate request.** Putting both data types in one request's
+  `items[]` subscribes ambient light and leaves proximity silent, which is why
+  `0031` is not this fix.
+- **The partner has to settle first.** Sending both requests back to back fails
+  even though the first QMI transaction has completed; 50 ms was the shortest gap
+  measured to work, 0 ms the longest to fail, hence 100 ms.
+
+**What is NOT verified: whether change events flow with the keepalive.** Proximity
+detecting a hand was demonstrated once and unambiguously - `values[0]` toggling
+0 <-> 65536 and raw IR going 56 -> 525 - but that run had the accelerometer
+subscribed at 50 Hz, not the keepalive. Later attempts to reproduce change events,
+with several partners and rates, produced only the on-enable report **and a raw IR
+value that never left the 77-95 far range**, meaning nothing was actually in front
+of the sensor in those runs. So they say nothing either way.
+
+**How to test this properly next time, because the obvious way does not work.**
+Do not judge by whether samples arrive. Watch `values[1]`, the raw IR count: it
+sits near 50-95 uncovered and jumps past 500 when a hand is over the sensor, which
+is the only way to know the hand was actually in the right place. The sensor is by
+the earpiece at the top of the screen. Confirm IR has risen *before* concluding
+anything about whether change events were delivered.
 
 **How this stayed hidden for so long, which is the transferable part.** Every
 earlier measurement enabled proximity on its own, so every one of them was

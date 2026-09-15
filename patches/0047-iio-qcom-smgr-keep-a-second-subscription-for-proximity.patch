@@ -1,0 +1,164 @@
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -5,6 +5,7 @@
+  * Copyright (c) 2021, Yassine Oudjana <y.oudjana@protonmail.com>
+  */
+ 
++#include <linux/delay.h>
+ #include <linux/iio/buffer.h>
+ #include <linux/iio/common/qcom_smgr.h>
+ #include <linux/iio/iio.h>
+@@ -200,6 +201,99 @@
+ 	return 0;
+ }
+ 
++/*
++ * A report ID that no sensor can claim. Report IDs are otherwise the sensor ID,
++ * and those are small; 0xfe leaves the space alone.
++ */
++#define SMGR_KEEPALIVE_REPORT_ID	0xfe
++#define SMGR_KEEPALIVE_RATE_HZ		1
++#define SMGR_KEEPALIVE_SETTLE_MS	100
++
++/*
++ * Keep a second, separate subscription alive while proximity is enabled.
++ *
++ * The ADSP will not report proximity at all unless some other subscription
++ * exists at the same time. Measured on a Z1 Compact: proximity on its own
++ * produces nothing, ever - not its on-enable report, and nothing when a hand
++ * covers it - at any sampling rate from 1 to 100 Hz, with either data type,
++ * with any of the unknown val1/val2 fields, and at any report rate. Add a
++ * subscription to *any* other sensor and proximity starts reporting
++ * immediately: the accelerometer, the gyroscope and the magnetometer all work,
++ * and so does this chip's own ambient light channel, which is why that is what
++ * is used here - it needs no other part powered, and it is the cheapest of them
++ * at 175uA against the accelerometer's 130uA plus whatever waking it costs.
++ *
++ * It has to be a *separate* request with its own report ID. Putting both data
++ * types in the items[] of one request subscribes ambient light and leaves
++ * proximity as silent as before, which is why the obvious-looking fix of
++ * subscribing every data type does not work.
++ *
++ * Android never meets this because its sensor service keeps the accelerometer
++ * subscribed continuously for screen rotation, so proximity always has company.
++ */
++static int qcom_smgr_set_keepalive(struct qcom_smgr *smgr,
++				   struct qcom_smgr_sensor *sensor,
++				   bool enable)
++{
++	struct sns_smgr_buffering_req req = {
++		.report_id = SMGR_KEEPALIVE_REPORT_ID,
++		.notify_suspend_valid = false
++	};
++	struct sns_smgr_buffering_resp resp = {};
++	struct qmi_txn txn;
++	int ret;
++
++	if (enable) {
++		req.action = SNS_SMGR_BUFFERING_ACTION_ADD;
++		req.report_rate = SMGR_KEEPALIVE_RATE_HZ * SMGR_REPORT_RATE_HZ;
++		req.item_len = 1;
++		req.items[0].sensor_id = sensor->id;
++		req.items[0].data_type = SNS_SMGR_DATA_TYPE_SECONDARY;
++		req.items[0].sampling_rate = SMGR_KEEPALIVE_RATE_HZ;
++		req.items[0].val1 = 3;
++		req.items[0].val2 = 1;
++	} else {
++		req.action = SNS_SMGR_BUFFERING_ACTION_DELETE;
++	}
++
++	ret = qmi_txn_init(&smgr->sns_smgr_hdl, &txn,
++			   sns_smgr_buffering_resp_ei, &resp);
++	if (ret < 0)
++		return ret;
++
++	ret = qmi_send_request(&smgr->sns_smgr_hdl, &smgr->sns_smgr_info, &txn,
++			       SNS_SMGR_BUFFERING_MSG_ID,
++			       SNS_SMGR_BUFFERING_REQ_MAX_LEN,
++			       sns_smgr_buffering_req_ei, &req);
++	if (ret < 0) {
++		qmi_txn_cancel(&txn);
++		return ret;
++	}
++
++	ret = qmi_txn_wait(&txn, 5 * HZ);
++	if (ret < 0)
++		return ret;
++
++	if (resp.result) {
++		dev_err(smgr->dev, "Keepalive request failed: 0x%x\n",
++			resp.result);
++		return -EREMOTEIO;
++	}
++
++	return 0;
++}
++
++/*
++ * Reports for the keepalive subscription are not wanted - it exists only so the
++ * DSP keeps scheduling - and they arrive under a report ID no sensor owns, so
++ * the report handler drops them without matching anything.
++ */
++static bool qcom_smgr_needs_keepalive(struct qcom_smgr_sensor *sensor)
++{
++	return sensor->type == SNS_SMGR_SENSOR_TYPE_PROX_LIGHT &&
++	       sensor->data_type_count > SNS_SMGR_DATA_TYPE_SECONDARY;
++}
++
+ static int qcom_smgr_request_buffering(struct qcom_smgr *smgr,
+ 				       struct qcom_smgr_sensor *sensor,
+ 				       bool enable)
+@@ -350,8 +444,32 @@
+ 	struct qcom_smgr *smgr = dev_get_drvdata(iio_dev->dev.parent->parent);
+ 	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
+ 	struct qcom_smgr_sensor *sensor = priv->sensor;
++	int ret;
++
++	/*
++	 * Before the sensor itself, so the DSP already has company by the time
++	 * it is asked for proximity - and then wait, because the keepalive has
++	 * to settle before it counts.
++	 *
++	 * Waiting for the QMI response is not enough on its own: sending both
++	 * requests back to back leaves proximity as silent as it was with no
++	 * keepalive at all, even though the first transaction has completed.
++	 * 50ms was the shortest gap measured to work and 0ms the longest to
++	 * fail, so this takes 100ms for margin. It is paid once per enable.
++	 */
++	if (qcom_smgr_needs_keepalive(sensor)) {
++		ret = qcom_smgr_set_keepalive(smgr, sensor, true);
++		if (ret < 0)
++			return ret;
++
++		msleep(SMGR_KEEPALIVE_SETTLE_MS);
++	}
++
++	ret = qcom_smgr_request_buffering(smgr, sensor, true);
++	if (ret < 0 && qcom_smgr_needs_keepalive(sensor))
++		qcom_smgr_set_keepalive(smgr, sensor, false);
+ 
+-	return qcom_smgr_request_buffering(smgr, sensor, true);
++	return ret;
+ }
+ 
+ static int qcom_smgr_sensor_postdisable(struct iio_dev *iio_dev)
+@@ -359,8 +477,18 @@
+ 	struct qcom_smgr *smgr = dev_get_drvdata(iio_dev->dev.parent->parent);
+ 	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
+ 	struct qcom_smgr_sensor *sensor = priv->sensor;
++	int ret;
++
++	ret = qcom_smgr_request_buffering(smgr, sensor, false);
++
++	if (qcom_smgr_needs_keepalive(sensor)) {
++		int kret = qcom_smgr_set_keepalive(smgr, sensor, false);
++
++		if (!ret)
++			ret = kret;
++	}
+ 
+-	return qcom_smgr_request_buffering(smgr, sensor, false);
++	return ret;
+ }
+ 
+ const struct iio_buffer_setup_ops qcom_smgr_buffer_ops = {
