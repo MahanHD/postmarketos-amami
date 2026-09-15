@@ -414,18 +414,56 @@ HAL has an OEM path - `OEMLib::getOEMProximity()`, loading
 `/system/lib/hw/sensors.oem.so` - but LineageOS does not ship that library, so it
 is dead code there and proximity must come through SMGR like everything else.
 
-**The next step is static, and the ROM already has the answer.**
-`Proximity::prepareAddMsg(sns_smgr_buffering_req_msg_v01**)` in
-`/vendor/lib/hw/sensors.msm8974.so` is the exact code that builds a working
-proximity subscription. The kernel's `struct sns_smgr_buffering_req` is
-reverse-engineered from dumps and its own header admits the `val*` fields are
-guesses; the real `_v01` struct has more of them. Disassembling that one method
-says which fields Android sets and to what - no device time, no build, and it
-settles what every parameter sweep so far has only guessed at.
+**The request is not the difference, and that is now settled from the ROM.**
+`Proximity::prepareAddMsg` in `/vendor/lib/hw/sensors.msm8974.so` disassembles to
+four instructions:
 
-Extract it the same way as the firmware blobs:
+    ldr  r3, [r1]        ; r3 = *msg
+    movs r2, #0x28
+    strb r2, [r3, #0xc]  ; Item[0].SensorId = 0x28
+    bx   lr
+
+`Light` sets `[r3, #0xd] = 1` as well, and `Accelerometer` sets `[r3, #0xc] = 0`,
+which pins the layout: the message header is 12 bytes and `Item[0]` starts at
+`0x0c` with `SensorId` then `DataType`. **Proximity leaves `DataType` at its
+default of 0** and touches nothing else - so Android sends the same request the
+kernel driver and `smgr-probe.py` send. Every parameter sweep run against this was
+varying fields Android never varies.
+
+Extract the library the same way as the firmware blobs:
 
     debugfs -R "dump /vendor/lib/hw/sensors.msm8974.so out.so" system.img
+
+**And the premise behind all of it was wrong.** `firmware/sensors/android-sensorlist.txt`
+is a `dumpsys sensorservice` saved off **stock** Android (`14.6.A.1.236`) while the
+sensor worked, and it says:
+
+    0x00000030) APDS-9930/QPDS-T930 Proximity & Light | type: android.sensor.proximity(8) | flags: 0x3
+            on-change | minRate=1.00Hz | no batching | wakeUp
+
+    APDS-9930/QPDS-T930 Proximity & Light: last 2 events
+             1 (ts=74.668407584) 0.00, 0.00, 0.00,
+             2 (ts=89.371558526) 0.00, 0.00, 0.00,
+
+**Two events in the whole session, both zero**, against fifty from the
+accelerometer in a few seconds. Proximity is an **on-change** sensor: it reports
+once on enable and then says nothing until something physically approaches it.
+"Subscribes and then never streams" is not a fault, it is the specification. Every
+fixed-length window run here - 3 s, 12 s, 35 s - was measuring for a stream that a
+working sensor would never produce.
+
+So the only measurement that means anything is **does a value arrive when a hand
+covers it**, and that has to be run for long enough, with the hand on the right
+spot, and with the initial on-enable report distinguished from a change report.
+Note that `0.00` is what stock reports for *far*; a working near reading has not
+been seen on this hardware under any OS in anything recorded here.
+
+**What is genuinely unresolved:** an earlier run *did* show a single sample from
+the IIO buffer (16 bytes) and the first `smgr-client.py` trials each showed one
+indication carrying `report_id 0x28`, which matches the expected on-enable report.
+Later clean runs with `report_id` filtering showed none at all. Those disagree and
+neither has been reconciled; the on-enable report is the thing to chase, because it
+is the one a working sensor emits without anybody touching the phone.
 
 ### The registry, which is now the live lead
 
