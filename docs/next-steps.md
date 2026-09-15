@@ -353,17 +353,62 @@ build yet: only `data_types[0]` is ever used to build a request today, so nothin
 observable changes, and it is not worth a flash cycle on its own. Fold it in with
 the next rebuild.
 
-**The instrument this needs now exists.** The note above used to say proximity
-needed one. SMGR is QMI service `0x100` on node 5 and the ADSP advertises it -
-`tools/qrtr-services.py` lists it - so the next step is a userspace SMGR client
-that can issue `SNS_SMGR_BUFFERING_REQ` with varied parameters and watch for
-indications, without a kernel build per attempt. The things to vary: `data_type`
-`SECONDARY` rather than `PRIMARY`, the `val1`/`val2` fields the driver admits are
-guesses copied from dumps, and `report_rate`, which is currently
-`sample_rate * 32768 * 2` on the assumption of one sample per report.
+**The instrument now exists and has been used.** SMGR is QMI service `0x100` on
+node 5, the ADSP advertises it, and `tools/smgr-info.py` and `tools/smgr-probe.py`
+talk to it from userspace - so request parameters can be varied without a kernel
+build per attempt. Unload `qcom_smgr` first so both are not subscribing.
 
-Still unexamined, and cheap once that client exists: what a working ROM sends for
-this sensor, which is the one source that would settle the request format outright.
+**Which data type is which, settled.** Both carry the same name string, so the
+only way to tell them apart is what `SNS_SMGR_SINGLE_SENSOR_INFO` reports:
+
+| data type | max rate | current | range | resolution | |
+|---|---|---|---|---|---|
+| 0 | 20 Hz | **12675 uA** | 3277 | 66 | **proximity** - that is the IR LED |
+| 1 | 15 Hz | 175 uA | 1966080000 | 655 | **ambient light** - lux-scaled |
+
+So the driver's `data_types[0]` / `DATA_TYPE_PRIMARY` choice is **correct**, and
+`0031` was never going to fix proximity. Subscribing to the secondary type gets
+ambient light, which is a different feature.
+
+**What the probe found, with the accelerometer as a control in the same run:**
+
+| subscription | `ack_nak` | indications in 12 s | values |
+|---|---|---|---|
+| accel `0x00` (control, 4 s) | 0 | 248 | 24 distinct, real motion |
+| prox, `val1=3 val2=1` (what the driver sends) | **1** | **0** | - |
+| prox, `val1=2 val2=4` (what the info response reports) | **1** | **0** | - |
+| **ambient light**, `data_type 1` | **1** | **59** | all zero |
+
+Read together these say something fairly specific: **ambient light subscribes and
+streams at the requested rate but every sample is zero, and proximity never
+reports at all - while every subscription to sensor `0x28` is NAKed and the
+accelerometer's is ACKed.** A sensor that is present in SMGR's inventory, accepts
+a report rate, and then produces either nothing or zeros looks like a part the
+ADSP has enumerated from its registry but cannot actually bring up. That moves the
+problem off the Linux side entirely: no DT or `qcom_smgr` change can fix a sensor
+the ADSP is not running, which also explains why `0031` and every rate and
+parameter variation changed nothing.
+
+That points back at the registry - see [[xperia-z1c-sensor-harvest]] and the
+unmapped-group lead below, which is no longer as weak as it looked.
+
+**`ack_nak` is a real bug regardless.** `qcom_smgr_set_buffering()` checks only
+`resp.result` (TLV `0x02`) and ignores `ack_nak` (TLV `0x11`), so a NAKed
+subscription is reported as success and the driver waits forever with no
+diagnostic. Making it fail loudly would have turned this whole investigation into
+one dmesg line. Worth a patch whatever the root cause turns out to be.
+
+**A trap that produced a wrong answer here.** The first version of the probe
+counted every `0x22` indication rather than filtering on `report_id`. With the
+accelerometer control running at 50 Hz, its stragglers arrived inside the next
+trial's window and were counted as proximity data - which briefly looked like
+"proximity works, the driver just asks wrongly". Filter by `report_id` and settle
+after each DELETE. See [[xperia-z1c-validate-the-probe]].
+
+**Still unexamined:** what a working ROM sends for this sensor, and what actually
+sits at the unmapped registry offsets. Both are now the most promising leads,
+because the fault appears to be in the ADSP's configuration of the part rather
+than in anything Linux sends.
 
 ## Phase 2: deep suspend
 

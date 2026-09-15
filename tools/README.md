@@ -104,3 +104,29 @@ Two more details that cost time. `bind()` rejects any node but the local one, so
 1. And a listing ends with an all-zero `NEW_SERVER` as a terminator, so filtering
 those out - as the first version did - throws away the one packet that
 distinguishes "the list is empty" from "nothing replied".
+
+`smgr-info.py` and `smgr-probe.py` talk to the ADSP's sensor manager directly over
+QMI/QRTR, so a sensor question can be answered without a kernel build, a flash and
+a reboot per attempt. SMGR is QMI service `0x100` and the kernel driver binds at
+node 5 port 6; unload `qcom_smgr` first so the two are not both subscribing.
+
+    ssh mahan@<phone> 'sudo modprobe -r qcom_smgr_prox qcom_smgr_accel \
+        qcom_smgr_gyro qcom_smgr_mag; sudo modprobe -r qcom_smgr'
+    ssh mahan@<phone> 'sudo python3 /tmp/smgr-info.py 0x28'   # what a sensor is
+    ssh mahan@<phone> 'sudo python3 /tmp/smgr-probe.py'       # subscribe and watch
+
+`smgr-info.py <id>` prints each data type with its max rate, current draw, range
+and resolution - which is how proximity and ambient light were told apart on the
+APDS-9930, since both carry the same name string. The current draw gives it away:
+`data_type 0` pulls 12675 uA (the IR LED) and `data_type 1` pulls 175 uA.
+
+`smgr-probe.py` runs subscription trials. **It filters indications by `report_id`
+and settles after each DELETE**, which is not optional: an earlier version counted
+every `0x22` indication, and with the accelerometer control running at 50 Hz its
+stragglers arrived during the next trial's window and were read as proximity data.
+That produced a "proximity works" result that was entirely the control leaking.
+
+It also reads `ack_nak` (TLV `0x11`) from the buffering response, which
+`qcom_smgr_set_buffering()` ignores - it only checks `result`. Every subscription
+to sensor `0x28` is NAKed while the accelerometer is ACKed, and the driver cannot
+see the difference.
