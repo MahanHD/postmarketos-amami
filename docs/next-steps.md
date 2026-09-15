@@ -10,76 +10,62 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state: running the flashed r56** (`uname -v` = `#57`), on WiFi at
-`192.168.1.221`, USB cable out. Nothing is half-applied and there is nothing to
-repair. Boot partition md5 is `69b89a70e0a216cc128579bea40f5561`. r56 has neither
-the vibrator nor APR, and it remains the known-good kernel to come back to.
+**Device state: running r84 from RAM, at 97%.** It was `fastboot boot`-ed on
+2026-09-15, so it lives in RAM only - a power cycle returns to the flashed **r56**
+(`uname -v` = `#57`), which has neither the vibrator nor APR. Boot partition md5 is
+still `69b89a70e0a216cc128579bea40f5561`. Nothing is half-applied.
 
-**Both remaining jobs are built and staged; what is left is one `fastboot boot`.**
-`~/Devices/Xperia-Z1-Compact/boot-images/boot-r84.img` (md5
-`d4550bf58700118ce0b3ee31aee67999`) is r83 plus `0041`, so it carries the vibrator,
-APR *and* the q6asm frontend DAIs. Testing both on one boot is deliberate - see the
-battery note below. It is `fastboot boot` only; nothing is flashed, so a power cycle
-returns to r56.
+**Both queued jobs are done, and both were confirmed on the device:**
 
-**Two things need a hand on the phone, and nothing can proceed without them:**
+- **The vibrator works** - felt, not merely enumerated. `0040` plus `tools/ff-test.py`.
+- **`q6asm-dai` probes** - `0041`, with `MultiMedia1`..`MultiMedia4` registered.
 
-1. **Charge it, on a wall charger.** The s2idle run ended at **17%**, and the pack is
-   down to ~1750 mAh (see Phase 2), so there is well under two hours of awake time in
-   it. A 500 mA host port does not cover the ~400 mA the phone draws just to run: net
-   battery current sits at exactly zero, which looks like a broken charger and is not.
-2. **Get to fastboot by holding Volume Up while plugging in.** `reboot bootloader` is
-   a dead end here - S1Boot ignores the Qualcomm magics at `0x65c`.
+**So r84 is worth flashing, and that is the open decision.** It is r56 plus the
+vibrator, APR and the q6asm DAIs, all now tested, and it is the first build since r56
+where everything in it has been shown to work. Flashing it replaces the known-good
+kernel on the boot partition, so it is a deliberate choice rather than a default:
 
-Then:
+    ~/Devices/Xperia-Z1-Compact/boot-images/boot-r84.img
+    md5 d4550bf58700118ce0b3ee31aee67999
 
-    fastboot boot ~/Devices/Xperia-Z1-Compact/boot-images/boot-r84.img
-    # unplug once it is up, then work over WiFi
+`tools/mkbootimg.py` is now verified byte-for-byte (it reproduces the flashed r56
+exactly), so the image itself can be trusted.
 
-**Sequencing note that matters.** `fastboot boot` needs the cable in, and charging
-needs it in too, while any current measurement needs it *out* - on a host port the
-battery floats and current does not respond at all.
+### The next jobs
 
-Once r84 is up, both jobs are one command each:
+1. **SLIMbus**, the second audio milestone. msm8974 sits between the two controllers
+   mainline supports - stock calls it NGD, but the NGD driver only knows 8996 and
+   SDM845 - so it needs a compatible of its own and then has to be shown enumerating
+   the Taiko. See Phase 3.
+2. **Deep suspend**, now measured to be worth it: s2idle saves only 37%, and the gap
+   between 156 mA and single-digit standby is the largest remaining battery item. See
+   Phase 2.
+3. **Proximity**, still the one sensor that enumerates but never reports.
 
-1. **Feel the vibrator.** `scp tools/ff-test.py` to the phone and
-   `sudo python3 /tmp/ff-test.py`. It should find `pm8xxx_vib_ffmemless` advertising
-   `FF_RUMBLE`, then play three bursts. **The question is whether the motor moves** -
-   an ff-memless device enumerates whether or not a motor is wired to that PMIC
-   output, so if the uploads succeed and nothing is felt, the driver is fine and the
-   hardware is not.
-2. **Check `q6asm-dai` probes.** `dmesg | grep q6asm` should no longer say
-   `No dais found in DT`, and `/sys/kernel/debug/asoc/` should show the component.
-   No sound card is expected either way - the codec is a WCD9320 on SLIMbus and
-   mainline has no driver for it.
+### Two traps worth not rediscovering
 
-**Done 2026-09-14:**
-
-- **The s2idle measurement** that used to be job 1. 156 mA suspended against 248 mA
-  awake screen-off - 37% saved, so deep suspend is worth a project - and the pack
-  turned out to be at 56% health, which rescaled every runtime figure in this
-  document. See Phase 2 and `docs/measurements/s2idle-2026-09-14/`.
-- **`tools/mkbootimg.py` is now verified byte-for-byte,** which its own docstring
-  listed as outstanding because it needed the phone's `/boot/initramfs` and the phone
-  was off. Rebuilding r56 from its apk plus the real initramfs reproduces md5
-  `69b89a70e0a216cc128579bea40f5561` exactly. If that ever stops matching, suspect
-  the tool before suspecting the flash.
-- **`0041`** (q6asm frontend DAIs) and **`tools/ff-test.py`**, both described below.
-  Neither has been on hardware yet.
-
-The scripts worth keeping are in `tools/` - `mkbootimg.py`, `romdtb.py`,
-`s2idle-test.sh` and `ff-test.py`. See `tools/README.md`.
+- **`/sys/kernel/debug/regmap/0-01/registers` is unusable on pm8941.** Every register
+  is a separate SPMI transaction and the file walks the whole address space, so even
+  a `head -c` of the first few hundred KB does not return, and the reader is
+  effectively unkillable while it runs. Three attempts pushed load average past 5.
+  The SMBB notes elsewhere in this file describe reading `0-00` that way - treat that
+  as "for a small range, patiently", not as a general technique.
+- **Do not `pkill -f <script>` from the host** to clean up something running on the
+  phone. The pattern matches the local `ssh` command that contains the script name,
+  so it kills the session issuing it. Kill by PID over ssh, on the phone.
 
 ## Where the port stands
 
 Working: panel, touch, Xfce on freedreno, WiFi, Bluetooth, charging (on a real
 supply), battery percentage, USB networking, sensors bar proximity, the notification
-LED, suspend (s2idle), GPU and CPU frequency scaling, and CPU thermal throttling.
+LED, the vibrator, suspend (s2idle), GPU and CPU frequency scaling, and CPU thermal
+throttling.
 
 Not working: audio, proximity, ambient light, deep suspend.
 
-The vibrator enumerates as of `0040`, and the ADSP audio transport is up as of `0039`
-- neither makes the phone do anything a user would notice yet; see below.
+The vibrator **works** as of `0040` - felt, not merely enumerated - and the ADSP
+audio transport is up as of `0039` with all four Q6 services attached as of `0041`.
+Audio still makes no sound: the codec driver is the blocker, see below.
 
 The GPU IOMMU works as of `0034`-`0036`. The MDP half (`0037`) reclaims the 192MB
 carveout but blanks the panel, and all of it is out of the build.
@@ -418,8 +404,14 @@ So the work splits into three milestones, and only the first two are small:
    `q6dsp_audio_ports_set_config()` rather than from DT children, so it probes fine
    with an empty container, and `q6core`/`q6adm` have no DAIs at all.
 
-   **Built as r84 and the four `dai@N` nodes are confirmed present in the dtb**
-   (`tools/romdtb.py show ... dais`), but **not yet booted** - see Start here.
+   **SOLVED 2026-09-15, booted as r84 and verified on the device.** `q6asm-dai` is
+   bound - the symlink exists under `/sys/bus/platform/drivers/q6asm-dai/` - and
+   `/sys/kernel/debug/asoc/dais` lists `MultiMedia1`..`MultiMedia4`, the four this
+   patch declares, alongside q6afe's backend DAIs (`SLIMBUS_*`, `HDMI`, `USB_RX`).
+   The `No dais found in DT` failure is gone.
+
+   Check the binding and the DAI list rather than the absence of the error message:
+   a driver that never probed at all also logs nothing.
 2. **SLIMbus.** msm8974 sits between the two controllers mainline supports - stock
    calls it NGD, but the NGD driver only knows 8996 and SDM845 - so it needs a
    compatible of its own and then has to be shown enumerating the Taiko.
@@ -434,12 +426,12 @@ already had `CONFIG_INPUT_PM8XXX_VIBRATOR=y`, and `pm8941.dtsi` already carries
 LineageOS run this exact node (`qcom,vib@c000`, `qcom,qpnp-vibrator`, okay), so the
 hardware is there.
 
-**Booted as r83 and it enumerates:** `pm8xxx_vib_ffmemless` appears as `event0`,
-alongside gpio-keys, the power key and the touchscreen. **Not yet felt** - driving it
-takes an `EVIOCSFF` upload plus an `EV_FF` play on the event node, and that is still
-outstanding, so "the device exists" is all that is proven. Worth doing before calling
-it finished: an ff-memless device can enumerate without the motor being wired to that
-PMIC output.
+**SOLVED 2026-09-15: the motor runs and was felt.** On r84 `pm8xxx_vib_ffmemless`
+is `event0`, the driver is bound at `fc4cf000.spmi:pm8941@1:vibrator@c000`, the node
+advertises `FF_RUMBLE`, and an `EVIOCSFF` upload followed by an `EV_FF` play produces
+a burst you can feel. That last step is the whole point: an ff-memless device
+enumerates whether or not a motor is wired to that PMIC output, so enumeration on r83
+proved nothing and only playing it could.
 
 **That test is now written: `tools/ff-test.py`.** It needs no compiler on the phone -
 it packs the struct and the ioctl numbers itself - and it scans `/dev/input`, reports

@@ -111,8 +111,11 @@ def play(fd, strong, weak, seconds, label):
     os.write(fd, INPUT_EVENT.pack(0, 0, EV_FF, eid, 1))
     time.sleep(seconds)
     os.write(fd, INPUT_EVENT.pack(0, 0, EV_FF, eid, 0))
+    # EVIOCRMFF takes the effect id *by value* - the kernel casts the ioctl
+    # argument itself to int - so handing it a packed buffer passes a pointer
+    # and erases nothing, returning EINVAL.
     try:
-        fcntl.ioctl(fd, EVIOCRMFF, struct.pack('<i', eid))
+        fcntl.ioctl(fd, EVIOCRMFF, eid)
     except OSError as e:
         print(f'    (EVIOCRMFF: {e})')
     return True
