@@ -10,9 +10,11 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state: r85 is flashed and running.** Flashed 2026-09-15, verified by
-readback, confirmed booting from flash. It is r84 plus SLIMbus (`0042`-`0044`),
-and the Taiko enumerates on the bus. Nothing is half-applied.
+**Device state: r86 is flashed and running.** Flashed 2026-09-16, verified by
+readback, confirmed booting from flash (`uname -v` = `#87`). It is r85 plus the
+proximity keepalive (`0047`) and the data-type indexing fix (`0045`). Proximity
+enabled on its own now reaches `buffer/data_available = 1`. Nothing is
+half-applied, and the recipe, the flash and `/lib/modules` all agree at r86.
 
 **Mind the numbering: `pkgrel` + 1 is what `uname -v` prints.** r84 reports `#85`
 and r85 reports `#86`, which is an easy way to think you booted the wrong thing.
@@ -22,7 +24,8 @@ feature was tested - and its image is still at
 `boot-images/boot-r84.img`, md5 `d4550bf58700118ce0b3ee31aee67999`.
 
     boot partition:  /dev/disk/by-partlabel/boot  ->  mmcblk0p14  (20971520 bytes)
-    r85, flashed now:  a9bb0fcb4c1b0e9624fbb6ff8bf3f48b  (18225152 bytes)
+    r86, flashed now:  5091ea7c372c07b89b5db95f14cf14dc  (18225152 bytes)
+    r85:               a9bb0fcb4c1b0e9624fbb6ff8bf3f48b  (18225152 bytes)
     r84:               d4550bf58700118ce0b3ee31aee67999  (18219008 bytes)
     r56:               69b89a70e0a216cc128579bea40f5561  (18153472 bytes)
     all three images kept in ~/Devices/Xperia-Z1-Compact/boot-images/
@@ -122,9 +125,9 @@ carveout but blanks the panel, and all of it is out of the build.
 Worth stating because it lives on disk in pmaports, not in this repo, so nothing here
 records it and a new session would have to look:
 
-- **Flashed on the phone: r85**, and the pmaports recipe is also r85, so for once
-  they agree. It is `0001`-`0029` as usual plus `0039` (APR), `0040` (vibrator),
-  `0041` (q6asm DAIs) and `0042`-`0044` (SLIMbus), with `CONFIG_QCOM_APR`, the
+- **Flashed on the phone: r86**, and the pmaports recipe is also r86, so they
+  agree. It is `0001`-`0029` as usual plus `0039` (APR), `0040` (vibrator),
+  `0041` (q6asm DAIs), `0042`-`0044` (SLIMbus), `0045` and `0047`, with `CONFIG_QCOM_APR`, the
   `SND_SOC_QDSP6_*` symbols and `CONFIG_SLIMBUS` on. No IOMMU patches,
   `# CONFIG_ARM_SMMU is not set`.
 - **`uname -v` prints `pkgrel` + 1.** r85 reports `#86`. Easy to misread as having
@@ -133,8 +136,7 @@ records it and a new session would have to look:
   (`d4550bf58700118ce0b3ee31aee67999`) is the last build before SLIMbus, and
   r56-rebuilt (`69b89a70e0a216cc128579bea40f5561`) reproduces what was flashed for
   most of this port's life.
-- `0045` exists as a file but is **not** in the recipe; see the proximity section.
-- Apks r57-r85 in `~/.local/var/pmbootstrap/packages/` are a mix of experiments;
+- Apks r57-r86 in `~/.local/var/pmbootstrap/packages/` are a mix of experiments;
   several are IOMMU builds. Numbering is monotonic but the contents are not a
   progression - check the config inside one before trusting it.
 
