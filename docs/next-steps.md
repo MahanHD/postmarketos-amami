@@ -104,8 +104,11 @@ supply), battery percentage, USB networking, sensors bar proximity, the notifica
 LED, the vibrator, suspend (s2idle), GPU and CPU frequency scaling, CPU thermal
 throttling, and SLIMbus - the Taiko enumerates, though nothing can drive it yet.
 
-Not working: audio (the codec driver is all that is left), proximity, ambient
-light, deep suspend.
+Not working: audio (the codec driver is all that is left), deep suspend.
+
+Proximity and ambient light both work at the SMGR level as of 2026-09-16, with one
+caveat that needs a driver change: proximity only reports while another sensor is
+subscribed. See Phase 1.
 
 The vibrator **works** as of `0040` - felt, not merely enumerated - and the ADSP
 audio transport is up as of `0039` with all four Q6 services attached as of `0041`.
@@ -305,233 +308,57 @@ and compare against how downstream sets up MDSS bus votes before first use.
 panel.** `fb0`, `bl_power`, `glxinfo` and a frame counter all pass while the screen is
 black.
 
-### Why sensor 0x28 reports nothing
+### Proximity: SOLVED 2026-09-16. It needs a second sensor subscribed
 
-**Re-measured 2026-09-15, and the old characterisation was wrong in a way that
-mattered.** "Zero bytes in 25 s with a hand over it" was taken with a harness that
-could not have worked: an IIO character device rejects any read smaller than one
-scan element, so `dd bs=1` returns `EINVAL` immediately and reports nothing for
-*any* sensor. Re-running it today produced zero bytes from the **accelerometer**
-too, which is what gave it away. Always run the control.
+**The sensor works.** With the accelerometer subscribed at the same time and a
+hand moving over the phone:
 
-With a valid read size (`cat`, or `dd bs=16`) the picture is:
+    [ 0.0s] values=(0,     56, 0)     far,  raw IR 56
+    [15.0s] values=(65536, 525, 0)    NEAR, raw IR 525
+    [22.1s] values=(0,    288, 0)     far
+    [23.1s] values=(65536, 521, 0)    NEAR
+    [26.5s] values=(0,    306, 0)     far
+    [29.9s] values=(65536, 518, 0)    NEAR
 
-| sensor | 10 s of buffered reads |
+`values[0]` toggles 0 <-> 65536 - Q16 for 0.0 and 1.0, far and near - and
+`values[1]` is the raw IR count. The hardware, the ADSP path, the IIO driver and
+its scaling were never broken.
+
+**The whole bug is that proximity emits nothing unless another SMGR sensor is
+subscribed at the same time.** Demonstrated three ways, each with a control in the
+same run:
+
+| | proximity samples |
 |---|---|
-| accel (`iio:device3`) | 40048 bytes |
-| prox (`iio:device5`) | **0 bytes** |
+| proximity alone | **none, ever** |
+| accelerometer running, proximity added | 1 on enable, then one per change |
+| accelerometer subscribed then *deleted*, then proximity | 1 on enable |
 
-So proximity really does report nothing - but the *shape* of the failure is now
-pinned down rather than guessed:
+and through the kernel exactly the same way - `buffer/data_available` stays 0 for
+proximity alone, and reads 1 the moment the accelerometer's buffer is enabled
+first. Nothing else matters: sampling rate 1 to 100, `val1`/`val2`, primary versus
+secondary data type, and `report_rate` across seven values from 0 to
+`rate * 32768 * 2` all change nothing on their own.
 
-- **The subscription is accepted.** `buffer/enable` reads back 1 and nothing is
-  logged. That means `qcom_smgr_set_buffering()` got a zero `resp.result` from the
-  ADSP - a rejected request takes the `Buffering request failed: 0x%x` path and
-  fails the enable. The ADSP agrees to report and then does not.
-- **`buffer/data_available` stays 0 indefinitely**, so no indication is arriving at
-  all; this is not a decode or push problem in the IIO layer.
-- **The sample rate is not the variable.** `in_proximity_sampling_frequency` is
-  writable and accepted at 1, 2, 5, 10, 20, 50 and 100; every one enables cleanly
-  and every one yields nothing.
-- **Sensor `0x28` really does carry two data types**, which the driver's own probe
-  inventory shows and which is the premise `0031` was built on:
+**Why nobody hit this on Android:** the accelerometer is effectively always
+subscribed there, for screen rotation alone, so proximity always had a co-active
+sensor. Stock's own `dumpsys` shows only two proximity events in a session, both
+`0.00`, which is what an on-change sensor looks like when nothing approaches it -
+so that capture never contradicted this either.
 
-        qcom_smgr 5-6: 0x00,0: BOSCH BMA2X2 Accelerometer/Temperature/Double-tap
-        qcom_smgr 5-6: 0x0a,0: BOSCH BMG160 Gyroscope
-        qcom_smgr 5-6: 0x14,0: AKM AK8963 Magnetometer
-        qcom_smgr 5-6: 0x28,0: Avago APDS-9930/QPDS-T930 Proximity & Light
-        qcom_smgr 5-6: 0x28,1: Avago APDS-9930/QPDS-T930 Proximity & Light
+**What to do about it.** The fix belongs in `qcom_smgr`: when a sensor is enabled,
+keep a second subscription alive so the DSP keeps scheduling. Worth checking first
+whether *any* second sensor works or only some, and whether one at the lowest rate
+is enough, since the cost is the co-active sensor's power. Nothing here needs a
+new DT or a firmware change.
 
-  That inventory is printed at probe, so **do not `dmesg -C`** - it was cleared
-  during this session and the driver had to be reloaded to get it back.
-
-**`0045`, found while reading that code.** The probe loop iterates `j` over the
-data types but writes `data_types->cur_sample_rate`, which is `data_types[0]`, so
-the second data type's current rate is never initialised. It is a real bug and the
-fix is obvious, but **it does not fix proximity** and it is deliberately not in the
-build yet: only `data_types[0]` is ever used to build a request today, so nothing
-observable changes, and it is not worth a flash cycle on its own. Fold it in with
-the next rebuild.
-
-**The instrument now exists and has been used.** SMGR is QMI service `0x100` on
-node 5, the ADSP advertises it, and `tools/smgr-info.py` and `tools/smgr-probe.py`
-talk to it from userspace - so request parameters can be varied without a kernel
-build per attempt. Unload `qcom_smgr` first so both are not subscribing.
-
-**Which data type is which, settled.** Both carry the same name string, so the
-only way to tell them apart is what `SNS_SMGR_SINGLE_SENSOR_INFO` reports:
-
-| data type | max rate | current | range | resolution | |
-|---|---|---|---|---|---|
-| 0 | 20 Hz | **12675 uA** | 3277 | 66 | **proximity** - that is the IR LED |
-| 1 | 15 Hz | 175 uA | 1966080000 | 655 | **ambient light** - lux-scaled |
-
-So the driver's `data_types[0]` / `DATA_TYPE_PRIMARY` choice is **correct**, and
-`0031` was never going to fix proximity. Subscribing to the secondary type gets
-ambient light, which is a different feature.
-
-**What the probe found, with the accelerometer as a control in the same run:**
-
-| subscription | `ack_nak` | indications in 12 s | values |
-|---|---|---|---|
-| accel `0x00` (control, 4 s) | 0 | 240-248 | 65 distinct, real motion |
-| prox, `val1=3 val2=1` (what the driver sends) | 1 | **0** | - |
-| prox, `val1=2 val2=4` (what the info response reports) | 1 | **0** | - |
-| **ambient light**, `data_type 1` | 1 | **59-60** | **real, varying** |
-
-**So the APDS-9930 is alive and the ADSP is driving it.** Ambient light subscribes,
-streams at exactly the requested rate, and returns real values that track the room -
-`(720896, 7, 0)` and `(917504, 8, 0)` were seen in the same run. Only the
-**proximity data type** is dead. An earlier version of this section said light
-"streams but every sample is zero" and concluded the ADSP could not bring the part
-up; that was a dark room, and the conclusion was wrong.
-
-**`ack_nak` is not a refusal signal.** Both of the sensor's data types report
-`ack_nak = 1` while the accelerometer reports 0 - and light works anyway. So the
-flag tracks the sensor, not whether the subscription took, and the earlier reading
-of it as "every subscription to `0x28` is NAKed" explained nothing. The driver
-ignoring it is still untidy, but it is not the bug.
-
-That narrows proximity a long way: it is not the part, not the bus, not the
-firmware, not enumeration and not the subscription being refused. The ADSP accepts
-a proximity subscription for a chip it is already reading ambient light from, and
-then never reports.
-
-**It is not an unhandled indication either.** Android's HAL handles
-`sns_smgr_periodic_report_ind_msg_v01` for Proximity, a *different* message from
-the `BUFFERING_REPORT` (`0x22`) that `qcom_smgr` registers - which looked like the
-answer, since the driver would throw such reports away. It is not: subscribing and
-then logging **every** indication regardless of message id gives, for proximity,
-nothing at all, while the accelerometer control gives 247 on `0x22` in four
-seconds. The DSP genuinely emits no proximity report on any id.
-
-**Two more dead ends, recorded so they are not retried.** Sweeping SMGR message
-ids with an empty body does not map the service - every id from `0x01` to `0x2f`
-answers `result=1, error=58` (`QMI_ERR_MISSING_ARG`), so silence never
-distinguishes "not implemented". Only `0x01` and `0x07` take no arguments and
-answer with data (`0x01` returns 17 and 36, which look like a version). And the
-HAL has an OEM path - `OEMLib::getOEMProximity()`, loading
-`/system/lib/hw/sensors.oem.so` - but LineageOS does not ship that library, so it
-is dead code there and proximity must come through SMGR like everything else.
-
-**The request is not the difference, and that is now settled from the ROM.**
-`Proximity::prepareAddMsg` in `/vendor/lib/hw/sensors.msm8974.so` disassembles to
-four instructions:
-
-    ldr  r3, [r1]        ; r3 = *msg
-    movs r2, #0x28
-    strb r2, [r3, #0xc]  ; Item[0].SensorId = 0x28
-    bx   lr
-
-`Light` sets `[r3, #0xd] = 1` as well, and `Accelerometer` sets `[r3, #0xc] = 0`,
-which pins the layout: the message header is 12 bytes and `Item[0]` starts at
-`0x0c` with `SensorId` then `DataType`. **Proximity leaves `DataType` at its
-default of 0** and touches nothing else - so Android sends the same request the
-kernel driver and `smgr-probe.py` send. Every parameter sweep run against this was
-varying fields Android never varies.
-
-Extract the library the same way as the firmware blobs:
-
-    debugfs -R "dump /vendor/lib/hw/sensors.msm8974.so out.so" system.img
-
-**And the premise behind all of it was wrong.** `firmware/sensors/android-sensorlist.txt`
-is a `dumpsys sensorservice` saved off **stock** Android (`14.6.A.1.236`) while the
-sensor worked, and it says:
-
-    0x00000030) APDS-9930/QPDS-T930 Proximity & Light | type: android.sensor.proximity(8) | flags: 0x3
-            on-change | minRate=1.00Hz | no batching | wakeUp
-
-    APDS-9930/QPDS-T930 Proximity & Light: last 2 events
-             1 (ts=74.668407584) 0.00, 0.00, 0.00,
-             2 (ts=89.371558526) 0.00, 0.00, 0.00,
-
-**Two events in the whole session, both zero**, against fifty from the
-accelerometer in a few seconds. Proximity is an **on-change** sensor: it reports
-once on enable and then says nothing until something physically approaches it.
-"Subscribes and then never streams" is not a fault, it is the specification. Every
-fixed-length window run here - 3 s, 12 s, 35 s - was measuring for a stream that a
-working sensor would never produce.
-
-So the only measurement that means anything is **does a value arrive when a hand
-covers it**, and that has to be run for long enough, with the hand on the right
-spot, and with the initial on-enable report distinguished from a change report.
-Note that `0.00` is what stock reports for *far*; a working near reading has not
-been seen on this hardware under any OS in anything recorded here.
-
-**What is genuinely unresolved:** an earlier run *did* show a single sample from
-the IIO buffer (16 bytes) and the first `smgr-client.py` trials each showed one
-indication carrying `report_id 0x28`, which matches the expected on-enable report.
-Later clean runs with `report_id` filtering showed none at all. Those disagree and
-neither has been reconciled; the on-enable report is the thing to chase, because it
-is the one a working sensor emits without anybody touching the phone.
-
-### The registry, which is now the live lead
-
-**The ADSP firmware is not the variable, and that is settled.** The blobs on the
-phone are byte-identical to the ones extracted from LineageOS 18.1 - `adsp.b00`,
-`b03`, `b09` and `adsp.mdt` all match - so we already run the firmware a working
-Android runs. Same silicon, same DSP image, same part. The difference has to be in
-what Linux serves the DSP.
-
-**What it asks for and does not get.** `qcom_sns_reg` warns on each one, and
-restarting the remoteproc (`echo stop > /sys/class/remoteproc/remoteproc2/state`,
-then `start`) replays them without a reboot. This boot:
-
-    got request for unmapped group id=2001
-    got request for unmapped group id=2650
-    got request for unmapped group id=2680
-    got request for unmapped group id=2970
-    got request for unmapped group id=2990
-
-**There is real data sitting in the gap.** `group_map[]` puts 2960 at `0x2800` and
-2699 at `0x2d00`, leaving `0x2900`-`0x2cff` unclaimed, and `0x2600` too. Those
-pages are not empty - `0x2c00` alone has 14 non-zero bytes starting
-`01 01 0a 02 05 03 00 05 66 e6`. So the registry file has content for groups the
-driver cannot address.
-
-**The request carries no length**, only `req->id`, so nothing constrains which page
-belongs to which group. `0007` settled 2691 by experiment - it shares 2690's page,
-and its comment records that any other page stopped all four sensors enumerating
-while zeroes brought the accelerometer up 2% low. That is the same search, now with
-five candidate pages and five requested groups.
-
-**Tried, and it changes nothing: `0046`.** It makes an unmapped group return
-success with 0x100 zeroed bytes instead of `QMI_RESULT_FAILURE_V01`, on the theory
-from `0007` that the DSP cares more that the read succeeds than what comes back.
-The module loads, the log shows `answering with zeroes` for all five groups, all
-four sensors still enumerate - and proximity is exactly as silent as before. **It
-is not in the build**; it is kept only so nobody spends another cycle on the idea.
-
-Worth knowing for future work here: **a module-only change needs no flash.**
-`qcom_sns_reg` is `=m`, and `pkgrel` does not enter the vermagic - both r85 and r86
-report `6.16.12 SMP preempt mod_unload modversions ARMv7 p2v8` - so the new `.ko`
-can be dropped onto the running kernel, and restarting the remoteproc replays the
-registry requests. Build to test, without a flash or a reboot.
-
-That experiment was also what exposed the dark-room mistake above, because it
-looked at first like it had fixed ambient light. Reverting to the original module
-under the same lighting produced the same non-zero readings, which is the only
-reason the claim did not get written down as a result.
-
-**The per-sensor block in the ROM config, for reference.** Items 1966-1986 are the
-APDS-9930's descriptor - `1976` is `0x39`, its I2C address, and the four sensors
-follow the same shape (accel at 1900, gyro at 1918, mag at 1934). Each one names a
-registry group: accel 1000, gyro 1010, mag 1020, **prox 1040**. All four of those
-groups are already mapped in `group_map[]`, so the sensor's own configuration group
-was never among the missing ones - another reason the registry gap looks less
-promising than it did.
-
-**What the ROM does and does not give.** LineageOS 18.1 carries
-`/system/etc/sensor_def_qcomdev.conf` - Qualcomm and Sony's registry defaults for
-8974, `:hardware 8974` - which is the authoritative list of what the registry
-should contain, including a per-sensor block at items 1900-1986. Extract it the
-same way as the firmware blobs:
-
-    debugfs -R "dump /system/etc/sensor_def_qcomdev.conf out.conf" system.img
-
-It is keyed by **item** id, though, not by the **group** ids the DSP requests, so
-it does not hand over the offsets. Useful for knowing what a value should be, not
-for finding where it lives.
+**How this stayed hidden for so long, which is the transferable part.** Every
+earlier measurement enabled proximity on its own, so every one of them was
+measuring a case that cannot work. The first IIO read that ever returned 16 bytes
+was dismissed here as stale buffer content - it was real, and it worked because
+that test enabled the accelerometer first and proximity second. Tidying that
+script into a "clean" one that tested proximity in isolation removed the only
+reason it had worked.
 
 ## Phase 2: deep suspend
 
