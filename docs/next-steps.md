@@ -405,10 +405,55 @@ trial's window and were counted as proximity data - which briefly looked like
 "proximity works, the driver just asks wrongly". Filter by `report_id` and settle
 after each DELETE. See [[xperia-z1c-validate-the-probe]].
 
-**Still unexamined:** what a working ROM sends for this sensor, and what actually
-sits at the unmapped registry offsets. Both are now the most promising leads,
-because the fault appears to be in the ADSP's configuration of the part rather
-than in anything Linux sends.
+### The registry, which is now the live lead
+
+**The ADSP firmware is not the variable, and that is settled.** The blobs on the
+phone are byte-identical to the ones extracted from LineageOS 18.1 - `adsp.b00`,
+`b03`, `b09` and `adsp.mdt` all match - so we already run the firmware a working
+Android runs. Same silicon, same DSP image, same part. The difference has to be in
+what Linux serves the DSP.
+
+**What it asks for and does not get.** `qcom_sns_reg` warns on each one, and
+restarting the remoteproc (`echo stop > /sys/class/remoteproc/remoteproc2/state`,
+then `start`) replays them without a reboot. This boot:
+
+    got request for unmapped group id=2001
+    got request for unmapped group id=2650
+    got request for unmapped group id=2680
+    got request for unmapped group id=2970
+    got request for unmapped group id=2990
+
+**There is real data sitting in the gap.** `group_map[]` puts 2960 at `0x2800` and
+2699 at `0x2d00`, leaving `0x2900`-`0x2cff` unclaimed, and `0x2600` too. Those
+pages are not empty - `0x2c00` alone has 14 non-zero bytes starting
+`01 01 0a 02 05 03 00 05 66 e6`. So the registry file has content for groups the
+driver cannot address.
+
+**The request carries no length**, only `req->id`, so nothing constrains which page
+belongs to which group. `0007` settled 2691 by experiment - it shares 2690's page,
+and its comment records that any other page stopped all four sensors enumerating
+while zeroes brought the accelerometer up 2% low. That is the same search, now with
+five candidate pages and five requested groups.
+
+**The cheapest next experiment is not a search at all.** Right now an unmapped
+group is answered with `QMI_RESULT_FAILURE_V01`. `0007`'s note says serving
+*zeroes* for a group was enough to bring a sensor up where failing did not. So:
+make the unmapped case return success with zeroed data instead of failing, and see
+whether the APDS-9930 starts up. One build, one flash, one `smgr-probe.py` run, and
+it distinguishes "the DSP needs this group's contents" from "the DSP just needs the
+read not to fail" before any offset is guessed.
+
+**What the ROM does and does not give.** LineageOS 18.1 carries
+`/system/etc/sensor_def_qcomdev.conf` - Qualcomm and Sony's registry defaults for
+8974, `:hardware 8974` - which is the authoritative list of what the registry
+should contain, including a per-sensor block at items 1900-1986. Extract it the
+same way as the firmware blobs:
+
+    debugfs -R "dump /system/etc/sensor_def_qcomdev.conf out.conf" system.img
+
+It is keyed by **item** id, though, not by the **group** ids the DSP requests, so
+it does not hand over the offsets. Useful for knowing what a value should be, not
+for finding where it lives.
 
 ## Phase 2: deep suspend
 
