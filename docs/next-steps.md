@@ -395,10 +395,37 @@ ignoring it is still untidy, but it is not the bug.
 That narrows proximity a long way: it is not the part, not the bus, not the
 firmware, not enumeration and not the subscription being refused. The ADSP accepts
 a proximity subscription for a chip it is already reading ambient light from, and
-then never reports. The obvious remaining shape is an **event-driven channel with
-thresholds that never trigger** - proximity on this part interrupts on crossing a
-near/far threshold rather than streaming, so a zero or nonsensical threshold would
-look exactly like this.
+then never reports.
+
+**It is not an unhandled indication either.** Android's HAL handles
+`sns_smgr_periodic_report_ind_msg_v01` for Proximity, a *different* message from
+the `BUFFERING_REPORT` (`0x22`) that `qcom_smgr` registers - which looked like the
+answer, since the driver would throw such reports away. It is not: subscribing and
+then logging **every** indication regardless of message id gives, for proximity,
+nothing at all, while the accelerometer control gives 247 on `0x22` in four
+seconds. The DSP genuinely emits no proximity report on any id.
+
+**Two more dead ends, recorded so they are not retried.** Sweeping SMGR message
+ids with an empty body does not map the service - every id from `0x01` to `0x2f`
+answers `result=1, error=58` (`QMI_ERR_MISSING_ARG`), so silence never
+distinguishes "not implemented". Only `0x01` and `0x07` take no arguments and
+answer with data (`0x01` returns 17 and 36, which look like a version). And the
+HAL has an OEM path - `OEMLib::getOEMProximity()`, loading
+`/system/lib/hw/sensors.oem.so` - but LineageOS does not ship that library, so it
+is dead code there and proximity must come through SMGR like everything else.
+
+**The next step is static, and the ROM already has the answer.**
+`Proximity::prepareAddMsg(sns_smgr_buffering_req_msg_v01**)` in
+`/vendor/lib/hw/sensors.msm8974.so` is the exact code that builds a working
+proximity subscription. The kernel's `struct sns_smgr_buffering_req` is
+reverse-engineered from dumps and its own header admits the `val*` fields are
+guesses; the real `_v01` struct has more of them. Disassembling that one method
+says which fields Android sets and to what - no device time, no build, and it
+settles what every parameter sweep so far has only guessed at.
+
+Extract it the same way as the firmware blobs:
+
+    debugfs -R "dump /vendor/lib/hw/sensors.msm8974.so out.so" system.img
 
 ### The registry, which is now the live lead
 
