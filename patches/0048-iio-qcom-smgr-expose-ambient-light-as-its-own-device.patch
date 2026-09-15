@@ -1,0 +1,400 @@
+--- a/include/linux/iio/common/qcom_smgr.h
++++ b/include/linux/iio/common/qcom_smgr.h
+@@ -51,13 +51,24 @@
+ 	struct qcom_smgr_data_type_item *data_types;
+ 
+ 	struct iio_dev *iio_dev;
++	/*
++	 * A sensor that carries two data types gets a second IIO device for the
++	 * secondary one. The APDS-9930 is one sensor ID whose primary type is
++	 * proximity and whose secondary is ambient light, and they are separate
++	 * IIO devices because they are separate SMGR subscriptions - the DSP
++	 * will not report both from one request.
++	 */
++	struct iio_dev *secondary_iio_dev;
+ };
+ 
+ struct qcom_smgr_iio_priv {
+ 	struct qcom_smgr_sensor *sensor;
++	/* SNS_SMGR_DATA_TYPE_PRIMARY unless this device is the secondary one */
++	u8 data_type;
+ };
+ 
+ extern const struct iio_buffer_setup_ops qcom_smgr_buffer_ops;
++extern const struct iio_buffer_setup_ops qcom_smgr_secondary_buffer_ops;
+ extern const struct iio_info qcom_smgr_iio_info;
+ extern const struct iio_chan_spec_ext_info qcom_smgr_iio_ext_info[];
+ 
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -25,6 +25,14 @@
+ #define SMGR_REPORT_RATE_HZ		(SMGR_TICKS_PER_SECOND * 2)
+ #define SMGR_VALUE_DIV			65536
+ 
++/*
++ * Report IDs are the sensor ID for a sensor's primary data type. A sensor's
++ * secondary data type is a separate subscription and so needs a report ID of
++ * its own; sensor IDs seen here are all well under 0x80, so the top bit is
++ * free to mark one.
++ */
++#define SMGR_SECONDARY_REPORT_FLAG	0x80
++
+ struct qcom_smgr {
+ 	struct device *dev;
+ 
+@@ -52,13 +60,13 @@
+ 	platform_device_unregister(pdev);
+ }
+ 
+-static int qcom_smgr_register_sensor(struct qcom_smgr *smgr,
+-				     struct qcom_smgr_sensor *sensor)
++static int qcom_smgr_register_one(struct qcom_smgr *smgr,
++				  struct qcom_smgr_sensor *sensor,
++				  const char *name, int id)
+ {
+ 	struct platform_device *pdev;
+-	const char *name = qcom_smgr_sensor_type_platform_names[sensor->type];
+ 
+-	pdev = platform_device_register_data(smgr->dev, name, sensor->id,
++	pdev = platform_device_register_data(smgr->dev, name, id,
+ 					     &sensor, sizeof(sensor));
+ 	if (IS_ERR(pdev)) {
+ 		dev_err(smgr->dev, "Failed to register %s: %pe\n", name, pdev);
+@@ -69,6 +77,31 @@
+ 					pdev);
+ }
+ 
++static int qcom_smgr_register_sensor(struct qcom_smgr *smgr,
++				     struct qcom_smgr_sensor *sensor)
++{
++	const char *name = qcom_smgr_sensor_type_platform_names[sensor->type];
++	int ret;
++
++	ret = qcom_smgr_register_one(smgr, sensor, name, sensor->id);
++	if (ret)
++		return ret;
++
++	/*
++	 * A prox/light part carries ambient light as its secondary data type,
++	 * and that needs an IIO device of its own because it is a separate
++	 * subscription. The platform device ID has to differ from the primary
++	 * one, hence the same top-bit marker the report IDs use.
++	 */
++	if (sensor->type == SNS_SMGR_SENSOR_TYPE_PROX_LIGHT &&
++	    sensor->data_type_count > SNS_SMGR_DATA_TYPE_SECONDARY)
++		ret = qcom_smgr_register_one(smgr, sensor, "qcom-smgr-light",
++					     sensor->id |
++						SMGR_SECONDARY_REPORT_FLAG);
++
++	return ret;
++}
++
+ static int qcom_smgr_request_all_sensor_info(struct qcom_smgr *smgr,
+ 					     struct qcom_smgr_sensor **sensors)
+ {
+@@ -296,14 +329,17 @@
+ 
+ static int qcom_smgr_request_buffering(struct qcom_smgr *smgr,
+ 				       struct qcom_smgr_sensor *sensor,
+-				       bool enable)
++				       u8 data_type, bool enable)
+ {
+ 	struct sns_smgr_buffering_req req = {
+ 		/*
+ 		 * Reuse sensor ID as a report ID to avoid having to keep track
+-		 * of a separate set of IDs
++		 * of a separate set of IDs, with the top bit marking the
++		 * secondary data type's separate subscription.
+ 		 */
+-		.report_id = sensor->id,
++		.report_id = data_type == SNS_SMGR_DATA_TYPE_PRIMARY ?
++				sensor->id :
++				sensor->id | SMGR_SECONDARY_REPORT_FLAG,
+ 		.notify_suspend_valid = false
+ 	};
+ 	struct sns_smgr_buffering_resp resp = {};
+@@ -327,9 +363,10 @@
+ 		 * report rate such that every report contains only 1 sample.
+ 		 * This gives us the lowest latency.
+ 		 */
+-		if (sensor->data_types[0].native_sample_rates)
+-			sample_rate = sensor->data_types[0].native_sample_rates
+-					[sensor->data_types[0]
++		if (sensor->data_types[data_type].native_sample_rates)
++			sample_rate =
++				sensor->data_types[data_type].native_sample_rates
++					[sensor->data_types[data_type]
+ 						 .native_sample_rate_count - 1];
+ 
+ 		/*
+@@ -337,14 +374,15 @@
+ 		 * supported by the sensor.
+ 		 */
+ 		if (sample_rate == 0 ||
+-		    sample_rate > sensor->data_types[0].max_sample_rate)
+-			sample_rate = sensor->data_types[0].max_sample_rate;
++		    sample_rate > sensor->data_types[data_type].max_sample_rate)
++			sample_rate =
++				sensor->data_types[data_type].max_sample_rate;
+ 
+ 		req.report_rate = sample_rate * SMGR_REPORT_RATE_HZ;
+ 
+ 		req.item_len = 1;
+ 		req.items[0].sensor_id = sensor->id;
+-		req.items[0].data_type = SNS_SMGR_DATA_TYPE_PRIMARY;
++		req.items[0].data_type = data_type;
+ 
+ 		req.items[0].sampling_rate = sample_rate;
+ 
+@@ -388,7 +426,7 @@
+ 	}
+ 
+ 	/* Keep track of requested sample rate */
+-	sensor->data_types[0].cur_sample_rate = sample_rate;
++	sensor->data_types[data_type].cur_sample_rate = sample_rate;
+ 
+ 	return 0;
+ }
+@@ -406,13 +444,25 @@
+ 	u8 i;
+ 
+ 	for (i = 0; i < smgr->sensor_count; ++i) {
++		struct iio_dev *iio_dev;
++
+ 		sensor = &smgr->sensors[i];
+ 
+-		/* Find sensor matching report */
+-		if (sensor->id != ind->report_id)
++		/*
++		 * Find the sensor and the data type matching the report. The
++		 * keepalive subscription lands here too, under a report ID no
++		 * sensor owns, and falls out of this loop unmatched - which is
++		 * what should happen to it.
++		 */
++		if (sensor->id == ind->report_id)
++			iio_dev = sensor->iio_dev;
++		else if ((sensor->id | SMGR_SECONDARY_REPORT_FLAG) ==
++			 ind->report_id)
++			iio_dev = sensor->secondary_iio_dev;
++		else
+ 			continue;
+ 
+-		if (!sensor->iio_dev)
++		if (!iio_dev)
+ 			/* Corresponding driver was unloaded. Ignore remaining reports. */
+ 			return;
+ 
+@@ -420,7 +470,7 @@
+ 		 * Since we are matching report rate with sample rate, we only
+ 		 * get a single sample in every report.
+ 		 */
+-		iio_push_to_buffers_with_timestamp(sensor->iio_dev,
++		iio_push_to_buffers_with_timestamp(iio_dev,
+ 						   ind->samples[0].values,
+ 						   ind->metadata.timestamp);
+ 
+@@ -439,6 +489,34 @@
+ 	{}
+ };
+ 
++static int qcom_smgr_secondary_postenable(struct iio_dev *iio_dev)
++{
++	struct qcom_smgr *smgr = dev_get_drvdata(iio_dev->dev.parent->parent);
++	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
++
++	/*
++	 * No keepalive here: ambient light reports on its own, unlike
++	 * proximity. It is itself a perfectly good second subscription.
++	 */
++	return qcom_smgr_request_buffering(smgr, priv->sensor, priv->data_type,
++					   true);
++}
++
++static int qcom_smgr_secondary_postdisable(struct iio_dev *iio_dev)
++{
++	struct qcom_smgr *smgr = dev_get_drvdata(iio_dev->dev.parent->parent);
++	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
++
++	return qcom_smgr_request_buffering(smgr, priv->sensor, priv->data_type,
++					   false);
++}
++
++const struct iio_buffer_setup_ops qcom_smgr_secondary_buffer_ops = {
++	.postenable = &qcom_smgr_secondary_postenable,
++	.postdisable = &qcom_smgr_secondary_postdisable
++};
++EXPORT_SYMBOL_GPL(qcom_smgr_secondary_buffer_ops);
++
+ static int qcom_smgr_sensor_postenable(struct iio_dev *iio_dev)
+ {
+ 	struct qcom_smgr *smgr = dev_get_drvdata(iio_dev->dev.parent->parent);
+@@ -465,7 +543,8 @@
+ 		msleep(SMGR_KEEPALIVE_SETTLE_MS);
+ 	}
+ 
+-	ret = qcom_smgr_request_buffering(smgr, sensor, true);
++	ret = qcom_smgr_request_buffering(smgr, sensor,
++					  SNS_SMGR_DATA_TYPE_PRIMARY, true);
+ 	if (ret < 0 && qcom_smgr_needs_keepalive(sensor))
+ 		qcom_smgr_set_keepalive(smgr, sensor, false);
+ 
+@@ -479,7 +558,8 @@
+ 	struct qcom_smgr_sensor *sensor = priv->sensor;
+ 	int ret;
+ 
+-	ret = qcom_smgr_request_buffering(smgr, sensor, false);
++	ret = qcom_smgr_request_buffering(smgr, sensor,
++					  SNS_SMGR_DATA_TYPE_PRIMARY, false);
+ 
+ 	if (qcom_smgr_needs_keepalive(sensor)) {
+ 		int kret = qcom_smgr_set_keepalive(smgr, sensor, false);
+@@ -505,7 +585,7 @@
+ 
+ 	switch (mask) {
+ 	case IIO_CHAN_INFO_SAMP_FREQ:
+-		*val = priv->sensor->data_types[0].cur_sample_rate;
++		*val = priv->sensor->data_types[priv->data_type].cur_sample_rate;
+ 		return IIO_VAL_INT;
+ 	case IIO_CHAN_INFO_SCALE:
+ 		switch (chan->type) {
+--- a/drivers/iio/light/Kconfig
++++ b/drivers/iio/light/Kconfig
+@@ -255,6 +255,16 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called gp2ap020a00f.
+ 
++config IIO_QCOM_SMGR_LIGHT
++	tristate "Qualcomm SSC Sensor Manager Ambient Light Sensor"
++	depends on IIO_QCOM_SMGR
++	select IIO_BUFFER
++	select IIO_KFIFO_BUF
++	help
++	  Say yes here to get support for ambient light sensors connected to
++	  a Qualcomm Snapdragon Sensor Core and accessed through its Sensor
++	  Manager service.
++
+ config IQS621_ALS
+ 	tristate "Azoteq IQS621/622 ambient light sensors"
+ 	depends on MFD_IQS62X || COMPILE_TEST
+--- a/drivers/iio/light/Makefile
++++ b/drivers/iio/light/Makefile
+@@ -28,6 +28,7 @@
+ obj-$(CONFIG_GP2AP020A00F)	+= gp2ap020a00f.o
+ obj-$(CONFIG_HID_SENSOR_ALS)	+= hid-sensor-als.o
+ obj-$(CONFIG_HID_SENSOR_PROX)	+= hid-sensor-prox.o
++obj-$(CONFIG_IIO_QCOM_SMGR_LIGHT)	+= qcom_smgr_light.o
+ obj-$(CONFIG_IQS621_ALS)	+= iqs621-als.o
+ obj-$(CONFIG_SENSORS_ISL29018)	+= isl29018.o
+ obj-$(CONFIG_SENSORS_ISL29028)	+= isl29028.o
+--- /dev/null
++++ b/drivers/iio/light/qcom_smgr_light.c
+@@ -0,0 +1,109 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm Sensor Manager ambient light sensor driver
++ *
++ * The ambient light channel of a combined proximity and light part - an
++ * APDS-9930 on the Xperia Z1 Compact - which SMGR reports as the secondary
++ * data type of a single sensor ID. It needs an IIO device and a subscription
++ * separate from proximity's, because the DSP will not report both data types
++ * from one request.
++ */
++
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <linux/iio/buffer.h>
++#include <linux/iio/common/qcom_smgr.h>
++#include <linux/iio/iio.h>
++#include <linux/iio/kfifo_buf.h>
++
++static const struct iio_chan_spec qcom_smgr_light_iio_channels[] = {
++	{
++		.type = IIO_LIGHT,
++		.scan_index = 0,
++		.scan_type = {
++			.sign = 'u',
++			.realbits = 32,
++			.storagebits = 32,
++			.endianness = IIO_LE,
++		},
++		.info_mask_separate = BIT(IIO_CHAN_INFO_SCALE) |
++				      BIT(IIO_CHAN_INFO_SAMP_FREQ)
++	},
++	{
++		.type = IIO_TIMESTAMP,
++		.channel = -1,
++		.scan_index = 3,
++		.scan_type = {
++			.sign = 'u',
++			.realbits = 32,
++			.storagebits = 64,
++			.endianness = IIO_LE,
++		},
++	},
++};
++
++static int qcom_smgr_light_probe(struct platform_device *pdev)
++{
++	struct iio_dev *iio_dev;
++	struct qcom_smgr_iio_priv *priv;
++	int ret;
++
++	iio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*priv));
++	if (!iio_dev)
++		return -ENOMEM;
++
++	priv = iio_priv(iio_dev);
++	priv->sensor = *(struct qcom_smgr_sensor **)pdev->dev.platform_data;
++	priv->data_type = SNS_SMGR_DATA_TYPE_SECONDARY;
++	priv->sensor->secondary_iio_dev = iio_dev;
++
++	iio_dev->name = "qcom-smgr-light";
++	iio_dev->info = &qcom_smgr_iio_info;
++	iio_dev->channels = qcom_smgr_light_iio_channels;
++	iio_dev->num_channels = ARRAY_SIZE(qcom_smgr_light_iio_channels);
++
++	ret = devm_iio_kfifo_buffer_setup(&pdev->dev, iio_dev,
++					  &qcom_smgr_secondary_buffer_ops);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to setup buffer: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	ret = devm_iio_device_register(&pdev->dev, iio_dev);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to register IIO device: %pe\n",
++			ERR_PTR(ret));
++		return ret;
++	}
++
++	platform_set_drvdata(pdev, priv->sensor);
++
++	return 0;
++}
++
++static void qcom_smgr_light_remove(struct platform_device *pdev)
++{
++	struct qcom_smgr_sensor *sensor = platform_get_drvdata(pdev);
++
++	sensor->secondary_iio_dev = NULL;
++}
++
++static const struct platform_device_id qcom_smgr_light_ids[] = {
++	{ .name = "qcom-smgr-light" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(platform, qcom_smgr_light_ids);
++
++static struct platform_driver qcom_smgr_light_driver = {
++	.probe = qcom_smgr_light_probe,
++	.remove = qcom_smgr_light_remove,
++	.driver	= {
++		.name = "qcom_smgr_light",
++	},
++	.id_table = qcom_smgr_light_ids,
++};
++module_platform_driver(qcom_smgr_light_driver);
++
++MODULE_DESCRIPTION("Qualcomm Sensor Manager ambient light sensor driver");
++MODULE_LICENSE("GPL");

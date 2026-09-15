@@ -10,11 +10,17 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state: r86 is flashed and running.** Flashed 2026-09-16, verified by
-readback, confirmed booting from flash (`uname -v` = `#87`). It is r85 plus the
-proximity keepalive (`0047`) and the data-type indexing fix (`0045`). Proximity
-enabled on its own now reaches `buffer/data_available = 1`. Nothing is
-half-applied, and the recipe, the flash and `/lib/modules` all agree at r86.
+**Device state: r87 is flashed and running.** Flashed 2026-09-16, verified by
+readback, confirmed booting from flash (`uname -v` = `#88`). It is r86 plus the
+ambient light IIO device (`0048`). All five sensors - accel, gyro, mag, proximity
+and light - work when enabled on their own. Nothing is half-applied, and the
+recipe, the flash and `/lib/modules` all agree at r87.
+
+**Note the ADSP can lose a probe race at boot.** `qcom_smgr` has been seen to fail
+once with `Failed to get available sensors: -ETIMEDOUT`, or with
+`Single sensor info request failed: 0x701` on one sensor ID, and then succeed on
+the retry. It is transient and not caused by any patch here - check
+`/sys/bus/iio/devices/` before assuming a build broke the sensors.
 
 **Mind the numbering: `pkgrel` + 1 is what `uname -v` prints.** r84 reports `#85`
 and r85 reports `#86`, which is an easy way to think you booted the wrong thing.
@@ -24,7 +30,8 @@ feature was tested - and its image is still at
 `boot-images/boot-r84.img`, md5 `d4550bf58700118ce0b3ee31aee67999`.
 
     boot partition:  /dev/disk/by-partlabel/boot  ->  mmcblk0p14  (20971520 bytes)
-    r86, flashed now:  5091ea7c372c07b89b5db95f14cf14dc  (18225152 bytes)
+    r87, flashed now:  af83015f25d1851e2a7f3f7e1cae0ff7  (18229248 bytes)
+    r86:               5091ea7c372c07b89b5db95f14cf14dc  (18225152 bytes)
     r85:               a9bb0fcb4c1b0e9624fbb6ff8bf3f48b  (18225152 bytes)
     r84:               d4550bf58700118ce0b3ee31aee67999  (18219008 bytes)
     r56:               69b89a70e0a216cc128579bea40f5561  (18153472 bytes)
@@ -109,9 +116,9 @@ throttling, and SLIMbus - the Taiko enumerates, though nothing can drive it yet.
 
 Not working: audio (the codec driver is all that is left), deep suspend.
 
-Proximity and ambient light both work at the SMGR level as of 2026-09-16, with one
-caveat that needs a driver change: proximity only reports while another sensor is
-subscribed. See Phase 1.
+**The sensor story is complete as of 2026-09-16**: accelerometer, gyroscope,
+magnetometer, proximity and ambient light all work, each enabled on its own. See
+Phase 1.
 
 The vibrator **works** as of `0040` - felt, not merely enumerated - and the ADSP
 audio transport is up as of `0039` with all four Q6 services attached as of `0041`.
@@ -125,9 +132,9 @@ carveout but blanks the panel, and all of it is out of the build.
 Worth stating because it lives on disk in pmaports, not in this repo, so nothing here
 records it and a new session would have to look:
 
-- **Flashed on the phone: r86**, and the pmaports recipe is also r86, so they
+- **Flashed on the phone: r87**, and the pmaports recipe is also r87, so they
   agree. It is `0001`-`0029` as usual plus `0039` (APR), `0040` (vibrator),
-  `0041` (q6asm DAIs), `0042`-`0044` (SLIMbus), `0045` and `0047`, with `CONFIG_QCOM_APR`, the
+  `0041` (q6asm DAIs), `0042`-`0044` (SLIMbus), `0045`, `0047` and `0048`, with `CONFIG_QCOM_APR`, the
   `SND_SOC_QDSP6_*` symbols and `CONFIG_SLIMBUS` on. No IOMMU patches,
   `# CONFIG_ARM_SMMU is not set`.
 - **`uname -v` prints `pkgrel` + 1.** r85 reports `#86`. Easy to misread as having
@@ -383,6 +390,31 @@ sits near 50-95 uncovered and jumps past 500 when a hand is over the sensor, whi
 is the only way to know the hand was actually in the right place. The sensor is by
 the earpiece at the top of the screen. Confirm IR has risen *before* concluding
 anything about whether change events were delivered.
+
+### Ambient light: works, as its own IIO device
+
+`0048` exposes the APDS-9930's ambient light channel as `qcom-smgr-light`, a
+second IIO device on the same sensor. Enabled on its own it gives **121 samples
+in 6 s at 15 Hz**, reading 11-14 lux in a dim room, which matches what the same
+channel reports at the QMI level.
+
+It has to be a second *device*, not a second channel, because the DSP will not
+report both of a sensor's data types from one subscription - the same constraint
+that rules out `0031` as a proximity fix. So a sensor's secondary data type gets
+its own subscription, and needs a report ID distinct from the primary's: the top
+bit marks it, since sensor IDs are all well under `0x80`. The report handler
+routes `sensor->id` to the primary IIO device and `sensor->id | 0x80` to the
+secondary one.
+
+No scaling work was needed - the driver's generic branch already gives
+`1/65536`, and light is reported as lux in Q16.
+
+Ambient light needs no keepalive of its own: unlike proximity it reports happily
+on its own, and is itself a perfectly good second subscription.
+
+**One loose end:** light samples carry a timestamp of 0, where proximity's are
+populated. Harmless for reading values, wrong for anything that cares about when
+they were taken.
 
 **How this stayed hidden for so long, which is the transferable part.** Every
 earlier measurement enabled proximity on its own, so every one of them was
