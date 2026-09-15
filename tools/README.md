@@ -81,17 +81,26 @@ and reads like a driver bug. The script asserts its own packing.
 exists because the SLIMbus NGD controller waits for QMI service `0x301` from the
 ADSP and waits *silently* - so an empty `/sys/bus/slimbus/devices/` with nothing
 in dmesg cannot, on its own, tell "the service is missing" from "the driver is
-broken". This asks the router instead of guessing.
+broken".
 
     scp tools/qrtr-services.py mahan@<phone>:/tmp/
     ssh mahan@<phone> 'sudo python3 /tmp/qrtr-services.py'
 
-Two details that cost time. `bind()` rejects any node but the local one, so
-`(0, 0)` is not a wildcard - the script probes for it and the answer here is
-node 1. And the `NEW_LOOKUP` goes to the control port of that *local* node, not
-to some remote one.
+**It self-tests before it reports anything**, by publishing a fake service and
+checking that its own lookup finds it. That is not ceremony. The first version
+of this script guessed the command numbers - `NEW_SERVER` and `NEW_LOOKUP` are
+**4** and **10** in `include/uapi/linux/qrtr.h`, not 2 and 7 - so it sent `HELLO`
+and `RESUME_TX`, received nothing, and reported a confident zero services. That
+got as far as being written up as "the ADSP advertises nothing" before the
+self-test showed the probe could not see a service published one line earlier.
+With the right constants the same phone reports 36 services, `0x301` among them.
 
-**It currently reports zero services on amami**, which is the open question for
-audio milestone 2. Treat a zero from an unvalidated probe with suspicion: there
-is no known-good service on this device to test it against, because wcn36xx
-talks over `WCNSS_CTRL` on SMD rather than QMI.
+There is no known-good QMI service here to validate against - wcn36xx talks
+`WCNSS_CTRL` over SMD, not QMI - which is exactly why the script has to
+manufacture one.
+
+Two more details that cost time. `bind()` rejects any node but the local one, so
+`(0, 0)` is not a wildcard; the script probes for it and the answer here is node
+1. And a listing ends with an all-zero `NEW_SERVER` as a terminator, so filtering
+those out - as the first version did - throws away the one packet that
+distinguishes "the list is empty" from "nothing replied".

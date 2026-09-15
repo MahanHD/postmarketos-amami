@@ -11,8 +11,8 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 ## Start here
 
 **Device state: r85 is flashed and running.** Flashed 2026-09-15, verified by
-readback, confirmed booting from flash. It is r84 plus SLIMbus (`0042`-`0044`).
-Nothing is half-applied.
+readback, confirmed booting from flash. It is r84 plus SLIMbus (`0042`-`0044`),
+and the Taiko enumerates on the bus. Nothing is half-applied.
 
 **Mind the numbering: `pkgrel` + 1 is what `uname -v` prints.** r84 reports `#85`
 and r85 reports `#86`, which is an easy way to think you booted the wrong thing.
@@ -75,10 +75,11 @@ what makes this work. Removed once it was known safe.
 
 ### The next jobs
 
-1. **Find out why the ADSP advertises no QMI services.** This is what blocks
-   SLIMbus, which is otherwise done - the controller binds and only the QMI
-   handshake is missing. Start by validating `tools/qrtr-services.py` itself,
-   since a zero from an unvalidated probe is weak evidence. See Phase 3.
+1. **The WCD9320 codec driver** - now the only thing between this phone and
+   sound, and the largest single piece of audio work. APR, the Q6 services, the
+   frontend DAIs and SLIMbus are all up, and the Taiko enumerates on the bus;
+   mainline simply has no driver for that part. wcd9335 is the closest relative
+   to work from. See Phase 3.
 2. **Deep suspend**, now measured to be worth it: s2idle saves only 37%, and the gap
    between 156 mA and single-digit standby is the largest remaining battery item. See
    Phase 2.
@@ -100,8 +101,8 @@ what makes this work. Removed once it was known safe.
 
 Working: panel, touch, Xfce on freedreno, WiFi, Bluetooth, charging (on a real
 supply), battery percentage, USB networking, sensors bar proximity, the notification
-LED, the vibrator, suspend (s2idle), GPU and CPU frequency scaling, and CPU thermal
-throttling.
+LED, the vibrator, suspend (s2idle), GPU and CPU frequency scaling, CPU thermal
+throttling, and SLIMbus - the Taiko enumerates, though nothing can drive it yet.
 
 Not working: audio, proximity, ambient light, deep suspend.
 
@@ -454,17 +455,22 @@ So the work splits into three milestones, and only the first two are small:
 
    Check the binding and the DAI list rather than the absence of the error message:
    a driver that never probed at all also logs nothing.
-2. **SLIMbus - started 2026-09-15, controller binds, enumeration does not.**
-   `0042`-`0044`, in the build as r85 and on the device.
+2. **SLIMbus - SOLVED 2026-09-15. The Taiko enumerates.** `0042`-`0044`, in the
+   build as r85 and flashed.
 
-   The controller turned out to be the easy half. Both NGD compatibles mainline
-   already had point at the *same* `ngd_v1_5_offset_info`, so the version in the
-   name carries no register differences at all and `qcom,slim-ngd-v1.4.0` is
-   simply a third entry against the same data (`0042`). `0043` adds the bus and
-   its BAM to the SoC dtsi, every address and interrupt taken from stock's own
-   `slim@fe12f000`: `0xfe12f000 0x35000` and `0xfe104000 0x20000`, SPI 163 and
-   164. The ADSP owns the bus and the AP is a satellite on it, so the BAM is
-   `qcom,controlled-remotely` on execution environment 1 of 2, as on 8996.
+        SLIM SAT: Rcvd master capability
+        SLIM controller Registered
+        /sys/bus/slimbus/devices/217:a0:0:0     the interface device
+        /sys/bus/slimbus/devices/217:a0:1:0     the PGD
+
+   The controller was the easy half. Both NGD compatibles mainline already had
+   point at the *same* `ngd_v1_5_offset_info`, so the version in the name carries
+   no register differences at all and `qcom,slim-ngd-v1.4.0` is simply a third
+   entry against the same data (`0042`). `0043` adds the bus and its BAM to the
+   SoC dtsi, every address and interrupt taken from stock's own `slim@fe12f000`:
+   `0xfe12f000 0x35000` and `0xfe104000 0x20000`, SPI 163 and 164. The ADSP owns
+   the bus and the AP is a satellite on it, so the BAM is `qcom,controlled-remotely`
+   on execution environment 1 of 2, as on 8996.
 
    `0044` declares the Taiko. Both enumeration addresses come from stock's
    `taiko_codec`, which stores them as the raw 6-byte `struct slim_eaddr` -
@@ -475,23 +481,27 @@ So the work splits into three milestones, and only the first two are small:
 
    so both are manufacturer `0x217` product `0xa0`, differing only in device
    index, which mainline spells `compatible = "slim217,a0"` with `reg = <1 0>`
-   and `<0 0>`.
+   and `<0 0>`. The two device names that appear are those values read back.
 
-   **What works:** the module loads clean, `qcom,slim-ngd.1` binds, and the
-   controller finds its `slim@1` child. No errors anywhere.
+   **Nothing binds to them, and that is expected** - mainline has wcd9335 and
+   later, not the WCD9320. Milestone 3 is the codec driver.
 
-   **What does not:** `/sys/bus/slimbus/devices/` stays empty and the driver says
-   nothing, because it is waiting for QMI service `0x301` from the ADSP before it
-   registers the controller or enumerates anything. `tools/qrtr-services.py`
-   reports **zero QMI services advertised on QRTR by any node**, so the handshake
-   never starts. QRTR itself is fine: `qcom_smd_qrtr` is bound to both
-   `remoteproc0:smd-edge.IPCRTR` and `remoteproc2:smd-edge.IPCRTR`.
+   **A wrong turn worth keeping, because it nearly became a fact.** The first
+   attempt concluded "the ADSP advertises no QMI services" and it was written up
+   that way. It was an artefact of `tools/qrtr-services.py` guessing the QRTR
+   command numbers: `NEW_SERVER` and `NEW_LOOKUP` are **4** and **10** in
+   `include/uapi/linux/qrtr.h`, not 2 and 7, so the probe sent `HELLO` and
+   `RESUME_TX` and heard nothing back. The script now publishes a fake service and
+   checks its own lookup finds it before reporting, which is what caught it - and
+   with the right constants the phone reports 36 services with `0x301` among them.
+   There is no known-good QMI service here to check a probe against, since wcn36xx
+   uses `WCNSS_CTRL` over SMD, so a probe that cannot test itself is worth nothing.
 
-   So the next question is why the ADSP publishes no QMI services, not anything
-   about SLIMbus. Worth being careful here: there is no known-good service on this
-   device to validate that probe against, since wcn36xx uses `WCNSS_CTRL` over SMD
-   rather than QMI, so a zero could still be the probe rather than the ADSP.
-   Confirming that is the first job, before concluding anything about firmware.
+   **Reload the driver by rebooting, not `rmmod`.** `of_qcom_slim_ngd_register()`
+   leaves its `qcom,slim-ngd.1` platform device behind on remove, so a second
+   `modprobe` dies on `kobject_add_internal failed ... -EEXIST` and the controller
+   never probes again. Looks like a SLIMbus failure and is not one.
+
 3. **The WCD9320 driver.** New, large, and the only route to actual audio.
 
 ## Vibrator
