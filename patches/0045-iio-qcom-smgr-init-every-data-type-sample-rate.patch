@@ -1,0 +1,13 @@
+--- a/drivers/iio/common/qcom_smgr/qcom_smgr.c
++++ b/drivers/iio/common/qcom_smgr/qcom_smgr.c
+@@ -542,8 +542,8 @@
+ 
+ 		for (j = 0; j < smgr->sensors[i].data_type_count; j++) {
+ 			/* Default to maximum sample rate */
+-			smgr->sensors[i].data_types->cur_sample_rate =
+-				smgr->sensors[i].data_types->max_sample_rate;
++			smgr->sensors[i].data_types[j].cur_sample_rate =
++				smgr->sensors[i].data_types[j].max_sample_rate;
+ 
+ 			dev_info(smgr->dev, "0x%02x,%d: %s %s\n",
+ 				smgr->sensors[i].id, j,

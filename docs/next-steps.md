@@ -104,7 +104,8 @@ supply), battery percentage, USB networking, sensors bar proximity, the notifica
 LED, the vibrator, suspend (s2idle), GPU and CPU frequency scaling, CPU thermal
 throttling, and SLIMbus - the Taiko enumerates, though nothing can drive it yet.
 
-Not working: audio, proximity, ambient light, deep suspend.
+Not working: audio (the codec driver is all that is left), proximity, ambient
+light, deep suspend.
 
 The vibrator **works** as of `0040` - felt, not merely enumerated - and the ADSP
 audio transport is up as of `0039` with all four Q6 services attached as of `0041`.
@@ -118,18 +119,19 @@ carveout but blanks the panel, and all of it is out of the build.
 Worth stating because it lives on disk in pmaports, not in this repo, so nothing here
 records it and a new session would have to look:
 
-- **Flashed on the phone: r56** - none of the IOMMU work, no audio, no vibrator. This
-  is the known-good kernel and the one to come back to. Boot partition md5
-  `69b89a70e0a216cc128579bea40f5561`.
-- **pmaports recipe: r84** - `0001`-`0029` as usual, plus `0039` (APR), `0040`
-  (vibrator) and `0041` (the q6asm frontend DAIs), with `CONFIG_QCOM_APR` and the
-  `SND_SOC_QDSP6_*` symbols on. No IOMMU patches,
-  `# CONFIG_ARM_SMMU is not set`. Built, and the boot image is staged at
-  `~/Devices/Xperia-Z1-Compact/boot-images/boot-r84.img`.
-- So **the recipe and the flashed kernel differ**. Rebuilding and installing without
-  noticing would quietly add APR and the vibrator. That is harmless, but it is not
-  what is on the phone.
-- Apks r57-r84 in `~/.local/var/pmbootstrap/packages/` are a mix of experiments;
+- **Flashed on the phone: r85**, and the pmaports recipe is also r85, so for once
+  they agree. It is `0001`-`0029` as usual plus `0039` (APR), `0040` (vibrator),
+  `0041` (q6asm DAIs) and `0042`-`0044` (SLIMbus), with `CONFIG_QCOM_APR`, the
+  `SND_SOC_QDSP6_*` symbols and `CONFIG_SLIMBUS` on. No IOMMU patches,
+  `# CONFIG_ARM_SMMU is not set`.
+- **`uname -v` prints `pkgrel` + 1.** r85 reports `#86`. Easy to misread as having
+  booted the wrong build.
+- Earlier images are kept in `~/Devices/Xperia-Z1-Compact/boot-images/`: r84
+  (`d4550bf58700118ce0b3ee31aee67999`) is the last build before SLIMbus, and
+  r56-rebuilt (`69b89a70e0a216cc128579bea40f5561`) reproduces what was flashed for
+  most of this port's life.
+- `0045` exists as a file but is **not** in the recipe; see the proximity section.
+- Apks r57-r85 in `~/.local/var/pmbootstrap/packages/` are a mix of experiments;
   several are IOMMU builds. Numbering is monotonic but the contents are not a
   progression - check the config inside one before trusting it.
 
@@ -305,24 +307,63 @@ black.
 
 ### Why sensor 0x28 reports nothing
 
-Proximity enumerates correctly and registers an IIO device - which is why it passed
-for working - and then never delivers a sample. Zero bytes in 25 s with a hand over
-it, against tens of kilobytes in five from the accelerometer.
+**Re-measured 2026-09-15, and the old characterisation was wrong in a way that
+mattered.** "Zero bytes in 25 s with a hand over it" was taken with a harness that
+could not have worked: an IIO character device rejects any read smaller than one
+scan element, so `dd bs=1` returns `EINVAL` immediately and reports nothing for
+*any* sensor. Re-running it today produced zero bytes from the **accelerometer**
+too, which is what gave it away. Always run the control.
 
-Already ruled out: that only the primary data type is subscribed. True, and it is why
-an ambient light channel alone can never work, but subscribing to both (`0031`) leaves
-it just as silent.
+With a valid read size (`cat`, or `dd bs=16`) the picture is:
 
-Where to look: the APDS-9930 configuration in a working ROM; what actually sits at the
-unmapped registry offsets; and whether any other msm8974 device in postmarketOS has
-proximity working - if one does, the diff is the answer. Upstream lists proximity as
-supported, which points at this device's configuration rather than the driver.
+| sensor | 10 s of buffered reads |
+|---|---|
+| accel (`iio:device3`) | 40048 bytes |
+| prox (`iio:device5`) | **0 bytes** |
 
-Weak lead, resist without a source: nine registry groups are requested and unmapped
-(2001, 2500, 2610, 2650, 2680, 2970, 2971, 2980, 2990), and `group_map[]` leaves
-`0x2900`-`0x2cff` unused - four pages against four unmapped `29xx` groups. `0007`
-proved one missing group can disable a sensor, but that cost the accelerometer its
-*enumeration*, and proximity enumerates fine.
+So proximity really does report nothing - but the *shape* of the failure is now
+pinned down rather than guessed:
+
+- **The subscription is accepted.** `buffer/enable` reads back 1 and nothing is
+  logged. That means `qcom_smgr_set_buffering()` got a zero `resp.result` from the
+  ADSP - a rejected request takes the `Buffering request failed: 0x%x` path and
+  fails the enable. The ADSP agrees to report and then does not.
+- **`buffer/data_available` stays 0 indefinitely**, so no indication is arriving at
+  all; this is not a decode or push problem in the IIO layer.
+- **The sample rate is not the variable.** `in_proximity_sampling_frequency` is
+  writable and accepted at 1, 2, 5, 10, 20, 50 and 100; every one enables cleanly
+  and every one yields nothing.
+- **Sensor `0x28` really does carry two data types**, which the driver's own probe
+  inventory shows and which is the premise `0031` was built on:
+
+        qcom_smgr 5-6: 0x00,0: BOSCH BMA2X2 Accelerometer/Temperature/Double-tap
+        qcom_smgr 5-6: 0x0a,0: BOSCH BMG160 Gyroscope
+        qcom_smgr 5-6: 0x14,0: AKM AK8963 Magnetometer
+        qcom_smgr 5-6: 0x28,0: Avago APDS-9930/QPDS-T930 Proximity & Light
+        qcom_smgr 5-6: 0x28,1: Avago APDS-9930/QPDS-T930 Proximity & Light
+
+  That inventory is printed at probe, so **do not `dmesg -C`** - it was cleared
+  during this session and the driver had to be reloaded to get it back.
+
+**`0045`, found while reading that code.** The probe loop iterates `j` over the
+data types but writes `data_types->cur_sample_rate`, which is `data_types[0]`, so
+the second data type's current rate is never initialised. It is a real bug and the
+fix is obvious, but **it does not fix proximity** and it is deliberately not in the
+build yet: only `data_types[0]` is ever used to build a request today, so nothing
+observable changes, and it is not worth a flash cycle on its own. Fold it in with
+the next rebuild.
+
+**The instrument this needs now exists.** The note above used to say proximity
+needed one. SMGR is QMI service `0x100` on node 5 and the ADSP advertises it -
+`tools/qrtr-services.py` lists it - so the next step is a userspace SMGR client
+that can issue `SNS_SMGR_BUFFERING_REQ` with varied parameters and watch for
+indications, without a kernel build per attempt. The things to vary: `data_type`
+`SECONDARY` rather than `PRIMARY`, the `val1`/`val2` fields the driver admits are
+guesses copied from dumps, and `report_rate`, which is currently
+`sample_rate * 32768 * 2` on the assumption of one sample per report.
+
+Still unexamined, and cheap once that client exists: what a working ROM sends for
+this sensor, which is the one source that would settle the request format outright.
 
 ## Phase 2: deep suspend
 
