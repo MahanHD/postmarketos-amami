@@ -355,7 +355,7 @@ sensor. Stock's own `dumpsys` shows only two proximity events in a session, both
 `0.00`, which is what an on-change sensor looks like when nothing approaches it -
 so that capture never contradicted this either.
 
-**`0047` implements the fix, and it half-works - verified.** When a PROX_LIGHT
+**`0047` implements the fix, and it works - verified end to end.** When a PROX_LIGHT
 sensor is enabled, the driver now takes out a second subscription on the same
 chip's ambient light channel at 1 Hz under report ID `0xfe`, waits 100 ms, and
 only then subscribes proximity. With it, **proximity enabled entirely on its own
@@ -376,20 +376,29 @@ Three things were measured to get there, each with a control:
   even though the first QMI transaction has completed; 50 ms was the shortest gap
   measured to work, 0 ms the longest to fail, hence 100 ms.
 
-**What is NOT verified: whether change events flow with the keepalive.** Proximity
-detecting a hand was demonstrated once and unambiguously - `values[0]` toggling
-0 <-> 65536 and raw IR going 56 -> 525 - but that run had the accelerometer
-subscribed at 50 Hz, not the keepalive. Later attempts to reproduce change events,
-with several partners and rates, produced only the on-enable report **and a raw IR
-value that never left the 77-95 far range**, meaning nothing was actually in front
-of the sensor in those runs. So they say nothing either way.
+**Verified end to end 2026-09-16.** Proximity enabled on its own, with the
+keepalive as its only company, tracks a hand exactly as it should:
 
-**How to test this properly next time, because the obvious way does not work.**
-Do not judge by whether samples arrive. Watch `values[1]`, the raw IR count: it
-sits near 50-95 uncovered and jumps past 500 when a hand is over the sensor, which
-is the only way to know the hand was actually in the right place. The sensor is by
-the earpiece at the top of the screen. Confirm IR has risen *before* concluding
-anything about whether change events were delivered.
+    proximity alone: 14 samples
+       [  0] raw=65536  NEAR
+       [  1] raw=0      far
+       ...alternating, 7 NEAR and 7 far, no spurious readings
+
+and with the ambient light device enabled alongside as an independent witness,
+the same run shows light dropping 11.0 -> 0.0 lux while proximity reports 5 NEAR
+and 5 far. The witness matters: it is the only way to know a hand was actually
+over the sensor, and two earlier attempts at this test failed on exactly that -
+they recorded nothing because nobody was at the phone, which is indistinguishable
+from a driver that does not work if you are not watching the light.
+
+So `0047` is sufficient on its own. Nothing else has to be enabled for proximity
+to work.
+
+**How to test this, because the obvious way misleads.** Never judge proximity by
+whether samples arrive, on its own. Enable `qcom-smgr-light` alongside it and
+watch the lux: covering the sensor drops it to 0, which is independent proof a
+hand was there. Without that witness, "no samples" and "nobody touched the phone"
+look identical - and did, twice.
 
 ### Ambient light: works, as its own IIO device
 
