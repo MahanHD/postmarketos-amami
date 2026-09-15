@@ -1,0 +1,34 @@
+--- a/drivers/soc/qcom/qcom_sns_reg.c
++++ b/drivers/soc/qcom/qcom_sns_reg.c
+@@ -318,10 +318,28 @@
+ 
+ 	if (!group) {
+ 		/*
+-		 * This might be totally normal, depending on SoC.
+-		 * Not all SoCs have all the groups.
++		 * Answer with zeroes rather than a failure.
++		 *
++		 * The offsets in group_map[] are observed rather than
++		 * documented, so msm8974 asks for several groups that have no
++		 * entry - 2001, 2650, 2680, 2970 and 2990 on amami - and every
++		 * one of those reads fails. 0007 records that for group 2691
++		 * serving zeroes was enough to bring the accelerometer up where
++		 * failing the read was not, which suggests the DSP cares more
++		 * that the read succeeds than what comes back.
++		 *
++		 * The response buffer is kzalloc()ed, so the data is already
++		 * zero; this only has to claim success and a length.
++		 *
++		 * If a sensor needs a group's real contents this cannot help
++		 * it, and the offset still has to be found. But it costs one
++		 * build to tell those two cases apart, against one build per
++		 * guessed offset.
+ 		 */
+-		sns_reg_warn("got request for unmapped group id=%u", req->id);
++		sns_reg_warn("unmapped group id=%u, answering with zeroes",
++			     req->id);
++		rsp->result = QMI_RESULT_SUCCESS_V01;
++		rsp->data_len = SNS_REG_GROUP_DATA_MAX_LEN;
+ 	} else {
+ 		/* bounds check */
+ 		if (!__qcom_sns_reg_data->fw

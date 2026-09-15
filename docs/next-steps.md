@@ -374,36 +374,31 @@ ambient light, which is a different feature.
 
 | subscription | `ack_nak` | indications in 12 s | values |
 |---|---|---|---|
-| accel `0x00` (control, 4 s) | 0 | 248 | 24 distinct, real motion |
-| prox, `val1=3 val2=1` (what the driver sends) | **1** | **0** | - |
-| prox, `val1=2 val2=4` (what the info response reports) | **1** | **0** | - |
-| **ambient light**, `data_type 1` | **1** | **59** | all zero |
+| accel `0x00` (control, 4 s) | 0 | 240-248 | 65 distinct, real motion |
+| prox, `val1=3 val2=1` (what the driver sends) | 1 | **0** | - |
+| prox, `val1=2 val2=4` (what the info response reports) | 1 | **0** | - |
+| **ambient light**, `data_type 1` | 1 | **59-60** | **real, varying** |
 
-Read together these say something fairly specific: **ambient light subscribes and
-streams at the requested rate but every sample is zero, and proximity never
-reports at all - while every subscription to sensor `0x28` is NAKed and the
-accelerometer's is ACKed.** A sensor that is present in SMGR's inventory, accepts
-a report rate, and then produces either nothing or zeros looks like a part the
-ADSP has enumerated from its registry but cannot actually bring up. That moves the
-problem off the Linux side entirely: no DT or `qcom_smgr` change can fix a sensor
-the ADSP is not running, which also explains why `0031` and every rate and
-parameter variation changed nothing.
+**So the APDS-9930 is alive and the ADSP is driving it.** Ambient light subscribes,
+streams at exactly the requested rate, and returns real values that track the room -
+`(720896, 7, 0)` and `(917504, 8, 0)` were seen in the same run. Only the
+**proximity data type** is dead. An earlier version of this section said light
+"streams but every sample is zero" and concluded the ADSP could not bring the part
+up; that was a dark room, and the conclusion was wrong.
 
-That points back at the registry - see [[xperia-z1c-sensor-harvest]] and the
-unmapped-group lead below, which is no longer as weak as it looked.
+**`ack_nak` is not a refusal signal.** Both of the sensor's data types report
+`ack_nak = 1` while the accelerometer reports 0 - and light works anyway. So the
+flag tracks the sensor, not whether the subscription took, and the earlier reading
+of it as "every subscription to `0x28` is NAKed" explained nothing. The driver
+ignoring it is still untidy, but it is not the bug.
 
-**`ack_nak` is a real bug regardless.** `qcom_smgr_set_buffering()` checks only
-`resp.result` (TLV `0x02`) and ignores `ack_nak` (TLV `0x11`), so a NAKed
-subscription is reported as success and the driver waits forever with no
-diagnostic. Making it fail loudly would have turned this whole investigation into
-one dmesg line. Worth a patch whatever the root cause turns out to be.
-
-**A trap that produced a wrong answer here.** The first version of the probe
-counted every `0x22` indication rather than filtering on `report_id`. With the
-accelerometer control running at 50 Hz, its stragglers arrived inside the next
-trial's window and were counted as proximity data - which briefly looked like
-"proximity works, the driver just asks wrongly". Filter by `report_id` and settle
-after each DELETE. See [[xperia-z1c-validate-the-probe]].
+That narrows proximity a long way: it is not the part, not the bus, not the
+firmware, not enumeration and not the subscription being refused. The ADSP accepts
+a proximity subscription for a chip it is already reading ambient light from, and
+then never reports. The obvious remaining shape is an **event-driven channel with
+thresholds that never trigger** - proximity on this part interrupts on crossing a
+near/far threshold rather than streaming, so a zero or nonsensical threshold would
+look exactly like this.
 
 ### The registry, which is now the live lead
 
@@ -435,13 +430,31 @@ and its comment records that any other page stopped all four sensors enumerating
 while zeroes brought the accelerometer up 2% low. That is the same search, now with
 five candidate pages and five requested groups.
 
-**The cheapest next experiment is not a search at all.** Right now an unmapped
-group is answered with `QMI_RESULT_FAILURE_V01`. `0007`'s note says serving
-*zeroes* for a group was enough to bring a sensor up where failing did not. So:
-make the unmapped case return success with zeroed data instead of failing, and see
-whether the APDS-9930 starts up. One build, one flash, one `smgr-probe.py` run, and
-it distinguishes "the DSP needs this group's contents" from "the DSP just needs the
-read not to fail" before any offset is guessed.
+**Tried, and it changes nothing: `0046`.** It makes an unmapped group return
+success with 0x100 zeroed bytes instead of `QMI_RESULT_FAILURE_V01`, on the theory
+from `0007` that the DSP cares more that the read succeeds than what comes back.
+The module loads, the log shows `answering with zeroes` for all five groups, all
+four sensors still enumerate - and proximity is exactly as silent as before. **It
+is not in the build**; it is kept only so nobody spends another cycle on the idea.
+
+Worth knowing for future work here: **a module-only change needs no flash.**
+`qcom_sns_reg` is `=m`, and `pkgrel` does not enter the vermagic - both r85 and r86
+report `6.16.12 SMP preempt mod_unload modversions ARMv7 p2v8` - so the new `.ko`
+can be dropped onto the running kernel, and restarting the remoteproc replays the
+registry requests. Build to test, without a flash or a reboot.
+
+That experiment was also what exposed the dark-room mistake above, because it
+looked at first like it had fixed ambient light. Reverting to the original module
+under the same lighting produced the same non-zero readings, which is the only
+reason the claim did not get written down as a result.
+
+**The per-sensor block in the ROM config, for reference.** Items 1966-1986 are the
+APDS-9930's descriptor - `1976` is `0x39`, its I2C address, and the four sensors
+follow the same shape (accel at 1900, gyro at 1918, mag at 1934). Each one names a
+registry group: accel 1000, gyro 1010, mag 1020, **prox 1040**. All four of those
+groups are already mapped in `group_map[]`, so the sensor's own configuration group
+was never among the missing ones - another reason the registry gap looks less
+promising than it did.
 
 **What the ROM does and does not give.** LineageOS 18.1 carries
 `/system/etc/sensor_def_qcomdev.conf` - Qualcomm and Sony's registry defaults for
@@ -693,7 +706,11 @@ Out of the build, kept because the data in them was expensive to recover:
 - `0034`, `0035`, `0036`, `0037` - the GPU and MDP IOMMUs, and the page-size fix.
 - `0018`, `0025` - the earlier `qcom_iommu` node and the GPU's binding to it.
 - `0027` - the non-secure BFB settings.
-- `0031` - subscribing to every data type, a prerequisite for ambient light.
+- `0031` - subscribing to every data type. Now known not to be a proximity fix:
+  proximity *is* the primary type. It would be the route to an ambient light
+  channel, which does work at the SMGR level.
+- `0046` - answering unmapped registry groups with zeroes instead of failing.
+  Tried on hardware, changed nothing.
 - `debug/9004` - dumps the whole SMMU state after a successful attach.
 
 In the build but inert without those: `0017` (optional secure id), `0019` (the `alt`
