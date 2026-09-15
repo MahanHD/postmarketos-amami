@@ -10,26 +10,37 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state: running r84 from RAM, at 97%.** It was `fastboot boot`-ed on
-2026-09-15, so it lives in RAM only - a power cycle returns to the flashed **r56**
-(`uname -v` = `#57`), which has neither the vibrator nor APR. Boot partition md5 is
-still `69b89a70e0a216cc128579bea40f5561`. Nothing is half-applied.
+**Device state: r84 is flashed and is now the known-good kernel.** Flashed
+2026-09-15 from the running system, verified by readback, and confirmed to boot from
+flash (`uname -v` = `#85`). It is r56 plus the vibrator (`0040`), APR (`0039`) and
+the q6asm frontend DAIs (`0041`), every one of them tested on the device. Nothing is
+half-applied.
 
-**Both queued jobs are done, and both were confirmed on the device:**
+    boot partition:  /dev/disk/by-partlabel/boot  ->  mmcblk0p14  (20971520 bytes)
+    md5 over the image length (18219008):  d4550bf58700118ce0b3ee31aee67999
+    the old r56:     69b89a70e0a216cc128579bea40f5561  (18153472 bytes)
+    restore image:   ~/Devices/Xperia-Z1-Compact/boot-images/boot-r56-rebuilt.img
 
-- **The vibrator works** - felt, not merely enumerated. `0040` plus `tools/ff-test.py`.
-- **`q6asm-dai` probes** - `0041`, with `MultiMedia1`..`MultiMedia4` registered.
+**Flashing from the running phone works and is cheaper than a fastboot cycle.** No
+cable-holding, no Volume Up. Stage the image to `/tmp` first and check its md5 there,
+so a bad transfer cannot reach the partition, then `dd ... conv=fsync` and read back:
 
-**So r84 is worth flashing, and that is the open decision.** It is r56 plus the
-vibrator, APR and the q6asm DAIs, all now tested, and it is the first build since r56
-where everything in it has been shown to work. Flashing it replaces the known-good
-kernel on the boot partition, so it is a deliberate choice rather than a default:
+    scp boot-images/boot-r84.img mahan@172.16.42.1:/tmp/
+    ssh mahan@172.16.42.1 'md5sum /tmp/boot-r84.img'
+    ssh mahan@172.16.42.1 'sudo dd if=/tmp/boot-r84.img of=/dev/disk/by-partlabel/boot bs=4M conv=fsync; sync'
+    ssh mahan@172.16.42.1 'sudo head -c 18219008 /dev/disk/by-partlabel/boot | md5sum'
 
-    ~/Devices/Xperia-Z1-Compact/boot-images/boot-r84.img
-    md5 d4550bf58700118ce0b3ee31aee67999
+Two things about that md5. It is taken **over the image length, not the partition** -
+the partition is 20 MB and hashing all of it includes trailing padding, which is why
+a whole-device `md5sum` gives `fa97d700...` and not the documented number. And the
+bytes past the new image are left over from whatever was there before; harmless,
+since the bootloader reads the length from the header.
 
-`tools/mkbootimg.py` is now verified byte-for-byte (it reproduces the flashed r56
-exactly), so the image itself can be trusted.
+**`dd` to boot is enough here, and that is checked rather than assumed.** `uname -r`
+is `6.16.12` for both r56 and r84 - `pkgrel` only moves `uname -v` - so they share
+`/lib/modules/6.16.12`, and r84 ran for half an hour on r56's modules with `wcn36xx`,
+`mac80211` and bluetooth loaded and `wlan0` connected. Had a needed driver been `=m`
+and new, this would not have held; see [[xperia-z1c-flashing-modules]].
 
 ### The next jobs
 
