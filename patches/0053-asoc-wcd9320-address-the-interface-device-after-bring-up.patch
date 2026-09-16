@@ -1,0 +1,32 @@
+--- a/sound/soc/codecs/wcd9320-slim.c
++++ b/sound/soc/codecs/wcd9320-slim.c
+@@ -363,6 +363,29 @@
+ 		pr_err("DEBUG:: %s: %d\n", __func__, __LINE__);
+ 	}
+ 
++	/*
++	 * Ask for the interface device's logical address only now, after
++	 * bring-up. The interface device does not answer on the bus until the
++	 * codec's digital core is running, and wcd9320_bring_up() is what
++	 * starts it - A_CDC_CTL goes 0 then 3 above. Before that point the ADSP
++	 * does not know the address, ADDR_QUERY comes back with a zeroed
++	 * enumeration address, and the core reports -ENXIO.
++	 *
++	 * Without an address every access to this device is sent to LA 0, which
++	 * nothing answers: the controller times out with
++	 * "Tx:MT:0x0, MC:0x60, LA:0x0 failed:-110", the failed write surfaces
++	 * as -EIO at snd_soc_component_update_bits() on register 0xb56, the
++	 * SLIMbus ports are never configured, and playback runs to completion
++	 * in silence.
++	 *
++	 * Not fatal: the card is still worth having without it, and wcd9335
++	 * likewise ignores the result of this call.
++	 */
++	ret = slim_get_logical_addr(wcd->slim_ifd);
++	if (ret)
++		dev_err(dev, "No logical address for the interface device (%d); its registers, and so the SLIMbus port setup, are unreachable\n",
++			ret);
++
+ 	printk("slim PING");
+ 	wcd->slim_slave = wcd->slim_ifd;
+ 	wcd->slim_data.slim_slave = wcd->slim_ifd;

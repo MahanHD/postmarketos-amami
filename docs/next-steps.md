@@ -764,7 +764,38 @@ So the work splits into three milestones, and only the first two are small:
    stream plays into nothing. The PGD is fine - its regmap write returns 0 at
    probe - which is why everything upstream reports success.
 
-   **A fix that looks obvious and is wrong.** `wcd9335` calls
+   **`0053` fixes the addressing, and the timeouts are gone.** The interface
+   device does not answer on the bus until the codec's digital core is running,
+   and `wcd9320_bring_up()` is what starts it (`A_CDC_CTL` 0 then 3). Asking for
+   its logical address *after* bring-up succeeds; the
+   `Tx:MT:0x0, MC:0x60, LA:0x0 failed:-110` timeouts disappear. Not fatal if it
+   fails, as `wcd9335` also ignores the result.
+
+   **Asking before bring-up makes it worse**, which is what the first attempt did:
+   both devices then fail to get an address and no card appears at all,
+   reproducibly across a module reload. Order is the whole point.
+
+   **What is still silent, and why - `wcd-clsh.c` is for the wrong codec.**
+   Register `0xb56` still fails, now as a plain `-EIO` rather than a timeout, and
+   it is not an interface-device register at all:
+
+        wcd-clsh.c:10: #define WCD9XXX_A_CDC_RX1_RX_PATH_CFG0  (0xB56)
+
+   **All twenty** register addresses in `wcd-clsh.c` are `>= 0x400`, and the
+   WCD9320's whole map ends at `WCD9320_NUM_REGISTERS` = `0x400`. They are
+   WCD9335 addresses: that file is shared between the two codecs in its home tree
+   and was only ever correct for the WCD9335. Every Class-H write a Taiko makes
+   through it is out of range and rejected, so the Class-H block and the
+   headphone output path are never configured - which is exactly why the stream
+   runs and nothing is heard.
+
+   The Taiko has its own Class-H block - 36 `WCD9320_A_CDC_CLSH_*` registers from
+   `0x320` - and its own headphone registers at `0x1AE`/`0x1B1`. **So the
+   remaining work is to rewrite `wcd-clsh.c` against the WCD9320's register map**,
+   or to bring up a first sound on a path that does not need Class-H at all.
+   That is the one thing between here and audible audio.
+
+   **An earlier wrong turn, kept because it is the same trap:** `wcd9335` calls
    `slim_get_logical_addr(wcd->slim_ifc_dev)` in its `device_status` callback and
    ignores the result; `wcd9320` never calls it at all, and it *does* have a
    `device_status` callback in the same shape. Adding the call there makes things
