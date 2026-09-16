@@ -822,17 +822,59 @@ So the work splits into three milestones, and only the first two are small:
    This driver is a work in progress and that is the part left unfinished, which
    fits every observation: everything powers up, nothing errors, no data moves.
 
-   **Do not assume those blocks are simply missing, though.** The driver also uses
-   the modern `slim_stream_prepare()`/`slim_stream_enable()` API, which does its
-   own channel configuration out of `struct slim_stream_config` - so the `#if 0`
-   code may have been deliberately superseded rather than dropped, and the real
-   gap may be in how `cfg->chs` and `cfg->port_mask` get filled. Settling which
-   is the next job.
+   **Those `#if 0` blocks are superseded, not missing - checked, so do not chase
+   them.** The driver uses the modern `slim_stream_prepare()`/`enable()` API
+   instead, and the channels really are configured. The codec reports them to the
+   machine driver on every playback:
+
+        wcd9320_get_channel_map: slot_num 0 ch->ch_num 145
+        wcd9320_get_channel_map: slot_num 1 ch->ch_num 146
+
+   With `BASE_CH_NUM` 128 those are slave ports 17 and 18, inside Taiko's RX range
+   (ports 16-28, 13 of them). The register bases match downstream exactly -
+   `0x180 - 16*4` and `0x040 - 16`, where downstream's
+   `TAIKO_SB_PGD_OFFSET_OF_RX_SLAVE_DEV_PORTS` is also 16 - and the DSP side is
+   right too: `SLIMBUS_0_RX` is 2, so `q6slim_set_channel_map()` takes its RX
+   branch and stores `ch_mapping = {145, 146}`. Both ends agree.
+
+   ### What is actually unfinished: the codec's interrupt layer
+
+   A full playback log ends with:
+
+        wcd9320_codec_enable_slim_chmask: Slim close tx/rx wait timeout, ch_mask:0x60000
+
+   `0x60000` is bits 17 and 18 - precisely those two ports. `ch_mask` bits are set
+   when the ports open and are meant to be cleared by the codec's SLIMbus port
+   interrupt handler, which then wakes `dai_wait`. They are never cleared, and
+   `/proc/interrupts` says why:
+
+        106:  0  0  0  0  msmgpio  72  Level  wcd
+
+   **Zero interrupts, ever.** The DT wiring is right and
+   `devm_request_threaded_irq()` does run, but inside the codec:
+
+   - `wcd9320_slimbus_irq()` is **defined and never referenced** - line 3110 is its
+     only occurrence in the file. The handler that clears `ch_mask` is never
+     registered.
+   - `wcd->irq_data = control->irq_data;` is **commented out**, so no
+     `regmap_irq_chip` is ever set up for the codec's internal interrupt
+     controller and `wcd9320_request_irq()` could not work even if it were called.
+
+   So the interrupt support simply is not implemented. That is a real piece of
+   work: a `regmap_irq_chip` over the codec's `A_INTR_*` registers, then hooking
+   `wcd9320_slimbus_irq` to `WCD9320_IRQ_SLIMBUS`. Note `wcd9320_bring_up()`
+   currently ends by writing `0xff` to `A_INTR_MASK0 + 2` and `0xcd` to
+   `A_INTR_MASK0`, masking most sources - that will need revisiting alongside.
+
+   **Whether that alone restores audio is not proven.** The SLIMbus data path is
+   hardware and interrupts are status reporting, so it is possible sound needs
+   something further. But it is the one concrete unimplemented subsystem left on
+   the path, and the close timeout is direct evidence it matters.
 
    **Use the downstream tree for it.** The driver itself cites
-   `LineageOS/android_kernel_sony_msm8974`; `drivers/mfd/wcd9xxx-slimslave.c`
-   there is the authority on what a working RX port and channel setup looks like
-   on this exact part, and `sound/soc/codecs/wcd9320.c` for the enable order.
+   `LineageOS/android_kernel_sony_msm8974`; `drivers/mfd/wcd9xxx-irq.c` there is
+   the reference for the interrupt controller and `wcd9xxx-slimslave.c` for the
+   port setup - which has already been checked and matches.
 
    **An earlier wrong turn, kept because it is the same trap:** `wcd9335` calls
    `slim_get_logical_addr(wcd->slim_ifc_dev)` in its `device_status` callback and
