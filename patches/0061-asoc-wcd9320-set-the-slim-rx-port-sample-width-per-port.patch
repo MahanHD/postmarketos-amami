@@ -1,0 +1,113 @@
+--- a/sound/soc/codecs/wcd9320.h
++++ b/sound/soc/codecs/wcd9320.h
+@@ -207,6 +207,10 @@
+ 	int hph_r_gain;
+ };
+ 
++/* RX slave ports run 16..22; SB port ID 0 is the first of them. */
++#define WCD9320_VALIDATE_RX_SBPORT_RANGE(port) ((port) >= 16 && (port) <= 22)
++#define WCD9320_CONVERT_RX_SBPORT_ID(port)     ((port) - 16)
++
+ int wcd9320_regmap_register_patch(struct regmap *regmap, int version);
+ irqreturn_t wcd9320_slimbus_irq(int irq, void *data);
+ 
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -2723,14 +2723,83 @@
+ 	return 0;
+ }
+ 
++/*
++ * Tell the codec how wide each SLIMbus RX port's samples are. The field is two
++ * bits per port inside CONN_RX_SB_B1/B2_CTL, and it has to name the same port
++ * the channel actually landed on: a port told 24-bit while 16-bit samples
++ * arrive drains at the wrong width.
++ *
++ * What was here before was two hardcoded writes of 0x02 then 0x0a over the
++ * whole register. 0x0a sets the fields for SB ports 0 and 1, but a stereo
++ * stream lands on slave ports 17 and 18, which are SB ports 1 and 2 - so the
++ * right channel's field was left at 0, which selects 24-bit, and port 0's
++ * field was written for a port nothing was using. The correct value for that
++ * case is 0x28; deriving it per channel is what downstream does
++ * (taiko_set_rxsb_port_format) and it keeps working when the channel map is
++ * not the stereo one.
++ */
++static void wcd9320_set_rxsb_port_format(struct snd_pcm_hw_params *params,
++					 struct snd_soc_dai *dai)
++{
++	struct snd_soc_component *component = dai->component;
++	struct wcd9320_priv *wcd = snd_soc_component_get_drvdata(component);
++	struct wcd_slim_codec_dai_data *cdc_dai;
++	struct wcd_slim_ch *ch;
++	u16 sb_ctl_reg, field_shift;
++	u8 bit_sel;
++	int port;
++
++	switch (params_format(params)) {
++	case SNDRV_PCM_FORMAT_S16_LE:
++		bit_sel = 0x2;
++		wcd->dai[dai->id].bit_width = 16;
++		break;
++	case SNDRV_PCM_FORMAT_S24_LE:
++		bit_sel = 0x0;
++		wcd->dai[dai->id].bit_width = 24;
++		break;
++	default:
++		dev_err(wcd->dev, "Invalid format %d\n", params_format(params));
++		return;
++	}
++
++	cdc_dai = &wcd->dai[dai->id];
++
++	list_for_each_entry(ch, &cdc_dai->wcd_slim_ch_list, list) {
++		port = wcd_slim_get_slave_port(ch->ch_num);
++		if (port < 0 || !WCD9320_VALIDATE_RX_SBPORT_RANGE(port)) {
++			dev_warn(wcd->dev,
++				 "%s: invalid port ID %d for RX DAI\n",
++				 __func__, port);
++			return;
++		}
++
++		port = WCD9320_CONVERT_RX_SBPORT_ID(port);
++
++		if (port <= 3) {
++			sb_ctl_reg = WCD9320_A_CDC_CONN_RX_SB_B1_CTL;
++			field_shift = port << 1;
++		} else if (port <= 6) {
++			sb_ctl_reg = WCD9320_A_CDC_CONN_RX_SB_B2_CTL;
++			field_shift = (port - 4) << 1;
++		} else {
++			dev_warn(wcd->dev, "%s: bad port ID %d\n",
++				 __func__, port);
++			return;
++		}
++
++		snd_soc_component_update_bits(component, sb_ctl_reg,
++					      0x3 << field_shift,
++					      bit_sel << field_shift);
++	}
++}
++
+ static int wcd9320_hw_params(struct snd_pcm_substream *substream,
+ 			   struct snd_pcm_hw_params *params,
+ 			   struct snd_soc_dai *dai)
+ {
+ 	printk("WCD: %s", __func__);
+ 	struct wcd9320_priv *wcd = snd_soc_component_get_drvdata(dai->component);
+-	struct snd_soc_component *component = dai->component;
+-	int rx_fs_rate = -EINVAL;
+ 	int ret;
+ 
+ 	switch (substream->stream) {
+@@ -2756,10 +2825,9 @@
+ 			substream->stream);
+ 		return -EINVAL;
+ 	};
++	wcd9320_set_rxsb_port_format(params, dai);
+ 	wcd_slim_stream_prepare(wcd, &wcd->dai[dai->id]);
+ 
+-	snd_soc_component_update_bits(component, WCD9320_A_CDC_CONN_RX_SB_B1_CTL, 0xff, 0x02);
+-	snd_soc_component_update_bits(component, WCD9320_A_CDC_CONN_RX_SB_B1_CTL, 0xff, 0x0a);
+ 	return 0;
+ }
+ 

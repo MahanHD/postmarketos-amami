@@ -1066,6 +1066,82 @@ So the work splits into three milestones, and only the first two are small:
    something further. But it is the one concrete unimplemented subsystem left on
    the path, and the close timeout is direct evidence it matters.
 
+   **It did not restore audio, and the remaining fault is now pinned down
+   precisely.** During playback the SLIMbus RX ports sit in *permanent*,
+   continuously-asserted overflow. The probe that establishes this, and its
+   control, matter more than the conclusion:
+
+        (stream running)  write INT_CLR_RX_0 = 0xff
+                          read  INT_STATUS_RX_0  ->  0x06   immediately
+        (no stream)       write INT_CLR_RX_0 = 0xff
+                          read  INT_STATUS_RX_0  ->  0x00   and stays 0x00
+
+   The clear works; the condition just re-asserts inside a single register read.
+   So the codec is not draining slowly or drifting out of sync - it consumes
+   **nothing at all**, from the first sample. And since a sink can only overflow
+   if something is filling it, the SLIMbus transport and the ADSP side are both
+   working. That is the useful half of this finding: everything up to and
+   including delivery into the codec is correct, and the fault is entirely
+   inside the codec's own consumption of the port.
+
+   **Live register writes now work on this build**, which is what made the rest
+   of this possible - `9000-debug-regmap-allow-write-debugfs.patch` is in the
+   recipe, so both codec regmaps take writes:
+
+        /sys/kernel/debug/regmap/217:a0:1:0/registers   PGD, the codec proper
+        /sys/kernel/debug/regmap/217:a0:0:0/registers   IFD, the SLIM ports
+
+        echo "3ae 28" | sudo tee /sys/kernel/debug/regmap/217:a0:1:0/registers
+
+   Prefer this over another build for anything register-shaped.
+
+   **Ruled out by live experiment - each one poked to its downstream value mid
+   playback, each one no change whatsoever:**
+
+   - *Class-H, buck, NCP and the charge pump.* The whole downstream HPH enable
+     sequence was replayed by hand (`CLK_OTHR_CTL`=0x01, `BUCK_MODE_1`=0xa5 with
+     bit 7 set, `NCP_EN`=0xff, `CLSH_B1_CTL`=0xa7, plus both param tables).
+     Overflow identical before and after. This was the leading hypothesis -
+     `0054` disables Class-H and the rails really are off at POR - and it is
+     **wrong**. Worth knowing before anyone spends a day porting `wcd-clsh.c`:
+     it is still the right thing to do for power and probably for audibility,
+     but it is not what is stopping the data.
+   - *SLIM RX port sample width.* Both as a live poke and, in `0061`, as a
+     proper fix in its correct place before the stream opens.
+   - *Mixer input routing.* The data lands on slave ports 17 and 18, which are
+     internal mixer inputs **RX2 and RX3**, not RX1/RX2 - `rx_mix1_inp =
+     ch->port + RX_MIX1_INP_SEL_RX1 - 16` and `RX_MIX1_INP_SEL_RX1` is 5. So the
+     routing recipe further up aims `RX1 MIX1 INP1` at a port carrying nothing.
+     Pointing the mixers at the ports that do carry data (`CONN_RX1_B1_CTL`=0x06,
+     `CONN_RX2_B1_CTL`=0x07) changes nothing about the overflow either, but the
+     recipe is still wrong and that is worth remembering when reading old logs -
+     it explains the lone `AIF_PB DAI(0) connected to RX2` line.
+
+   **Verified correct, so do not re-check these:**
+
+   - Stream config, read straight out of `slim_stream_prepare` with a kprobe:
+     `rate=48000 bps=16 chc=2 pm=0x60000 dir=0`. `dir=0` is playback, which is
+     what makes the core send CONNECT_SINK.
+   - Interpolator rate: `RX1/RX2_B5_CTL` bits 7:5 = 0x60 = 48 kHz. The port
+     writes `comp_fs << 5` where downstream passes a separate `rx_fs_rate`, but
+     the two tables line up at **every** rate (8k/16k/32k/48k/96k/192k ->
+     0x00/0x20/0x40/0x60/0x80/0xA0), so the conflation is harmless.
+   - Port config `0x41`/`0x42` = 0x05 = `WATER_MARK_12BYTES | SLAVE_PORT_ENABLE`,
+     and the channel map `0x184`/`0x188` = 0x06. Both match downstream, which
+     computes that payload over the whole channel list and writes it to every
+     port in the group.
+   - `A_CDC_CTL`=0x03, `CLK_RX_B1_CTL`=0x03, `CLK_MCLK_CTL`=0x01, and every DAPM
+     widget from `AIF1 PB` through `SLIM RX1/2`, the mixers, interpolators,
+     `RX1/2 CHAIN`, the DACs and `HEADPHONE` reads `On`.
+
+   **So what is left** is whatever tells the codec's port logic to start pulling
+   from an enabled, correctly-configured, correctly-fed slave port. Every
+   *static* register on the path now matches downstream; the gap is more likely a
+   missing step in the enable *sequence* or its ordering. The next thing to try
+   is capturing what downstream actually writes, in order, during a working
+   playback - `taiko-downstream.c` and `taiko-clsh.c` are in the scratchpad, and
+   `wcd9xxx-slimslave.c` is in `downstream/`.
+
    **Use the downstream tree for it.** The driver itself cites
    `LineageOS/android_kernel_sony_msm8974`; `drivers/mfd/wcd9xxx-irq.c` there is
    the reference for the interrupt controller and `wcd9xxx-slimslave.c` for the
