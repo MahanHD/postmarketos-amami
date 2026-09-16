@@ -1,0 +1,23 @@
+--- a/sound/soc/codecs/wcd9320-slim.c
++++ b/sound/soc/codecs/wcd9320-slim.c
+@@ -20,9 +20,20 @@
+ 
+ extern struct regmap_config wcd9320_regmap_config;
+ 
++/*
++ * The interface device's map needs a max_register or regmap defaults it to 0,
++ * which permits exactly register 0 and rejects everything else. That is what
++ * was happening: every SLIMbus port write - the enables at 0x30, the port
++ * config bytes, and the channel registers at 0x100 + 4*port, up to about 0x13c
++ * - fell outside the map, so the ports were never configured, no audio data
++ * crossed the bus, and playback ran to completion in silence with the whole
++ * DAPM path showing On. wcd9335 sets max_register on its interface map for the
++ * same reason.
++ */
+ static struct regmap_config wcd9320_ifd_regmap_config = {
+ 	.reg_bits = 16,
+ 	.val_bits = 8,
++	.max_register = WCD9320_MAX_REGISTER,
+ //	.can_multi_write = true,
+ };
+ 

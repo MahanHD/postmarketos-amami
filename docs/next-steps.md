@@ -790,10 +790,49 @@ So the work splits into three milestones, and only the first two are small:
    runs and nothing is heard.
 
    The Taiko has its own Class-H block - 36 `WCD9320_A_CDC_CLSH_*` registers from
-   `0x320` - and its own headphone registers at `0x1AE`/`0x1B1`. **So the
-   remaining work is to rewrite `wcd-clsh.c` against the WCD9320's register map**,
-   or to bring up a first sound on a path that does not need Class-H at all.
-   That is the one thing between here and audible audio.
+   `0x320` - and its own headphone registers at `0x1AE`/`0x1B1`. `0054` stubs
+   `wcd_clsh_fsm()` out rather than writing at random; Class-H is a power
+   optimisation, not a prerequisite for sound.
+
+   **Class-H was not the only thing, and nor was the addressing.** With `0053`,
+   `0054` and `0055` in, **every codec register write succeeds, no SLIMbus
+   transaction fails, and it is still completely silent.**
+
+   `0055` is a real bug worth knowing about: `wcd9320_ifd_regmap_config` had **no
+   `max_register`**, which regmap defaults to 0 - so the interface device's map
+   permitted exactly register 0 and silently rejected every port write (the
+   enables at `0x30`, the config bytes, the channel registers at
+   `0x100 + 4*port`). Its debugfs dump was one line. It now covers 1024.
+
+   **What the hardware says.** Read back while a tone plays, the whole path is up:
+
+        DAPM: SLIM RX1, RX1 MIX1, RX1 INTERP, CLASS_H_DSM MUX, HPHL DAC, HPHL - all On
+        0x1ab = 0xb0   HPHL PA enable bit (0x20) set
+        0x1b1 = 0xc0   HPHL DAC enable bit (0x80) set
+
+   So the analog output stage is enabled and the digital path is powered. Nothing
+   is failing. There is simply no audio arriving.
+
+   **The prime suspect: the SLIMbus channel setup is `#if 0`-ed out.**
+
+        wcd9320.c:2430  #if 0  wcd_slim_alloc_slim_sh_ch(..., SLIM_SINK)   RX channels
+        wcd9320.c:2454  #if 0  wcd_slim_alloc_slim_sh_ch(..., SLIM_SRC)    TX channels
+        wcd9320.c:2583  #if 0  the RX port config loop, channel regs + watermark
+
+   This driver is a work in progress and that is the part left unfinished, which
+   fits every observation: everything powers up, nothing errors, no data moves.
+
+   **Do not assume those blocks are simply missing, though.** The driver also uses
+   the modern `slim_stream_prepare()`/`slim_stream_enable()` API, which does its
+   own channel configuration out of `struct slim_stream_config` - so the `#if 0`
+   code may have been deliberately superseded rather than dropped, and the real
+   gap may be in how `cfg->chs` and `cfg->port_mask` get filled. Settling which
+   is the next job.
+
+   **Use the downstream tree for it.** The driver itself cites
+   `LineageOS/android_kernel_sony_msm8974`; `drivers/mfd/wcd9xxx-slimslave.c`
+   there is the authority on what a working RX port and channel setup looks like
+   on this exact part, and `sound/soc/codecs/wcd9320.c` for the enable order.
 
    **An earlier wrong turn, kept because it is the same trap:** `wcd9335` calls
    `slim_get_logical_addr(wcd->slim_ifc_dev)` in its `device_status` callback and
