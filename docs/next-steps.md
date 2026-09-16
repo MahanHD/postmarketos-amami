@@ -862,9 +862,35 @@ So the work splits into three milestones, and only the first two are small:
 
    So the interrupt support simply is not implemented. That is a real piece of
    work: a `regmap_irq_chip` over the codec's `A_INTR_*` registers, then hooking
-   `wcd9320_slimbus_irq` to `WCD9320_IRQ_SLIMBUS`. Note `wcd9320_bring_up()`
-   currently ends by writing `0xff` to `A_INTR_MASK0 + 2` and `0xcd` to
-   `A_INTR_MASK0`, masking most sources - that will need revisiting alongside.
+   `wcd9320_slimbus_irq` to `WCD9320_IRQ_SLIMBUS`.
+
+   **`0056` fixes the init sequence but does not fix the interrupt.** It replaces
+   the ad-hoc writes `wcd9320_bring_up()` used to end with - which masked most
+   sources again - with the sequence `wcd9xxx-irq.c` uses downstream: everything
+   edge triggered except SLIMBUS, which is level high, so `INTR_LEVEL0` bit 0
+   set; masks are 1-to-mask, so `0xfe` on register 0 and `0xff` elsewhere; and
+   `INTR_MODE` `0x02`. Worth keeping because the old writes were provably wrong,
+   but the interrupt still never fires.
+
+   **And the reason why is the next clue: some of those writes do not stick.**
+   Read back afterwards:
+
+        09c: ff   INTR_CLEAR0 - our write landed
+        094: 00   INTR_MASK0  - we wrote 0xfe
+        0a0: 00   INTR_LEVEL0 - we wrote 0x01
+
+   `CLEAR0` holds, `MASK0` and `LEVEL0` do not. The likely explanation is that
+   something re-initialises the cache after `wcd9320_bring_up()` runs - the codec
+   platform driver probes later, and `wcd9320_regmap_config` has
+   `REGCACHE_RBTREE` with a `wcd9320_defaults` table, so a `regcache_sync()` would
+   write the POR values back over them. **Check that before writing an irq chip**:
+   an irq chip programming the same registers would be undone the same way.
+
+   Also unexplained: `pin 72` has no pinctrl claim at all in
+   `/sys/kernel/debug/pinctrl/*/pinmux-pins`, so nothing has configured the pin's
+   function. The interrupt does get registered - it appears in `/proc/interrupts`
+   as `msmgpio 72 Level wcd` - but that only proves gpiolib set it up, not that
+   the pin is muxed to GPIO and the codec is driving it.
 
    **Whether that alone restores audio is not proven.** The SLIMbus data path is
    hardware and interrupts are status reporting, so it is possible sound needs

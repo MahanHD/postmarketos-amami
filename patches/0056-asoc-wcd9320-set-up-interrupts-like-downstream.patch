@@ -1,0 +1,49 @@
+--- a/sound/soc/codecs/wcd9320-slim.c
++++ b/sound/soc/codecs/wcd9320-slim.c
+@@ -219,22 +219,32 @@
+ 	 * https://github.com/LineageOS/android_kernel_sony_msm8974/blob/55e8fc93c9be00f388b5a65e1485633677f0d5ff/drivers/mfd/wcd9xxx-irq.c#L449
+ 	 */
+ 
+-	for(i = 0; i < 3; i++){
+-		regmap_write(wcd->regmap, WCD9XXX_A_INTR_LEVEL0 + i, i == 0 ? 1 : 0 );
+-		regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0 + i, 0xff);
++	/*
++	 * Interrupt setup, following wcd9xxx-irq.c in
++	 * LineageOS/android_kernel_sony_msm8974 rather than the sequence of
++	 * ad-hoc writes that used to be here - that ended by masking most
++	 * sources again and left INTR_LEVEL0 reading 0 on the hardware.
++	 *
++	 * Downstream: every interrupt is edge triggered except SLIMBUS, which
++	 * is level high, so INTR_LEVEL0 bit 0 is set and the rest cleared. The
++	 * mask registers are 1-to-mask; downstream starts with everything
++	 * masked and unmasks each source as a driver claims it. Nothing here
++	 * claims one yet - wcd9320_slimbus_irq() is defined but never hooked up
++	 * - so the SLIMbus source is unmasked directly, which is what the
++	 * channel-close handshake in wcd9320_codec_enable_slim_chmask() waits
++	 * on.
++	 *
++	 * INTR_MODE 0x02 is what downstream writes when acknowledging.
++	 */
++	for (i = 0; i < 4; i++) {
++		regmap_write(wcd->regmap, WCD9XXX_A_INTR_LEVEL0 + i,
++			     i == 0 ? 0x01 : 0x00);
++		regmap_write(wcd->regmap, WCD9XXX_A_INTR_CLEAR0 + i, 0xff);
++		regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0 + i,
++			     i == 0 ? 0xfe : 0xff);
+ 	}
+-	
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_LEVEL0 + 3, 0);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0 + 3 , 0x7f);
+ 
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0, 0xbf);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0, 0xff);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0, 0xdd);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0, 0xcd);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0 + 2, 0xfe);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0 + 2, 0xff);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0 + 2, 0xfd);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MASK0 + 2, 0xff);
++	regmap_write(wcd->regmap, WCD9XXX_A_INTR_MODE, 0x02);
+ 
+ 	return ret;
+ }
