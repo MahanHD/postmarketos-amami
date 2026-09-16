@@ -747,8 +747,38 @@ So the work splits into three milestones, and only the first two are small:
         wcd9320_codec_enable_mclk -> enable_master_bias -> enable_mclk
         wcd9320_codec_enable_rx_bias / wcd9320_codec_enable_slimrx
 
-   **Whether a human can hear it is not yet established** - that needs headphones
-   in the jack. The routing has to be set by hand first; nothing sets it up
+   **It is silent, and the reason is known.** Tested with headphones in the jack
+   and the routing set by hand: the stream runs to completion and nothing is
+   heard. The log says why:
+
+        qcom,slim-ngd: Tx:MT:0x0, MC:0x60, LA:0x0 failed:-110
+        ASoC error (-5) at snd_soc_component_update_bits() ... register [0x00000b56]
+
+   `0xb56` is in the **interface device's** register space - the SLIMbus port
+   configuration - and those writes are going to **logical address 0**, because
+   the interface device never gets one:
+
+        wcd9320-slim 217:a0:0:0: Failed to get logical address
+
+   So the ports are never configured, no audio data crosses the bus, and the
+   stream plays into nothing. The PGD is fine - its regmap write returns 0 at
+   probe - which is why everything upstream reports success.
+
+   **A fix that looks obvious and is wrong.** `wcd9335` calls
+   `slim_get_logical_addr(wcd->slim_ifc_dev)` in its `device_status` callback and
+   ignores the result; `wcd9320` never calls it at all, and it *does* have a
+   `device_status` callback in the same shape. Adding the call there makes things
+   **worse**: both devices then fail to get an address and no card appears at all,
+   reproducibly, across a module reload. That attempt is reverted and not kept as
+   a patch - the useful part is this paragraph. Whatever the core needs before it
+   can hand out an address for `217:a0:0:0`, an extra request at that point is not
+   it.
+
+   **So the next question is why the SLIMbus core cannot assign a logical address
+   to the interface device**, when it manages one for the PGD on the same bus.
+   That is the single thing between here and audible sound.
+
+   **The routing has to be set by hand** in any case; nothing sets it up
    automatically, and without it MultiMedia1 reports "no backend DAIs enabled":
 
         amixer -c 0 cset name='SLIMBUS_0_RX Audio Mixer MultiMedia1' 1
