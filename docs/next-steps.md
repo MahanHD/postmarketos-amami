@@ -686,7 +686,10 @@ So the work splits into three milestones, and only the first two are small:
    and `/sys/kernel/debug/asoc/components` lists the codec beside q6routing and
    the q6asm/q6afe DAI sets.
 
-   **Then it oopses building the card:**
+   **`0052` fixes the oops, and there is now a sound card.** See below; what
+   follows is how the crash was found, kept because the method transfers.
+
+   **The oops it used to hit:**
 
         Unable to handle kernel NULL pointer dereference at virtual address 0
         PC is at dapm_connect_mux+0x2c/0xec
@@ -700,10 +703,72 @@ So the work splits into three milestones, and only the first two are small:
    the codec's own. **That is the next thing to chase**, and printing the route
    being added when it faults is the cheap way in.
 
-   **The phone is safe meanwhile.** `/etc/modprobe.d/wcd9320-test.conf`
-   blacklists `snd_soc_wcd9320`, so r90 boots clean and the codec only loads on an
-   explicit `modprobe`. The oops is in a probe kworker and does not take the
-   system down - sensors, WiFi and SLIMbus all survive it.
+   **How it was found, without rebuilding the kernel.** `CONFIG_SND_SOC=y`, so
+   adding a printk to the core would have cost a flash cycle per guess. Instead
+   `CONFIG_KPROBE_EVENTS=y` is on - mount `tracefs` and ask the running kernel:
+
+        mount -t tracefs nodev /sys/kernel/tracing
+        echo 'p:dcm dapm_connect_mux ctrl=+0(%r2):string wname=+0(+4(%r3)):string' \
+            > /sys/kernel/tracing/kprobe_events
+        echo 1 > /sys/kernel/tracing/events/kprobes/dcm/enable
+
+   `$arg1`-style arguments do **not** work on arm32 - it needs the
+   `HAVE_FUNCTION_ARG_ACCESS_API` the architecture lacks - so use the registers:
+   `%r2` is `dapm_connect_mux()`'s third argument and `%r3` its fourth, and
+   `+4(%r3)` is `snd_soc_dapm_widget::name`, `id` being the u32 in front of it.
+   Three lines came out, and the last was the fault:
+
+        ctrl="AIF1_PB" wname="SLIM RX1 MUX"   <- fine
+        ctrl="AIF1_PB" wname="SLIM RX2 MUX"   <- faulted
+
+   **The bug.** `slim_rx_mux[]` is declared `[WCD9320_RX_MAX]`, thirteen entries,
+   and filled with **two**, from index 0. The widgets index it by `WCD9320_RX1`
+   through `RX7` - one through seven - so `SLIM RX1 MUX` got the valid entry at
+   index 1 and `SLIM RX2 MUX` got zeroed memory at index 2. `dapm_connect_mux()`
+   casts that entry's `private_value` to a `struct soc_enum` and reads `e->reg`
+   off it immediately, which is the NULL dereference at address 0.
+
+   A second bug sat underneath: index 1 holds the control *named* "SLIM RX2 Mux",
+   so even the working widget had the wrong control - the array was off by one
+   against the enum it is indexed by. `0052` fixes both with designated
+   initializers for `RX1`..`RX7`.
+
+   **What works now.** Loading the fixed codec gives a card:
+
+        0 [Compact        ]: apq8096 - Xperia Z1 Compact
+        /dev/snd/pcmC0D0p
+
+   and `speaker-test -D hw:0,0` runs the whole chain - the DSP takes the stream,
+   SLIMbus channels are prepared and enabled, MCLK and the master bias come up,
+   and the codec's RX path activates:
+
+        wcd9320_set_interpolator_rate: AIF_PB DAI(0) connected to RX2, 48000
+        wcd_slim_stream_prepare / wcd_slim_stream_enable
+        wcd9320_codec_enable_mclk -> enable_master_bias -> enable_mclk
+        wcd9320_codec_enable_rx_bias / wcd9320_codec_enable_slimrx
+
+   **Whether a human can hear it is not yet established** - that needs headphones
+   in the jack. The routing has to be set by hand first; nothing sets it up
+   automatically, and without it MultiMedia1 reports "no backend DAIs enabled":
+
+        amixer -c 0 cset name='SLIMBUS_0_RX Audio Mixer MultiMedia1' 1
+        amixer -c 0 cset name='SLIM RX1 MUX' AIF1_PB
+        amixer -c 0 cset name='RX1 MIX1 INP1' RX1
+        amixer -c 0 cset name='RX1 INTERP' 'RX1 MIX2'
+        amixer -c 0 cset name='CLASS_H_DSM MUX' DSM_HPHL_RX1
+        amixer -c 0 cset name='HPHL DAC Switch' 1
+        amixer -c 0 cset name='HPHL Volume' 70%
+
+   **Loose ends.** The controller logs `Error Interrupt received 0x82000000`
+   during stream setup. `SLIM RX3`..`RX7 MUX` warn "has no paths", which is
+   expected while only RX1/RX2 are routed. Capture is absent entirely - the
+   driver registers one playback DAI - so "Not able to allocate memory for 0
+   slimbus tx ports" is not a fault.
+
+   **Boot gets slow if the codec is blacklisted**, because the card's dai-links
+   then wait on a device that never arrives; one boot took about seven minutes and
+   another had to be power-cycled. With the codec loading normally that goes away.
+   If it ever has to be blacklisted again, drop the `sound` node with it.
 
 ## Vibrator
 

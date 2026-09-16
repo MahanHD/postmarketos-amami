@@ -1,0 +1,35 @@
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -742,10 +742,30 @@
+ static const struct soc_enum slim_rx_mux_enum =
+ 	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(slim_rx_mux_text), slim_rx_mux_text);
+ 
++/*
++ * Indexed by WCD9320_RXn, because that is how the "SLIM RXn MUX" widgets below
++ * reach into it - RX1 through RX7, so entries 1..7. The array was sized
++ * WCD9320_RX_MAX but filled with only two entries from index 0, which left
++ * every widget past "SLIM RX1 MUX" pointing at a zeroed snd_kcontrol_new.
++ * dapm_connect_mux() takes that entry's private_value as a struct soc_enum and
++ * reads e->reg straight off it, so building the card died on a NULL
++ * dereference at the second mux. It also meant "SLIM RX1 MUX" was handed the
++ * control named "SLIM RX2 Mux", the array being off by one against the enum.
++ */
+ static const struct snd_kcontrol_new slim_rx_mux[WCD9320_RX_MAX] = {
+-	SOC_DAPM_ENUM_EXT("SLIM RX1 Mux", slim_rx_mux_enum,
++	[WCD9320_RX1] = SOC_DAPM_ENUM_EXT("SLIM RX1 Mux", slim_rx_mux_enum,
+ 			  slim_rx_mux_get, slim_rx_mux_put),
+-	SOC_DAPM_ENUM_EXT("SLIM RX2 Mux", slim_rx_mux_enum,
++	[WCD9320_RX2] = SOC_DAPM_ENUM_EXT("SLIM RX2 Mux", slim_rx_mux_enum,
++			  slim_rx_mux_get, slim_rx_mux_put),
++	[WCD9320_RX3] = SOC_DAPM_ENUM_EXT("SLIM RX3 Mux", slim_rx_mux_enum,
++			  slim_rx_mux_get, slim_rx_mux_put),
++	[WCD9320_RX4] = SOC_DAPM_ENUM_EXT("SLIM RX4 Mux", slim_rx_mux_enum,
++			  slim_rx_mux_get, slim_rx_mux_put),
++	[WCD9320_RX5] = SOC_DAPM_ENUM_EXT("SLIM RX5 Mux", slim_rx_mux_enum,
++			  slim_rx_mux_get, slim_rx_mux_put),
++	[WCD9320_RX6] = SOC_DAPM_ENUM_EXT("SLIM RX6 Mux", slim_rx_mux_enum,
++			  slim_rx_mux_get, slim_rx_mux_put),
++	[WCD9320_RX7] = SOC_DAPM_ENUM_EXT("SLIM RX7 Mux", slim_rx_mux_enum,
+ 			  slim_rx_mux_get, slim_rx_mux_put),
+ };
+ 
