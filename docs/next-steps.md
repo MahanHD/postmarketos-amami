@@ -10,9 +10,11 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state: r87 is flashed and running.** Flashed 2026-09-16, verified by
-readback, confirmed booting from flash (`uname -v` = `#88`). It is r86 plus the
-ambient light IIO device (`0048`). All five sensors - accel, gyro, mag, proximity
+**Device state: r90 is flashed and running** (`uname -v` = `#91`), verified by
+readback. It is r87 plus the WCD9320 codec driver (`0049`), its DT node (`0050`)
+and the sound card (`0050`/`0051`). **The codec is blacklisted** in
+`/etc/modprobe.d/wcd9320-test.conf` because loading it oopses while building the
+card - see Phase 3. Everything else is unaffected. All five sensors - accel, gyro, mag, proximity
 and light - work when enabled on their own. Nothing is half-applied, and the
 recipe, the flash and `/lib/modules` all agree at r87.
 
@@ -30,7 +32,8 @@ feature was tested - and its image is still at
 `boot-images/boot-r84.img`, md5 `d4550bf58700118ce0b3ee31aee67999`.
 
     boot partition:  /dev/disk/by-partlabel/boot  ->  mmcblk0p14  (20971520 bytes)
-    r87, flashed now:  af83015f25d1851e2a7f3f7e1cae0ff7  (18229248 bytes)
+    r90, flashed now:  c2f94594ff341f68e5a1ce5aa04a1abd  (18231296 bytes)
+    r87:               af83015f25d1851e2a7f3f7e1cae0ff7  (18229248 bytes)
     r86:               5091ea7c372c07b89b5db95f14cf14dc  (18225152 bytes)
     r85:               a9bb0fcb4c1b0e9624fbb6ff8bf3f48b  (18225152 bytes)
     r84:               d4550bf58700118ce0b3ee31aee67999  (18219008 bytes)
@@ -132,7 +135,7 @@ carveout but blanks the panel, and all of it is out of the build.
 Worth stating because it lives on disk in pmaports, not in this repo, so nothing here
 records it and a new session would have to look:
 
-- **Flashed on the phone: r87**, and the pmaports recipe is also r87, so they
+- **Flashed on the phone: r90**, and the pmaports recipe is also r90, so they
   agree. It is `0001`-`0029` as usual plus `0039` (APR), `0040` (vibrator),
   `0041` (q6asm DAIs), `0042`-`0044` (SLIMbus), `0045`, `0047` and `0048`, with `CONFIG_QCOM_APR`, the
   `SND_SOC_QDSP6_*` symbols and `CONFIG_SLIMBUS` on. No IOMMU patches,
@@ -653,16 +656,54 @@ So the work splits into three milestones, and only the first two are small:
    alias, and there is no DT node for it yet, so probing it on the phone is a
    fresh-session job rather than a 3am one.
 
-   **What is left before sound:**
-   1. The DT node. The codec wants supplies, a reset GPIO, clocks and interrupts,
-      plus the child node `of_platform_populate()` turns into the
-      `qcom,wcd9320` platform device. Stock's `taiko_codec` node has all of it -
-      `qcom,cdc-reset-gpio`, the `cdc-vdd-*` supplies, `qcom,cdc-micbias-*` - and
-      `tools/romdtb.py` reads it.
-   2. A sound card binding the codec's DAIs to the q6afe backends.
-      `sound/soc/qcom/apq8096.c` is the closest template: msm8996 with a WCD9335
-      over SLIMbus in front of the same Q6 stack.
-   3. Then it can be tested.
+   **`0050` wires it into amami's DT**, every value read out of stock with
+   `tools/romdtb.py`: reset on msmgpio 63, the interrupt on msmgpio 72 (stock's
+   `wcd9xxx-irq`, named `cdc-int`), the MCLK gate on PM8941 GPIO 15, and
+   `qcom,cdc-mclk-clk-rate` `0x927c00` - 9.6MHz, which is CXO/2, so
+   `RPM_SMD_DIV_CLK1`. Stock's phandles put the buck rail on S2, tx-h/rx-h/px-1
+   on S3 and the three 1.2V rails on L1; the driver asks for them under its own
+   names (`vdd-buck`, `vdd-tx-h` ...), so the mapping is by phandle, not by name.
+
+   **It also needs `ifd = <&taiko_ifd>;`.** `wcd9320_slim_probe()` looks the
+   interface device up by that phandle, and without it the PGD half stops at
+   `No Interface device found` - which is exactly what the first attempt did.
+
+   **`0051`** adds `qcom,msm8974-sndcard` to `sound/soc/qcom/apq8096.c`. That
+   driver is 145 lines and entirely generic - `qcom_snd_parse_of()` builds the
+   card from the DT dai-links - and its one SoC-specific constant, a 9.6MHz codec
+   MCLK, is the rate the Taiko wants too.
+
+   **How far it gets, as of 2026-09-16.** The codec probes and talks to the
+   hardware:
+
+        gonna write
+        ragmap ret: 0            <- a register write over SLIMbus succeeded
+        WCDPROBESTART
+        WCD PROBE!! YAY
+        WCD OSC Freq: 70
+        WCD dai 0 .. WCD dai 9   <- ten DAIs registered
+
+   and `/sys/kernel/debug/asoc/components` lists the codec beside q6routing and
+   the q6asm/q6afe DAI sets.
+
+   **Then it oopses building the card:**
+
+        Unable to handle kernel NULL pointer dereference at virtual address 0
+        PC is at dapm_connect_mux+0x2c/0xec
+        LR is at snd_soc_dapm_add_path+0x184/0x3f4
+
+   `dapm_connect_mux()` starts with `&w->kcontrol_news[0]` and immediately reads
+   `e->reg` through it, so a sink widget with a NULL `kcontrol_news` faults there.
+   None of the nine `SND_SOC_DAPM_MUX` widgets in `wcd9320.c` is declared with a
+   NULL control, so the likely cause is a route whose sink resolves to a widget
+   that is not a mux - plausibly one crossing into q6routing's DAPM rather than
+   the codec's own. **That is the next thing to chase**, and printing the route
+   being added when it faults is the cheap way in.
+
+   **The phone is safe meanwhile.** `/etc/modprobe.d/wcd9320-test.conf`
+   blacklists `snd_soc_wcd9320`, so r90 boots clean and the codec only loads on an
+   explicit `modprobe`. The oops is in a probe kworker and does not take the
+   system down - sensors, WiFi and SLIMbus all survive it.
 
 ## Vibrator
 

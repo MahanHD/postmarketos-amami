@@ -1,0 +1,111 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -2,6 +2,7 @@
+ #include "qcom-msm8974-sony-xperia-rhine.dtsi"
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/iio/qcom,spmi-vadc.h>
++#include <dt-bindings/sound/qcom,q6afe.h>
+ #include <dt-bindings/sound/qcom,q6asm.h>
+ 
+ / {
+@@ -191,9 +192,100 @@
+ 			reg = <0 0>;
+ 		};
+ 
++		/*
++		 * Everything below comes from stock's taiko_codec and the
++		 * wcd9xxx-irq node beside it, read out with tools/romdtb.py:
++		 * qcom,cdc-reset-gpio is msmgpio 63, the interrupt is msmgpio
++		 * 72 named "cdc-int", the MCLK gate is PM8941 GPIO 15
++		 * (qcom,cdc-mclk-gpios), and qcom,cdc-mclk-clk-rate is
++		 * 0x927c00 - 9.6MHz, which is CXO/2 and so RPM_SMD_DIV_CLK1.
++		 *
++		 * The supply names are the driver's, not stock's: it asks for
++		 * vdd-buck, vdd-tx-h, vdd-rx-h, vddpx-1, vdd-a-1p2v, vddcx-1
++		 * and vddcx-2 by those names. Stock's phandles put buck on S2,
++		 * tx-h/rx-h/px-1 on S3 and the three 1.2V rails on L1.
++		 */
+ 		wcd9320: codec@1,0 {
+ 			compatible = "slim217,a0";
+ 			reg = <1 0>;
++
++			/*
++			 * wcd9320_slim_probe() looks the interface device up
++			 * by phandle under the name "ifd"; without it the PGD
++			 * half stops at "No Interface device found".
++			 */
++			ifd = <&taiko_ifd>;
++
++			qcom,reset-gpio = <&tlmm 63 GPIO_ACTIVE_HIGH>;
++			qcom,gpio-int2 = <&tlmm 72 GPIO_ACTIVE_HIGH>;
++			qcom,clk-gpio = <&pm8941_gpios 15 GPIO_ACTIVE_HIGH>;
++			qcom,codec-clk-rate = <9600000>;
++
++			clocks = <&rpmcc RPM_SMD_DIV_CLK1>;
++			clock-names = "clk";
++
++			vdd-buck-supply = <&pm8941_s2>;
++			vdd-tx-h-supply = <&pm8941_s3>;
++			vdd-rx-h-supply = <&pm8941_s3>;
++			vddpx-1-supply = <&pm8941_s3>;
++			vdd-a-1p2v-supply = <&pm8941_l1>;
++			vddcx-1-supply = <&pm8941_l1>;
++			vddcx-2-supply = <&pm8941_l1>;
++
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			/*
++			 * wcd9320_slim_probe() ends in of_platform_populate(),
++			 * which turns this into the platform device the codec
++			 * half of the driver binds to. It registers one DAI,
++			 * wcd9320_rx1 (AIF1_PB) - this driver is playback only
++			 * so far - so the card refers to it as index 0.
++			 */
++			wcd9320_codec: codec {
++				compatible = "qcom,wcd9320";
++				#sound-dai-cells = <1>;
++			};
++		};
++	};
++};
++
++/*
++ * The sound card. Everything it needs already exists: q6asm's frontends from
++ * 0041, q6afe's SLIMbus backends, q6routing, and the Taiko above. The driver
++ * behind "qcom,msm8974-sndcard" is sound/soc/qcom/apq8096.c, which builds the
++ * whole card out of these dai-links and needs nothing SoC-specific - see 0051.
++ *
++ * Playback only for now: the WCD9320 driver registers a single DAI.
++ */
++/ {
++	sound {
++		compatible = "qcom,msm8974-sndcard";
++		model = "Xperia Z1 Compact";
++		audio-routing = "RX_BIAS", "MCLK";
++
++		mm1-dai-link {
++			link-name = "MultiMedia1";
++
++			cpu {
++				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
++			};
++		};
++
++		slim-dai-link {
++			link-name = "SLIM Playback";
++
++			cpu {
++				sound-dai = <&q6afedai SLIMBUS_0_RX>;
++			};
++
++			platform {
++				sound-dai = <&q6routing>;
++			};
++
++			codec {
++				sound-dai = <&wcd9320_codec 0>;
++			};
+ 		};
+ 	};
+ };

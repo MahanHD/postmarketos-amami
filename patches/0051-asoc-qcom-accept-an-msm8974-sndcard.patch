@@ -1,0 +1,16 @@
+--- a/sound/soc/qcom/apq8096.c
++++ b/sound/soc/qcom/apq8096.c
+@@ -127,6 +127,13 @@
+ 
+ static const struct of_device_id msm_snd_apq8096_dt_match[] = {
+ 	{.compatible = "qcom,apq8096-sndcard"},
++	/*
++	 * msm8974 with a WCD9320 needs nothing this driver does not already
++	 * do: the card is described entirely in DT and parsed by
++	 * qcom_snd_parse_of(), and the only SoC-specific constant here, the
++	 * 9.6MHz codec MCLK, is the rate the Taiko wants as well.
++	 */
++	{.compatible = "qcom,msm8974-sndcard"},
+ 	{}
+ };
+ 
