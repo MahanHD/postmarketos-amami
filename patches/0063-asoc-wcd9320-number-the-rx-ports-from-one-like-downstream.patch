@@ -1,0 +1,45 @@
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -77,10 +77,31 @@
+ 	WCD9320_A_CDC_RX7_VOL_CTL_B2_CTL,
+ };
+ 
+-/* Number of input and output Slimbus port */
++/*
++ * Number of input and output Slimbus ports.
++ *
++ * These are numbered from one, and the first of them is zero: downstream's
++ * enum starts at TAIKO_RX1 = 0 and there is no TAIKO_RX0. This port invented
++ * one, which shifted every RX index up by one and split the driver against
++ * itself.
++ *
++ * "SLIM RX1 MUX" carries its index in the widget's shift field, and
++ * slim_rx_mux_put() uses it to pick rx_chs[], so with the extra RX0 the mux
++ * named RX1 was subscribing rx_chs[1] - slave port 17. Meanwhile the mixer in
++ * front of it still wrote RX_MIX1_INP_SEL_RX1 for the enum text "RX1", and
++ * that value selects slave port 16, as wcd9320_set_interpolator_rate()'s own
++ * arithmetic (ch->port + RX_MIX1_INP_SEL_RX1 - 16) spells out. The DAPM route
++ * {"RX1 MIX1 INP1", "RX1", "SLIM RX1"} asserts the two are the same port. They
++ * were not.
++ *
++ * The consequence was silence with no error anywhere: the ADSP filled ports 17
++ * and 18, the interpolator read port 16 which nothing ever fed, and the two
++ * ports that were being filled were never drained - so they sat in permanent
++ * overflow for the whole of a playback, every register on the path reading
++ * exactly right.
++ */
+ enum {
+-	WCD9320_RX0 = 0,
+-	WCD9320_RX1,
++	WCD9320_RX1 = 0,
+ 	WCD9320_RX2,
+ 	WCD9320_RX3,
+ 	WCD9320_RX4,
+@@ -92,6 +113,7 @@
+ 	WCD9320_RX10,
+ 	WCD9320_RX11,
+ 	WCD9320_RX12,
++	WCD9320_RX13,
+ 	WCD9320_RX_MAX,
+ };
+ 

@@ -1158,6 +1158,37 @@ So the work splits into three milestones, and only the first two are small:
    `state: RUNNING` with `0x06` on every probe. Any overflow probe must carry a
    liveness check, the same way the proximity work needed a control sensor.
 
+   **`0063` removes a real off-by-one that had the driver reading a port nobody
+   fed.** Downstream's port enum starts at `TAIKO_RX1 = 0` and there is no
+   `TAIKO_RX0`; this port invented one, which shifted every RX index up by one.
+   `"SLIM RX1 MUX"` carries its index in the widget's shift field and
+   `slim_rx_mux_put()` uses it to pick `rx_chs[]`, so the mux named RX1 was
+   subscribing `rx_chs[1]` - slave port **17** - while the mixer in front of it
+   wrote `RX_MIX1_INP_SEL_RX1` for the enum text "RX1", and that value selects
+   slave port **16**. The DAPM route `{"RX1 MIX1 INP1", "RX1", "SLIM RX1"}`
+   asserts those are the same port; they were not. With the enum renumbered the
+   channel map moves from 145/146 to 144/145 and the overflow moves from ports
+   1/2 to ports 0/1, which is the shift made visible.
+
+   **It is still not the cause.** With everything self-consistent for the first
+   time - mixer reading port 16, data arriving on port 16, whole path powered,
+   `1ab=a0 1b1=c0` - the port overflows exactly as before, `status=0x03` on every
+   probe with the PCM confirmed `RUNNING`. Keep the patch: it is correct, it
+   matches downstream, and a future session should not have to find it again.
+
+   **Also worth knowing: the DAPM route table is incomplete.** Only the identity
+   routes exist -
+
+        {"RX1 MIX1 INP1", "RX1", "SLIM RX1"},
+        {"RX2 MIX1 INP1", "RX2", "SLIM RX2"},
+
+   so selecting any other input, such as `RX1 MIX1 INP1 = RX2`, connects to
+   nothing and the entire chain stays powered down - `1ab=80 1b1=40`, no widgets
+   on. That is a silent failure mode: the routing commands all succeed, `amixer`
+   reports the new value, and the only symptom is that nothing powers up.
+   Downstream carries the full cross-connect. Anyone testing alternative routing
+   must check the DAPM power state, not just the control value.
+
    **So what is left** is whatever tells the codec's port logic to start pulling
    from an enabled, correctly-configured, correctly-fed slave port. Every
    *static* register on the path now matches downstream; the gap is more likely a
