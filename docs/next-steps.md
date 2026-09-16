@@ -1189,6 +1189,52 @@ So the work splits into three milestones, and only the first two are small:
    Downstream carries the full cross-connect. Anyone testing alternative routing
    must check the DAPM power state, not just the control value.
 
+   **`0061` and `0063` interact, and the net answer is `0x0a`.** `0061` argued
+   the sample-width register should be `0x28` because a stereo stream lands on SB
+   ports 1 and 2. That was true *under the broken numbering*. With `0063` the
+   stream lands on SB ports 0 and 1, so the correct value is
+   `(0x2 << 0) | (0x2 << 2)` = **`0x0a`** - which is exactly what the old
+   hardcoded write produced. The hardcoded value was right by accident and the
+   enum was the thing that was wrong. `0061` is still worth keeping, because it
+   derives the field per channel instead of assuming stereo, but its commit
+   message names a value that no longer applies. The register reads `0x3ae =
+   0x0a` on the phone now, which is correct.
+
+   **Four more things ruled out, with the ordering objection answered.** A fair
+   criticism of the earlier live pokes is that they were all applied *after* the
+   overflow had already latched, so a negative proved nothing. That objection has
+   now been tested and does not save any of them:
+
+   - *Class-H and the rails, set before the stream starts.* Written while idle
+     (`CLK_OTHR_CTL`=0x01, `BUCK_MODE_1`=0xa5, `NCP_EN`=0xff), confirmed still
+     set during playback, overflow unchanged. This is the properly-ordered
+     version of the earlier test and it agrees.
+   - *The port is not latched.* Bouncing the slave port's enable bit
+     (`PORT_CFG` 0x05 -> 0x04 -> 0x05) with the RX chain already up and clearing
+     the status while disabled does not make it drain. So the port is not stuck
+     in an error state from the early overflow; it is simply never read.
+   - *Every value downstream sets is already set.* All four downstream tables
+     (`taiko_reg_defaults`, `taiko_1_0_`, `taiko_2_0_`, `taiko_codec_reg_init_val`)
+     were parsed, mapped onto our register names and diffed against a live dump
+     taken during playback: **zero mismatches**. The missing piece is not a
+     register value.
+   - *The write order is now captured.* The `regmap:regmap_reg_write` tracepoint
+     works, so a whole playback can be recorded:
+
+        echo 1 > /sys/kernel/tracing/events/regmap/regmap_reg_write/enable
+
+     An entire playback is only 27 writes to the PGD and 11 to the interface
+     device. Note the trace shows *changes* only - regmap skips writes that match
+     the cache - so an absent register is not necessarily an unwritten one.
+
+   **What the trace does show** is the interface device being configured and
+   enabled (`0x180`/`0x40`, `0x184`/`0x41`) early, the overflow handler masking
+   both ports (`INT_EN0` -> `0xfc`) within milliseconds, and only *then* the RX
+   chain coming up - reset pulse at `0x301`, interpolator clock at `0x30f`, DAC,
+   PA. That ordering is inherent to DAPM, which powers source-to-sink, and
+   downstream has the same shape, so it is expected rather than wrong. What is
+   wrong is that the port never recovers once the interpolator does start.
+
    **So what is left** is whatever tells the codec's port logic to start pulling
    from an enabled, correctly-configured, correctly-fed slave port. Every
    *static* register on the path now matches downstream; the gap is more likely a
