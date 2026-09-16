@@ -924,8 +924,51 @@ So the work splits into three milestones, and only the first two are small:
       reached differently downstream. If that block is unreachable the codec can
       never raise an interrupt, and no amount of polarity work will help.
 
-   Settling (2) first is cheaper: pick any register under `0x100` with a known
-   non-zero POR value and see whether it reads back correctly.
+   **Settled, and it is (2) - with a much bigger consequence than interrupts.**
+   Nine registers under `0x100` have non-zero power-on values. Every one of them
+   reads `0x00`:
+
+        addr   read   POR
+        0x019  0x00   0x08    HDRIVE_OVERRIDE
+        0x020  0x00   0x44    ANA_CSR_WAIT_STATE
+        0x040  0x00   0x80    PROCESS_MONITOR_CTL0
+        0x043  0x00   0x01    PROCESS_MONITOR_CTL3
+        0x094  0x00   0xff    INTR_MASK0
+        0x095  0x00   0xff    INTR_MASK1
+        0x096  0x00   0x3f    INTR_MASK2
+        0x097  0x00   0x3f    INTR_MASK3
+
+   The same addresses read `0x00` through the interface device's map too. Yet the
+   codec is plainly alive and addressable higher up: `0x1ab` reads `0xb0` while a
+   tone plays and `0x80` at idle, tracking the headphone PA enable bit exactly.
+   **So the whole register block below `0x100` is unreachable, and everything at
+   or above it works.**
+
+   ### Why that matters far more than the interrupt
+
+        #define WCD9XXX_A_CDC_CTL      (0x80)
+        #define WCD9XXX_A_LEAKAGE_CTL  (0x88)
+
+   Both are inside the dead block. `wcd9320_bring_up()` brings the codec's
+   digital core out of reset by toggling `A_CDC_CTL` 0 then 3 - **and those
+   writes have been going nowhere all along.** The digital core is never enabled.
+   That accounts for the whole picture at once: no interrupts can be generated,
+   `INTR_*` cannot be configured, the SLIMbus channel-close handshake never
+   completes, and playback runs end to end in silence while every layer above
+   reports success. `regmap_write()` returning 0 means the SLIMbus write was
+   accepted, not that it landed anywhere.
+
+   **The question is how to reach that block.** The clue is in the driver's own
+   `wcd9320_is_volatile_register()`: *"Registers lower than 0x100 are top level
+   registers which can be written by the Taiko core driver"* - so downstream
+   reaches them by some other path than a plain value-element write to the PGD.
+   `drivers/mfd/wcd9xxx-core.c` and the SLIMbus read/write helpers beside it in
+   `LineageOS/android_kernel_sony_msm8974` are where to look; a page or base
+   offset on the value-element address is the obvious suspect.
+
+   **Until that is solved, nothing downstream of it can work**, and the
+   interrupt, Class-H and MBHC work all sit behind it. This is the single root
+   cause to chase next.
 
    **Whether that alone restores audio is not proven.** The SLIMbus data path is
    hardware and interrupts are status reporting, so it is possible sound needs
