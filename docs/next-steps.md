@@ -10,11 +10,19 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state: r90 is flashed and running** (`uname -v` = `#91`), verified by
-readback. It is r87 plus the WCD9320 codec driver (`0049`), its DT node (`0050`)
-and the sound card (`0050`/`0051`). **The codec is blacklisted** in
-`/etc/modprobe.d/wcd9320-test.conf` because loading it oopses while building the
-card - see Phase 3. Everything else is unaffected. All five sensors - accel, gyro, mag, proximity
+**Device state: the r90 boot image is flashed** (`uname -v` = `#91`), and
+`/lib/modules` is **r101**. Those disagree on purpose and it is not a mistake:
+the codec is `CONFIG_SND_SOC_WCD9320=m`, so every patch from `0049` on ships in
+`snd-soc-wcd9320.ko` and an `apk add` is enough - `dd` to the boot partition is
+only needed when a `=y` driver changes. `uname -v` reports the boot image, so it
+will keep saying `#91` while the codec work advances.
+
+**The codec is blacklisted** in `/etc/modprobe.d/wcd9320-test.conf`, so after every
+reboot the card does not exist until you run `sudo modprobe snd-soc-wcd9320`. An
+empty `/sys/class/sound/` is that, not a regression. The blacklist dates from r89,
+when loading the codec oopses while building the card; `0052` fixed that oops and
+it now loads cleanly, so the file can go whenever the manual step stops being
+useful. Everything else is unaffected. All five sensors - accel, gyro, mag, proximity
 and light - work when enabled on their own. Nothing is half-applied, and the
 recipe, the flash and `/lib/modules` all agree at r87.
 
@@ -998,6 +1006,60 @@ So the work splits into three milestones, and only the first two are small:
    `dai_wait` - is still never registered. The slim-side `irq_handler()` receives
    the port interrupts and clears the port status, but nothing clears `ch_mask`.
    Wiring those together is the next job, and it is now a small one.
+
+   **SOLVED by `0060`: the port interrupt now reaches the codec half, and the
+   close handshake completes.** The two halves are separate drivers over one piece
+   of silicon, and only the slim half owns the interrupt line, so there was no way
+   for a port interrupt to reach the code that knows about DAIs: `struct wcd9320`
+   held no pointer to `struct wcd9320_priv`. The link goes in the one structure
+   both halves already share, `struct wcd_slim_data` - a `codec_priv` field the
+   component probe publishes with `smp_store_release()` *after* it has
+   `init_waitqueue_head()`'d every `dai_wait`, and retracts on remove. The slim
+   handler then loads it with `smp_load_acquire()` and calls
+   `wcd9320_slimbus_irq()`.
+
+   **It replaces the slim side's own port decode rather than running after it.**
+   That ordering is the whole point: the codec handler repeats the same four
+   status reads, and reading them first would have handed it four zeroed registers
+   and left the handshake timing out exactly as before. The slim side's inline
+   decode is what produced the 786 decoded port interrupts under `0059`, and it
+   was still useless, because clearing port status is not what
+   `wcd9320_codec_enable_slim_chmask()` waits on - `dai->ch_mask` is.
+
+   **Measured, three consecutive runs on r101:** `Slim close tx/rx wait timeout`
+   does not appear once, where before it appeared on every playback. One interrupt
+   per run, no storm, no `Couldn't find slimbus ... port` warnings.
+
+   **`0060` also sweeps up the acknowledge.** The codec handler has an early
+   `continue` for a port whose interrupt is not enabled, and that path skips the
+   per-port `INT_CLR` write at the bottom of its own loop. The line is level
+   triggered, so a status bit nobody acknowledged holds it asserted and it re-fires
+   without end - the same storm `IRQF_TRIGGER_LOW` produced on its own before the
+   status registers were being cleared properly (4427 interrupts, all registers
+   reading zero). The slim half now re-reads the four status registers after the
+   call and clears whatever is left, which is what it used to do unconditionally.
+   This has not been observed to trigger; it is there so the door stays shut.
+
+   **Still not audible, and there is a concrete next lead: overflow.** Every
+   playback logs
+
+        wcd9320_slimbus_irq: overflow error on RX port 1, value 5
+        wcd9320_slimbus_irq: overflow error on RX port 2, value 5
+
+   `value 5` is `OVERFLOW | PORT_CLOSED`. An overflow on an *RX* port means data is
+   arriving that the codec is not consuming, which is what silence would look like
+   from the bus's side, so this is worth chasing before anything else.
+
+   **And overflow can still swallow a close, in one specific case.** The handler
+   *disables* a port's interrupt on overflow, the way downstream does, to stop an
+   overflow storm. When both bits arrive in the same interrupt (`value 5`) the
+   close is handled in the same pass and nothing is lost. But on the very first
+   playback after `modprobe`, before the routing above is applied, overflow arrives
+   *alone* (`value 1`) in an earlier interrupt, masks the port, and the later
+   port-closed event then has no enabled interrupt to arrive on - which is the one
+   remaining `close tx/rx wait timeout` in the boot log, at 69.6 s. Fixing the
+   overflow should make this moot; if it does not, the mask needs to be narrowed so
+   it cannot cost a close.
 
    **Whether that alone restores audio is not proven.** The SLIMbus data path is
    hardware and interrupts are status reporting, so it is possible sound needs

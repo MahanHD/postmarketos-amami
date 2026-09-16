@@ -1,0 +1,149 @@
+--- a/sound/soc/codecs/wcd-slim.h
++++ b/sound/soc/codecs/wcd-slim.h
+@@ -39,6 +39,14 @@
+ 	struct wcd_slim_ch *tx_chs;
+ 	u32 num_rx_port;
+ 	u32 num_tx_port;
++	/*
++	 * The codec half (struct wcd9320_priv), once its component has probed.
++	 * The two halves are separate drivers over one piece of silicon and
++	 * only the slim half owns the interrupt line, so this is how the port
++	 * interrupt reaches the code that knows about DAIs. NULL until the
++	 * codec binds, and NULL again after it goes away.
++	 */
++	void *codec_priv;
+ };
+ 
+ #define WCD93XX_RX_SLAVE_PORTS	16
+--- a/sound/soc/codecs/wcd9320.h
++++ b/sound/soc/codecs/wcd9320.h
+@@ -1,6 +1,7 @@
+ #ifndef __WCD9320_H__
+ #define __WCD9320_H__
+ 
++#include <linux/interrupt.h>
+ #include <linux/slimbus.h>
+ #include <linux/regulator/consumer.h>
+ #include "wcd-slim.h"
+@@ -207,6 +208,7 @@
+ };
+ 
+ int wcd9320_regmap_register_patch(struct regmap *regmap, int version);
++irqreturn_t wcd9320_slimbus_irq(int irq, void *data);
+ 
+ struct platform_driver;
+ extern struct platform_driver wcd9320_codec_driver;
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -3107,7 +3107,7 @@
+ 	return;
+ }
+ 
+-static irqreturn_t wcd9320_slimbus_irq(int irq, void *data)
++irqreturn_t wcd9320_slimbus_irq(int irq, void *data)
+ {
+ 	struct wcd9320_priv *wcd = data;
+ 	unsigned long status = 0;
+@@ -3270,12 +3270,23 @@
+ 		init_waitqueue_head(&wcd->dai[i].dai_wait);
+ 	}
+ 
++	/*
++	 * Last, and only here: the slim half's interrupt handler follows this
++	 * pointer straight into wcd9320_slimbus_irq(), which touches
++	 * dai[].ch_mask and dai[].dai_wait. Publishing it before the loop above
++	 * would expose an uninitialised wait queue to an interrupt that can
++	 * arrive at any time.
++	 */
++	smp_store_release(&wcd->slim_data->codec_priv, wcd);
++
+ 	return 0;
+ }
+ 
+ static void wcd9320_codec_remove(struct snd_soc_component *comp)
+ {
+ 	struct wcd9320_priv *wcd = dev_get_drvdata(comp->dev);
++
++	smp_store_release(&wcd->slim_data->codec_priv, NULL);
+ }
+ 
+ static struct snd_soc_component_driver wcd9320_component_drv = {
+--- a/sound/soc/codecs/wcd9320-slim.c
++++ b/sound/soc/codecs/wcd9320-slim.c
+@@ -143,7 +143,8 @@
+ 	 * interrupt asserted and it re-fired forever - thousands of interrupts
+ 	 * with nothing to show for them.
+ 	 */
+-	unsigned status[4] = {0}, istatus[4] = {0}, tmp = 0;
++	unsigned status[4] = {0}, istatus[4] = {0};
++	struct wcd9320_priv *priv;
+ 	unsigned i;
+ 
+ 	for (i = 0; i < 4; i++)
+@@ -156,32 +157,41 @@
+ 				     status[i]);
+ 
+ 	if (status[0] & 1) {
+-		regmap_read(wcd->ifd_regmap,
+-			    WCD9320_SLIM_PGD_PORT_INT_STATUS_RX_0 + 0, &istatus[0]);
+-		regmap_read(wcd->ifd_regmap,
+-			    WCD9320_SLIM_PGD_PORT_INT_STATUS_RX_0 + 1, &istatus[1]);
+-		regmap_read(wcd->ifd_regmap,
+-			    WCD9320_SLIM_PGD_PORT_INT_STATUS_RX_0 + 2, &istatus[2]);
+-		regmap_read(wcd->ifd_regmap,
+-			    WCD9320_SLIM_PGD_PORT_INT_STATUS_RX_0 + 3, &istatus[3]);
+-		printk("irq2 %X %X %X %X\n",
+-		       istatus[0], istatus[1], istatus[2], istatus[3]);
+-		regmap_write(wcd->ifd_regmap,
+-			     WCD9320_SLIM_PGD_PORT_INT_CLR_RX_0 + 0, istatus[0]);
+-		regmap_write(wcd->ifd_regmap,
+-			     WCD9320_SLIM_PGD_PORT_INT_CLR_RX_0 + 1, istatus[1]);
+-		regmap_write(wcd->ifd_regmap,
+-			     WCD9320_SLIM_PGD_PORT_INT_CLR_RX_0 + 2, istatus[2]);
+-		regmap_write(wcd->ifd_regmap,
+-			     WCD9320_SLIM_PGD_PORT_INT_CLR_RX_0 + 3, istatus[3]);
++		/*
++		 * Hand the port interrupt to the codec half. It repeats these
++		 * same reads, but it also clears dai->ch_mask and wakes
++		 * dai_wait, which is what releases
++		 * wcd9320_codec_enable_slim_chmask() from the channel-close
++		 * handshake. Decoding the ports here first would leave it four
++		 * zeroed status registers to work from and the handshake would
++		 * go on timing out on every playback, which is exactly what it
++		 * did while this was the only handler.
++		 */
++		priv = smp_load_acquire(&wcd->slim_data.codec_priv);
++		if (priv)
++			wcd9320_slimbus_irq(irq, priv);
+ 
+-		for (i = 0; i < 32; i++) {
+-			if (istatus[i / 8] & (1 << (i & 7))) {
+-				regmap_read(wcd->ifd_regmap,
+-					    WCD9320_SLIM_PGD_PORT_INT_RX_SOURCE0 + i,
+-					    &tmp);
+-				printk("%u %u\n", i, tmp);
+-			}
++		/*
++		 * Then sweep up whatever is left. Two ways a port status bit
++		 * survives the call above: the codec half is not bound yet -
++		 * this interrupt is live from the moment the line is requested,
++		 * which is well before the codec platform driver probes - or it
++		 * took its early `continue` for a port whose interrupt is not
++		 * enabled, which skips the per-port clear at the bottom of its
++		 * loop. Either way the line is level triggered, so a status bit
++		 * nobody acknowledged holds it asserted and it re-fires without
++		 * end. That storm is what IRQF_TRIGGER_LOW produced on its own
++		 * before the status registers were being cleared properly, and
++		 * there is no reason to leave the door open to it again.
++		 */
++		for (i = 0; i < 4; i++) {
++			regmap_read(wcd->ifd_regmap,
++				    WCD9320_SLIM_PGD_PORT_INT_STATUS_RX_0 + i,
++				    &istatus[i]);
++			if (istatus[i])
++				regmap_write(wcd->ifd_regmap,
++					     WCD9320_SLIM_PGD_PORT_INT_CLR_RX_0 + i,
++					     istatus[i]);
+ 		}
+ 	}
+ 
