@@ -958,17 +958,46 @@ So the work splits into three milestones, and only the first two are small:
    reports success. `regmap_write()` returning 0 means the SLIMbus write was
    accepted, not that it landed anywhere.
 
-   **The question is how to reach that block.** The clue is in the driver's own
-   `wcd9320_is_volatile_register()`: *"Registers lower than 0x100 are top level
-   registers which can be written by the Taiko core driver"* - so downstream
-   reaches them by some other path than a plain value-element write to the PGD.
-   `drivers/mfd/wcd9xxx-core.c` and the SLIMbus read/write helpers beside it in
-   `LineageOS/android_kernel_sony_msm8974` are where to look; a page or base
-   offset on the value-element address is the obvious suspect.
+   **SOLVED by `0059`: every register is at `0x800 + N`.** `wcd9xxx-core.c`
+   downstream adds `WCD9XXX_REGISTER_START_OFFSET`, which is `0x800`, to the
+   value-element offset in both its read and write helpers:
 
-   **Until that is solved, nothing downstream of it can work**, and the
-   interrupt, Class-H and MBHC work all sit behind it. This is the single root
-   cause to chase next.
+        msg.start_offset = WCD9XXX_REGISTER_START_OFFSET + reg;
+
+   This driver passed raw register numbers to `regmap_init_slimbus()`, so every
+   access landed `0x800` low. `regmap_config` has a field for exactly this -
+   `reg_base`, applied in `regmap_reg_addr()` when the bus transfer is formatted,
+   so `max_register` and the readable/volatile callbacks keep using the driver's
+   own numbering. Adding `.reg_base = WCD9320_REGISTER_START_OFFSET` to both the
+   codec and interface maps is the whole fix.
+
+   `wcd9335` does not need it because its register constants already carry the
+   page - `0xB56` and friends - which is why a plain `regmap_init_slimbus()`
+   works there and hid the problem here.
+
+   **What changed on the hardware.** The block below `0x100` now reads real
+   values instead of zeros:
+
+        019: 09   020: 44   040: 80   043: 01
+        094: fe   095: ff   096: 3f   097: 7f
+
+   `0x020`, `0x040`, `0x043`, `0x095` and `0x096` match their power-on values
+   exactly, and `0x094` reads `0xfe` - which is precisely what `0056` writes to
+   unmask the SLIMbus source, so driver writes are landing too. **`A_CDC_CTL` is
+   `0x80`, so the codec's digital core is being brought out of reset for the
+   first time.**
+
+   And the interrupt works: `msmgpio 72` went from **0 to 888**, the handler
+   decodes **786 SLIMbus port interrupts** during a playback, and there are no
+   errors anywhere on the path.
+
+   ### What is left
+
+   The channel-close handshake still times out, and now for a simple reason:
+   `wcd9320_slimbus_irq()` - the function that clears `ch_mask` and wakes
+   `dai_wait` - is still never registered. The slim-side `irq_handler()` receives
+   the port interrupts and clears the port status, but nothing clears `ch_mask`.
+   Wiring those together is the next job, and it is now a small one.
 
    **Whether that alone restores audio is not proven.** The SLIMbus data path is
    hardware and interrupts are status reporting, so it is possible sound needs

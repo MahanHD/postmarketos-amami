@@ -1,0 +1,46 @@
+--- a/sound/soc/codecs/wcd9320.h
++++ b/sound/soc/codecs/wcd9320.h
+@@ -6,6 +6,23 @@
+ #include "wcd-slim.h"
+ #include "wcd-clsh.h"
+ 
++/*
++ * Register N lives at SLIMbus value-element offset 0x800 + N. Downstream calls
++ * this WCD9XXX_REGISTER_START_OFFSET and adds it in its own read and write
++ * helpers (wcd9xxx-core.c). regmap has to be told, or every access lands 0x800
++ * low: the whole block below 0x100 then reads back zeros - including
++ * A_CDC_CTL at 0x80, which is what brings the codec's digital core out of
++ * reset, so bring-up silently did nothing at all.
++ *
++ * regmap applies reg_base in regmap_reg_addr(), when the bus transfer is
++ * formatted, so max_register and the readable/volatile callbacks keep using
++ * the driver's own numbering.
++ *
++ * wcd9335 does not need this because its register constants already carry the
++ * page, which is why it works with a plain regmap_init_slimbus().
++ */
++#define WCD9320_REGISTER_START_OFFSET 0x800
++
+ #define WCD9320_NUM_REGISTERS 0x400
+ #define WCD9320_MAX_REGISTER (WCD9320_NUM_REGISTERS-1)
+ #define WCD9320_CACHE_SIZE WCD9320_NUM_REGISTERS
+--- a/sound/soc/codecs/wcd9320-regmap.c
++++ b/sound/soc/codecs/wcd9320-regmap.c
+@@ -1437,6 +1437,7 @@
+ 	.reg_defaults = wcd9320_defaults,
+ 	.num_reg_defaults = ARRAY_SIZE(wcd9320_defaults),
+ 	.max_register = WCD9320_CACHE_SIZE,
++	.reg_base = WCD9320_REGISTER_START_OFFSET,
+ 	.volatile_reg = wcd9320_is_volatile_register,
+ 	.readable_reg = wcd9320_is_readable_register,
+ //	.can_multi_write = true,
+--- a/sound/soc/codecs/wcd9320-slim.c
++++ b/sound/soc/codecs/wcd9320-slim.c
+@@ -34,6 +34,7 @@
+ 	.reg_bits = 16,
+ 	.val_bits = 8,
+ 	.max_register = WCD9320_MAX_REGISTER,
++	.reg_base = WCD9320_REGISTER_START_OFFSET,
+ //	.can_multi_write = true,
+ };
+ 
