@@ -1134,6 +1134,30 @@ So the work splits into three milestones, and only the first two are small:
      widget from `AIF1 PB` through `SLIM RX1/2`, the mixers, interpolators,
      `RX1/2 CHAIN`, the DACs and `HEADPHONE` reads `On`.
 
+   **`0062` fixes one more real divergence, and does not fix the overflow.**
+   Downstream activates the SLIMbus channel from the SLIM RX widget's
+   `SND_SOC_DAPM_POST_PMU`, as the last thing `taiko_codec_enable_slimrx()` does.
+   This port called `slim_stream_enable()` from the DAI's `prepare` callback
+   instead, and ALSA runs `hw_params` -> DAI `prepare` -> and only then does
+   `soc_pcm_prepare()` raise `SND_SOC_DAPM_STREAM_START`. So the ADSP began
+   filling the slave port while the codec's RX chain was still powered down.
+   That looked like an exact explanation for a port that overflows from the
+   first sample. **It is not:** with the ordering corrected the overflow is
+   unchanged, measured with the PCM confirmed `RUNNING` throughout. What it does
+   fix is the last surviving close timeout - the one on the first playback after
+   `modprobe`, which `0060` could not reach because the overflow arrived alone
+   and masked the port before the close. Total close timeouts since boot is now
+   **0**.
+
+   **A trap worth naming, because it produced a wrong answer for several
+   minutes.** A clean overflow status and a stopped stream look *identical* -
+   both read `INT_STATUS_RX_0 = 0x00`. One run of the probe appeared to show the
+   overflow clearing after `0062` and it was briefly believed to be the fix; it
+   was not reproducible, and re-running with `pgrep speaker-test` and
+   `/proc/asound/card0/pcm0p/sub0/status` asserted alongside every reading showed
+   `state: RUNNING` with `0x06` on every probe. Any overflow probe must carry a
+   liveness check, the same way the proximity work needed a control sensor.
+
    **So what is left** is whatever tells the codec's port logic to start pulling
    from an enabled, correctly-configured, correctly-fed slave port. Every
    *static* register on the path now matches downstream; the gap is more likely a

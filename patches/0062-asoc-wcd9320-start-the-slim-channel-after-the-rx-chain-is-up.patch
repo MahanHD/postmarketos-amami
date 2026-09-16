@@ -1,0 +1,40 @@
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -917,6 +917,22 @@
+ 	case SND_SOC_DAPM_POST_PMU:
+ 		wcd9320_codec_enable_int_port(dai, component);
+ 		(void) wcd9320_codec_enable_slim_chmask(dai, true);
++		/*
++		 * Start the channel here, not in the DAI's prepare callback.
++		 * ALSA runs hw_params, then the DAI prepare, and only then does
++		 * soc_pcm_prepare() raise SND_SOC_DAPM_STREAM_START - so
++		 * enabling the stream from prepare let the ADSP begin filling
++		 * the slave port while the codec's RX chain was still powered
++		 * down, and the port never recovered: it sat in permanent
++		 * overflow for the whole of a playback, draining nothing at all
++		 * from the very first sample.
++		 *
++		 * Downstream activates the channel from this same POST_PMU, as
++		 * the last thing taiko_codec_enable_slimrx() does
++		 * (wcd9xxx_cfg_slim_sch_rx), after the interrupt ports and the
++		 * channel mask are set up. Match that ordering.
++		 */
++		wcd_slim_stream_enable(wcd->slim_data, dai);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+ 
+@@ -2711,14 +2727,12 @@
+ 	printk("WCD: %s", __func__);
+ 
+ 	struct wcd9320_priv *wcd = snd_soc_component_get_drvdata(dai->component);
+-	struct wcd_slim_codec_dai_data *dai_data = &wcd->dai[dai->id];
+ 
+ 	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK) &&
+ 	    test_bit(SB_CLK_GEAR, &wcd->status_mask)) {
+ 		wcd9320_codec_vote_max_bw(dai->component, false);
+ 		clear_bit(SB_CLK_GEAR, &wcd->status_mask);
+ 	}
+-	wcd_slim_stream_enable(wcd->slim_data, &wcd->dai[dai->id]);
+ 
+ 	return 0;
+ }
