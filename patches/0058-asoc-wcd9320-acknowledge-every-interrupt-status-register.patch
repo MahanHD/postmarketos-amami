@@ -1,0 +1,53 @@
+--- a/sound/soc/codecs/wcd9320-slim.c
++++ b/sound/soc/codecs/wcd9320-slim.c
+@@ -136,16 +136,23 @@
+ {
+ 	struct wcd9320 *wcd = dev_id;
+ 
+-	unsigned status[3] = {0}, istatus[4] = {0}, tmp = 0;
++	/*
++	 * Four status registers, not three. Anything latched in STATUS3 was
++	 * never acknowledged, so with a level-triggered line the codec kept the
++	 * interrupt asserted and it re-fired forever - thousands of interrupts
++	 * with nothing to show for them.
++	 */
++	unsigned status[4] = {0}, istatus[4] = {0}, tmp = 0;
+ 	unsigned i;
+ 
+-	regmap_read(wcd->regmap, WCD9XXX_A_INTR_STATUS0 + 0, &status[0]);
+-	regmap_read(wcd->regmap, WCD9XXX_A_INTR_STATUS0 + 1, &status[1]);
+-	regmap_read(wcd->regmap, WCD9XXX_A_INTR_STATUS0 + 2, &status[2]);
+-
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_CLEAR0 + 0, status[0]);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_CLEAR0 + 1, status[1]);
+-	regmap_write(wcd->regmap, WCD9XXX_A_INTR_CLEAR0 + 2, status[2]);
++	for (i = 0; i < 4; i++)
++		regmap_read(wcd->regmap, WCD9XXX_A_INTR_STATUS0 + i,
++			    &status[i]);
++
++	for (i = 0; i < 4; i++)
++		if (status[i])
++			regmap_write(wcd->regmap, WCD9XXX_A_INTR_CLEAR0 + i,
++				     status[i]);
+ 
+ 	if (status[0] & 1) {
+ 		regmap_read(wcd->ifd_regmap,
+@@ -168,7 +175,7 @@
+ 			     WCD9320_SLIM_PGD_PORT_INT_CLR_RX_0 + 3, istatus[3]);
+ 
+ 		for (i = 0; i < 32; i++) {
+-			if (istatus[i / 8] & (1 << i & 7)) {
++			if (istatus[i / 8] & (1 << (i & 7))) {
+ 				regmap_read(wcd->ifd_regmap,
+ 					    WCD9320_SLIM_PGD_PORT_INT_RX_SOURCE0 + i,
+ 					    &tmp);
+@@ -177,7 +184,8 @@
+ 		}
+ 	}
+ 
+-	printk("irq %i %X %X %X\n", irq, status[0], status[1], status[2]);
++	printk("irq %i %X %X %X %X\n", irq, status[0], status[1], status[2],
++	       status[3]);
+ 
+ 	return IRQ_HANDLED;
+ }

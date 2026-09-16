@@ -886,11 +886,46 @@ So the work splits into three milestones, and only the first two are small:
    write the POR values back over them. **Check that before writing an irq chip**:
    an irq chip programming the same registers would be undone the same way.
 
-   Also unexplained: `pin 72` has no pinctrl claim at all in
-   `/sys/kernel/debug/pinctrl/*/pinmux-pins`, so nothing has configured the pin's
-   function. The interrupt does get registered - it appears in `/proc/interrupts`
-   as `msmgpio 72 Level wcd` - but that only proves gpiolib set it up, not that
-   the pin is muxed to GPIO and the codec is driving it.
+   **`0058` fixes a real bug in the handler**: it read and acknowledged only
+   `INTR_STATUS0..2`, three of four registers. Anything latched in `STATUS3`
+   could never be cleared, which on a level-triggered line means the codec holds
+   the interrupt asserted forever. It also fixes `1 << i & 7`, which parses as
+   `(1 << i) & 7` where `1 << (i & 7)` was meant.
+
+   ### The interrupt line: what is actually known
+
+   The pin is fine. `/sys/kernel/debug/gpio` shows:
+
+        gpio72: in low func0 2mA pull up
+
+   muxed to GPIO (`func0`), an input, pulled up - and sitting **low**. A pull-up
+   holding low looks exactly like an asserted open-drain active-low interrupt,
+   so requesting `IRQF_TRIGGER_LOW` instead of downstream's `IRQF_TRIGGER_HIGH`
+   was tried. **It fires - and it is spurious.** Thousands of interrupts, and the
+   handler reads every status register as zero:
+
+        irq 106 0 0 0 0
+
+   So the low level is not the codec reporting anything. That change is reverted;
+   it bought an interrupt storm and no information. `IRQF_TRIGGER_HIGH` stands.
+
+   **Which leaves two candidates, and they are testable.**
+
+   1. **msmgpio 72 may not be the codec's interrupt on amami.** It came from
+      stock's `wcd9xxx-irq` node (`interrupts = <0x48 0x0>`, named `cdc-int`), but
+      that was read out of the stock tree rather than confirmed against this
+      board. A line that idles low under a pull-up is odd for an unused input.
+   2. **The codec's `0x090`-`0x0A2` block may not be reachable at all.** Writes to
+      `INTR_MASK0` (`0xfe`) and `INTR_LEVEL0` (`0x01`) do not stick - both read
+      back `0x00` - and all four `INTR_STATUS` registers read `0x00`, while
+      `0x1ab` and `0x1b1` in the analog block read sensible values (`0xb0`,
+      `0xc0`). Everything below `0x100` is marked volatile, "top level registers
+      which can be written by the Taiko core driver", which hints they are
+      reached differently downstream. If that block is unreachable the codec can
+      never raise an interrupt, and no amount of polarity work will help.
+
+   Settling (2) first is cheaper: pick any register under `0x100` with a known
+   non-zero POR value and see whether it reads back correctly.
 
    **Whether that alone restores audio is not proven.** The SLIMbus data path is
    hardware and interrupts are status reporting, so it is possible sound needs
