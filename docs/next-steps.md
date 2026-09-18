@@ -1439,12 +1439,50 @@ So the work splits into three milestones, and only the first two are small:
    Identical to ours - same `0x21/0x01/0x4d/0x47`, same all-ones interrupt
    enables. The interface device is configured the same way on both sides.
 
-   **If someone picks this up:** getting the card to register inside TWRP is the
-   cheap win, because everything else is already proven to work there. The
-   deferral is a component-ordering problem, not a hardware one - the first boot
-   nearly made it. Failing that, the expensive route is a real LineageOS boot,
-   which formats userdata and so destroys pmOS; **take a fresh backup first**,
-   because the one in `backups/` is from 2026-09-09 and predates all of this.
+   **The card failure is now pinned down exactly, and it is a race in APR.**
+   Turning on ASoC's dynamic debug (`echo "file sound/soc/soc-core.c +p" >
+   /sys/kernel/debug/dynamic_debug/control`) before the probe makes it name what
+   it is waiting for, instead of deferring silently. The real sequence is:
+
+        [35.691] apr_tal:Q6 Is Up
+        [36.004] apr_register: adsp not up
+        [36.004] afe_set_config: Q6 interface prepare failed -19
+        [36.004] msm_afe_set_config: Failed to set codec registers config -19
+        [36.005] msm_audrx_init: Failed to set AFE config -19
+
+   The card's deferred probe retries the instant the ADSP's q6 DAIs register,
+   about 300ms after `apr_tal` announces Q6, and APR's own subsystem-state
+   notifier has not marked the ADSP loaded yet, so `apr_register` refuses.
+   **-19 is not -EPROBE_DEFER, so there is no second automatic attempt.** Win
+   that race and the card should come up; everything before it already succeeds,
+   including every DAI mapping.
+
+   **Three traps, all learned the hard way:**
+
+   - **Hold the ADSP open from the host**, not the device:
+     `adb shell 'exec 3<>/dev/subsys_adsp; while :; do sleep 5; done'` as a
+     background job on the laptop. TWRP kills device-side background processes
+     when adb disconnects, and dropping that fd runs `subsystem_put()`, which
+     shuts the ADSP down and takes all the q6 DAI devices with it.
+   - **Do not unbind/rebind `taiko_codec`.** It perturbs the ASoC component list,
+     and afterwards the card can no longer resolve `msm-dai-q6-dev.241` - the
+     DAI that `qcom,msm-dai-q6-be-afe-pcm-rx.189` registers - even though all 26
+     q6 DAI devices are still bound. That state does not recover; only a reboot
+     clears it.
+   - **Neither `fastboot boot` nor `adb reboot recovery` works** on this
+     bootloader. Recovery is only reachable with the key combo, so every attempt
+     costs a manual step.
+
+   **The untried experiment, and it is cheap:** on a *fresh* TWRP boot, hold the
+   ADSP from the host, let the retry fail with -19, and then - without touching
+   `taiko_codec` - `echo fe02b000.sound >
+   /sys/bus/platform/drivers/msm8974-asoc-taiko/bind`. The device is left unbound
+   by the -19, APR has settled by then, and every component is still intact. That
+   is the one sequence that has not been tried on a clean boot.
+
+   **Failing that**, the expensive route is a real LineageOS boot, which formats
+   userdata and so destroys pmOS; **take a fresh backup first**, because the one
+   in `backups/` is from 2026-09-09 and predates all of this.
 
    **So what is left** is still whatever tells the codec's port logic to start
    pulling from an enabled, correctly-configured, correctly-fed slave port. Every
