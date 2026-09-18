@@ -1473,12 +1473,40 @@ So the work splits into three milestones, and only the first two are small:
      bootloader. Recovery is only reachable with the key combo, so every attempt
      costs a manual step.
 
-   **The untried experiment, and it is cheap:** on a *fresh* TWRP boot, hold the
-   ADSP from the host, let the retry fail with -19, and then - without touching
-   `taiko_codec` - `echo fe02b000.sound >
-   /sys/bus/platform/drivers/msm8974-asoc-taiko/bind`. The device is left unbound
-   by the -19, APR has settled by then, and every component is still intact. That
-   is the one sequence that has not been tried on a clean boot.
+   **That experiment was run on a clean boot, and it fails. The TWRP route is
+   closed for a *playing* reference.** Fresh boot, ADSP held from the host, the
+   retry failing with -19 exactly as predicted, then binding the card by hand
+   without going anywhere near `taiko_codec`:
+
+        msm8974-asoc-taiko fe02b000.sound: CPU DAI msm-dai-q6-dev.241 not registered
+
+   So the earlier guess was wrong: it is **not** caused by rebinding the codec.
+   The -19 failure's own cleanup tears down the AFE-PCM RX ASoC DAI, and once
+   that is gone no later bind can resolve it. Re-registering just that one device
+   does not work either - `unbind`/`bind` on
+   `qcom,msm-dai-q6-be-afe-pcm-rx.189` through `msm-dai-q6-dev` both return
+   failure, even with the driver path read straight out of sysfs.
+
+   That makes the race structurally unwinnable from userspace. The card gets
+   exactly one automatic probe, it fires the instant the q6 DAIs register, and
+   APR is not ready for another ~300ms; the failure then destroys the DAI that a
+   retry would need. Fixing it means delaying the probe or making `afe_set_config`
+   retry - a kernel change, and TWRP's kernel is a prebuilt blob. Everything up
+   to that point still works and the recipe above is still the cheapest way to
+   stand up the downstream stack for *non-playing* inspection.
+
+   **Operational trap, learned the hard way:** after TWRP has run downstream's
+   ADSP firmware, the **next pmOS boot fails SLIMbus enumeration** -
+
+        QMI TXN wait fail: -110
+        slim resource not idle: -110
+        wcd9320-slim 217:a0:0:0: Failed to get logical address
+        wcd9320-slim 217:a0:1:0: Failed to get logical address
+
+   - and no card appears even though the module loads. The ADSP is left in a
+   state pmOS's remoteproc cannot re-initialise. **One more reboot clears it**
+   and everything comes back normally. Do not go debugging that; just reboot
+   again.
 
    **Failing that**, the expensive route is a real LineageOS boot, which formats
    userdata and so destroys pmOS; **take a fresh backup first**, because the one
