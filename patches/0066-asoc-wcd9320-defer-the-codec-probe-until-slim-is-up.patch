@@ -1,0 +1,27 @@
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -3424,6 +3424,24 @@
+ 	int clk1_gpio;
+ 
+ 	printk("WCDPROBESTART \n");
++
++	/*
++	 * Wait for the slim device above us to have probed.
++	 *
++	 * This device is created by of_platform_populate() from the slim
++	 * device's status callback, and nothing depopulates it on the way out,
++	 * so it outlives a module unload. On the next load the platform driver
++	 * registers first and is matched against that leftover device straight
++	 * away - before the slim device has probed and set its drvdata - and
++	 * every use of `control` below is then a write through NULL. That
++	 * oopsed at wcd9320_probe+0x68 on the first modprobe after an rmmod.
++	 *
++	 * Deferring is the whole fix: the slim probe that follows re-triggers
++	 * the deferred queue, and the second attempt finds what it needs.
++	 */
++	if (!control)
++		return -EPROBE_DEFER;
++
+ 	//FIXME
+ //	clk1_gpio = of_get_named_gpio(control->dev->of_node, "qcom,clk1-gpio", 0);
+ //	gpio_request(clk1_gpio, "CLK1");

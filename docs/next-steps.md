@@ -1294,7 +1294,8 @@ So the work splits into three milestones, and only the first two are small:
    in debugfs on this build, so the PMIC's clkdiv registers could not be read to
    check; adding one would settle it without a single reboot.
 
-   **Recovery, since it will probably be needed again.** Hold power ~10s, then
+   **Recovery, since it will probably be needed again.** Power off with
+   **Power + Volume Up** (a ten-second power hold does nothing on this phone), then
    hold Volume Up while plugging USB - the LED turns blue for fastboot - then
    `fastboot flash boot boot-images/boot-r90.img` and `fastboot reboot`. Note the
    modules in the rootfs may be newer than the restored kernel; `pkgver` is
@@ -1758,6 +1759,87 @@ So the work splits into three milestones, and only the first two are small:
    `sync(1)` can block for minutes on a wedged filesystem, which silently eats
    the `timeout` budget of whatever was meant to run after it - put the sysrq
    writes first, not last.
+
+
+   **RETRACTION: the MCLK pin mux is a real defect but it is NOT the cause.**
+   The test the section above says was never run has now been run, on r114, and
+   it is negative. With `MODE_CTL/VIN/PULL` held at downstream's exact values
+   (`15 02 05`) by a 50ms writer loop across the codec's *first* init of the
+   boot, `div_clk1` enabled, and liveness asserted on every reading:
+
+        run 1..5: INT_STATUS_RX_0=03  pcm=RUNNING  procs=1  pin=15 02 05
+
+   Unchanged. Fix the mux anyway - it genuinely disagrees with downstream - but
+   it is not what stops the data.
+
+   **And the clock is not the variable at all.** The pin test alone could not
+   separate "MCLK is fine" from "func1 is not the clock", so the codec's own
+   **RC oscillator** was used as the control: it is internal, needs no pin, and
+   is unquestionably present. Switched mid-playback with the full bring-up -
+   `BIAS_OSC_BG_CTL=0x17`, `RC_OSC_FREQ` bit7, the `RC_OSC_TEST` pulse,
+   `CLK_BUFF_EN1` bit3 set and bit2 cleared (`0x05 -> 0x09`), **including the
+   `CLK_BUFF_EN2` reset pulse** that the first attempt wrongly left out - the
+   overflow reads `0x03` on every probe, identical to MCLK. The RCO also runs at
+   a different frequency, so a clocked-but-wrong-rate core would have shown
+   *under*flow. It showed nothing of the sort. The codec's digital core is not
+   sitting unclocked, and the whole MCLK line of reasoning is closed.
+
+   **A full two-space register diff against the golden reference now exists**,
+   and it is the strongest version of the "registers are not the problem"
+   claim. All 666 PGD registers, ours playing against
+   `codec_reg-HPH-PLAYING.txt`: **67 differ**, and every one of them is MBHC
+   (`3c0`-`3dc`, `14a`-`14f`, `171`-`174`), mic bias (`129`-`13d`), the TX ADCs
+   (`153`-`169`), IIR/ANC/PA-ramp (`340`-`364`, `28d`), analog gains
+   (`1aa`-`1d9`), interrupt masks (`090`-`0af`, ours masked by our own overflow
+   handler) or read-only fuses. Downstream runs subsystems this port does not;
+   **not one register on the RX data path differs.**
+
+   The interface device is the same story. Ours playing against
+   `ifd-HPH-PLAYING.txt`, `0x00-0xBF`: only `030` (our masking), `034` and
+   `060/061` (the overflow itself) and `080/081` differ. **`040 = 05` and
+   `041 = 05`, matching downstream exactly** - an earlier spot-check that read
+   `041`/`042` and reported "port 2 not enabled" was reading the wrong pair,
+   since our ports are 0 and 1.
+
+   **Two more candidates killed by live poke.** `LDO_H_MODE_1` is the one
+   non-MBHC analog difference - ours `0x6d`, downstream `0xed`, identical but
+   for bit 7 - and writing `0xed` mid-playback (confirmed by readback) changes
+   nothing. And the **supplies are right**: our DT maps them exactly as
+   downstream does (`vdd-buck`->s2, `vdd-rx-h`/`vdd-tx-h`/`vddpx-1`->s3,
+   `vdd-a-1p2v`/`vddcx-1`/`vddcx-2`->l1), and on the phone `s2=2150000`,
+   `s3=1800000`, `l1=1225000` are all enabled with users, which are downstream's
+   own voltages to the microvolt.
+
+   **`0066` makes the codec reloadable, which changes how this is worked on.**
+   With `0065` the module unloads cleanly, but the *reload* then oopsed at
+   `wcd9320_probe+0x68`: the codec's platform device is created by
+   `of_platform_populate()` from the slim status callback and nothing
+   depopulates it, so it outlives the unload, and on the next load the platform
+   driver is matched against that leftover device before the slim device has
+   probed and set its drvdata - `control` is NULL and probe writes through it.
+   `0066` returns `-EPROBE_DEFER` in that case. Together the two mean a codec
+   change can now be tested with `unbind card; modprobe -r; modprobe; bind card`
+   instead of a reboot per iteration.
+
+   **Where that leaves it.** Data demonstrably arrives at the right ports, the
+   codec consumes none of it, and every layer that can be read has now been
+   compared against a working reference and matches: both register spaces, the
+   clock (by substitution, not by inspection), the supplies and their voltages,
+   the bus transactions, the DSP port config and the rate maths. The one layer
+   never compared against downstream is **what the SLIMbus manager is told, and
+   what the codec is told, about the channel**. `slim_stream_enable()`
+   short-circuits into `qcom_slim_ngd_enable_stream()`, which packs everything
+   into one `SLIM_USR_MC_DEF_ACT_CHAN` QMI message to the ADSP rather than
+   emitting DEFINE_CHANNEL/ACTIVATE_CHANNEL on the bus. That was written off as
+   "expected, not a bug", and it is expected - but nobody has checked that the
+   resulting channel definition matches what `CONNECT_SINK` bound on the codec
+   side. Downstream's `slim-msm-ngd.c` sends its own version of the same QMI
+   message; diffing the two payloads is the same kind of source-level comparison
+   that turned up the pin mux, and it is the next thing to do.
+
+   **Correction to the recovery instructions elsewhere in this file:** powering
+   this phone off is **Power + Volume Up**, not a ten-second power hold, which
+   does nothing.
 
 
 ## Vibrator
