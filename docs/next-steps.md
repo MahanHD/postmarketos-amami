@@ -11,11 +11,27 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 ## Start here
 
 **Device state: the r90 boot image is flashed** (`uname -v` = `#91`), and
-`/lib/modules` is **r101**. Those disagree on purpose and it is not a mistake:
+`/lib/modules` is **r114** (2026-09-19). Those disagree on purpose and it is not a mistake:
 the codec is `CONFIG_SND_SOC_WCD9320=m`, so every patch from `0049` on ships in
 `snd-soc-wcd9320.ko` and an `apk add` is enough - `dd` to the boot partition is
 only needed when a `=y` driver changes. `uname -v` reports the boot image, so it
 will keep saying `#91` while the codec work advances.
+
+**The codec reloads now, so stop rebooting between codec builds.** `0065` and
+`0066` fixed the unload and the reload respectively, and the whole cycle is:
+
+    D=/sys/bus/platform/drivers/msm-snd-apq8096
+    sudo sh -c "echo sound > $D/unbind"      # frees the module
+    sudo modprobe -r snd_soc_wcd9320
+    sudo apk add --allow-untrusted /tmp/linux-...apk
+    sudo modprobe snd_soc_wcd9320
+    sudo sh -c "echo sound > $D/bind"
+
+The unbind is not optional - the card holds a reference and `modprobe -r` fails
+with "Module snd_soc_wcd9320 is in use" without it, which silently turns the
+following `modprobe` into a no-op and leaves you measuring the *old* instance.
+That wasted two full test cycles; assert `lsmod | grep -c` is 0 before
+reloading.
 
 **The codec is blacklisted** in `/etc/modprobe.d/wcd9320-test.conf`, so after every
 reboot the card does not exist until you run `sudo modprobe snd-soc-wcd9320`. An
