@@ -1301,9 +1301,38 @@ So the work splits into three milestones, and only the first two are small:
    `6.16.12` for every build so they still load, but rebuild and reinstall the
    matching package afterwards or the two halves disagree.
 
-   **So what is left** is whatever tells the codec's port logic to start pulling
-   from an enabled, correctly-configured, correctly-fed slave port - and the
-   master clock is now the leading candidate by a wide margin. Every
+   **Correction: that 19.2MHz is not a measurement, and the clock is probably
+   fine.** `/sys/kernel/debug/clk/div_clk1/clk_rate` does not read the hardware.
+   It echoes a *software constant* - the `19200000` literal inside
+   `DEFINE_CLK_SMD_RPM_XO_BUFFER(div_clk1, 11, 19200000)` - through a
+   `recalc_rate` that returns it verbatim. It says nothing about the pin. The
+   note above presented it as measured fact and that was wrong.
+
+   The downstream evidence now points the other way. Downstream declares the same
+   clock the same way, `DEFINE_CLK_RPM_SMD_XO_BUFFER(div_clk1, div_a_clk1,
+   DIV_CLK1_ID)`, wires it to the codec as `osr_clk`
+   (`CLK_LOOKUP("osr_clk", div_clk1.c, "msm-dai-q6-dev.16384")`), and **never
+   calls `clk_set_rate` on it at all** - just `clk_get` and
+   `clk_prepare_enable`, exactly like this port. Its codec is told 9.6MHz through
+   `A_CHIP_CTL` exactly like ours. If 19.2MHz really reached the pin, downstream
+   would be just as broken. The likeliest reading is that RPM or the board
+   configuration already divides that buffer to 9.6MHz and **both kernels simply
+   mislabel it**. `clk_set_rate()` succeeding without doing anything is still a
+   wart worth knowing about, but it is probably harmless.
+
+   **And the PMIC divider is a dead end on this PMIC.** Landing just the driver
+   and an inert `qcom,spmi-clkdiv` node at `0x5b00` under `pm8941_0` - nothing
+   consuming it, no pin mux, codec untouched - hung the boot exactly as the
+   five-part version had, with no USB at all, neither gadget nor fastboot. That
+   bisect is the useful part: the hang is the driver reaching that address over
+   SPMI, not anything to do with the codec. **PM8941 has no CLKDIV peripheral
+   there**; those arrived on later PMICs like the PM8998 in the binding's own
+   example, and on 8974 the PMIC clock buffers are managed by RPM instead, which
+   is exactly why mainline models them as RPM clocks. Do not retry this. Reverted
+   in full; `boot-images/boot-r90.img` restored over fastboot both times.
+
+   **So what is left** is still whatever tells the codec's port logic to start
+   pulling from an enabled, correctly-configured, correctly-fed slave port. Every
    *static* register on the path now matches downstream; the gap is more likely a
    missing step in the enable *sequence* or its ordering. The next thing to try
    is capturing what downstream actually writes, in order, during a working
