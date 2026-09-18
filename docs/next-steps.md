@@ -1375,6 +1375,26 @@ So the work splits into three milestones, and only the first two are small:
    constant (`(12BYTES << 1) | ENABLE` = `0x05`), the port table
    (`{.port = p + 16, .shift = p}`), and `port_mask` (`BIT(ch->port)`, bits 16+).
 
+   **The overflow bit was finally validated, and it means what we assumed.**
+   Everything above rests on reading OVERFLOW as "data is arriving and nothing is
+   consuming it", and that had never been checked against a negative control.
+   With no stream anywhere, disable both ports, clear the status, then enable
+   port 0 alone with the same `WATER_MARK_VAL`:
+
+        ports disabled, status=0x00
+        port enabled, no stream, t=1s: status=0x00 src0=0x00  clean
+                                 t=2s: status=0x00 src0=0x00  clean
+                                 t=3s: status=0x00 src0=0x00  clean
+
+   An enabled port with nothing feeding it does **not** report overflow. So the
+   bit is not a side effect of enabling a port, and during playback the ADSP
+   really is delivering into the port while the codec really is consuming
+   nothing. The instrument is sound and the conclusion stands.
+
+   (Note the starting state in that run: `status=0x03` with no stream running at
+   all, left latched from the previous playback. Latched status survives the
+   stream, so always clear before measuring.)
+
    **So what is left** is still whatever tells the codec's port logic to start
    pulling from an enabled, correctly-configured, correctly-fed slave port. Every
    *static* register on the path now matches downstream; the gap is more likely a
