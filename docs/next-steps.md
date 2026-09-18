@@ -1528,13 +1528,60 @@ So the work splits into three milestones, and only the first two are small:
    initramfs with `failed to mount subpartitions` and only telnet on port 23 to
    get in with.
 
+   **Two of those three leads are now dead, measured on the phone.**
+
+   *The SLIMbus transactions all succeed.* Tracing `slim_do_transfer` across a
+   whole playback: 49x `mc=104` (value-element messaging), 24x `mc=96`, 2x
+   `mc=17` - that is **CONNECT_SINK, once per port** - and 2x `mc=20`
+   (DISCONNECT_PORT) on teardown. **Every single one returns 0.** So the
+   discarded return value in `slim_stream_prepare()` is a real wart in mainline,
+   but it is not hiding a failure here.
+
+   *The absence of DEFINE/ACTIVATE_CHANNEL is expected, not a bug.* There is no
+   `mc=0x50`/`0x54` in the trace because `slim_stream_enable()` short-circuits:
+
+        if (ctrl->enable_stream) { ret = ctrl->enable_stream(stream); ... return ret; }
+
+   and the NGD controller sets `ctrl->enable_stream =
+   qcom_slim_ngd_enable_stream`, which packs the whole thing into one
+   `SLIM_USR_MC_DEF_ACT_CHAN` message to the ADSP instead. The rate maths inside
+   it is right: `rootfreq = 24576000>>3 = 3072000`, `superfreq = 3072000/768 =
+   **4000**`, so `ratem = 48000/4000 = 12`, giving coef 3 and exp 2 - CRM
+   `3*2^2 = 12`. Correct.
+
+   *And the ADSP is told exactly the right thing.* kprobe on
+   `q6afe_slim_port_prepare`:
+
+        rate=48000 bw=16 fmt=0 nch=2 ch0=144 ch1=145
+
+   Two channels, 144 and 145, 48kHz, 16-bit - precisely what the codec
+   subscribes. That also closes the `SLIM_0_RX Channels = Two` lead: mainline has
+   no such control because it derives the count from the codec's
+   `get_channel_map`, and ours returns the right thing.
+
+   **What remains is the per-port status byte.** Ours during playback against the
+   golden reference, same stream, same routing:
+
+        reg        ours   downstream
+        030 INT_EN0  fc      ff        (ours masked by our own overflow handler)
+        034 status   03      00
+        060/061 src  01      00        OVERFLOW vs nothing
+        040/041 cfg  05      05        identical
+        080/081      42      20        <-- the unexplained difference
+
+   `0x80+p` is defined in wcd9335's header as `SLIM_PGD_PORT_INT_STATUS(p)` but
+   **never read anywhere in that driver**, so its bit meanings are not documented
+   by any code we have. Ours has bits 1 and 6; downstream has only bit 5.
+
+   **Correction to the golden reference:** the interface-device dumps in
+   `docs/golden-reference/` only cover registers `0x00-0xBF`. `0x180`/`0x184`,
+   the RX port channel map, were **never captured**, so the claim that they match
+   cannot be made either way. Ours reads `03` at both. Re-capturing would mean
+   wiping the install again, so treat that range as unknown.
+
    **So what is left** is still whatever tells the codec's port logic to start
-   pulling from an enabled, correctly-configured, correctly-fed slave port. The
-   three live leads, in order: the per-port status difference above; the
-   `SLIM_0_RX Channels = Two` control downstream sets and mainline has no
-   equivalent for; and the fact that `slim_stream_prepare()` **discards**
-   `slim_connect_port_channel()`'s return value, so a failed `CONNECT_SINK` looks
-   exactly like success - which is what our kretprobe saw. Every
+   pulling from an enabled, correctly-configured, correctly-fed slave port - with
+   every layer above it now measured and correct. Every
    *static* register on the path now matches downstream; the gap is more likely a
    missing step in the enable *sequence* or its ordering. The next thing to try
    is capturing what downstream actually writes, in order, during a working
