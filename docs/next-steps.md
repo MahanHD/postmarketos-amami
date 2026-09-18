@@ -1512,8 +1512,29 @@ So the work splits into three milestones, and only the first two are small:
    userdata and so destroys pmOS; **take a fresh backup first**, because the one
    in `backups/` is from 2026-09-09 and predates all of this.
 
+   **A golden reference now exists**, in `docs/golden-reference/`, captured from
+   LineageOS 18.1 on this phone with audio actually playing. Read that directory's
+   README before doing anything else here - it is the only picture we have of
+   this codec working, and it cost the pmOS install to get. The headline results:
+   downstream's SLIMbus ports **never overflow** and its interface device is
+   byte-identical idle and playing; its per-port status byte reads **0x20** where
+   ours reads **0x42**; and every *digital* register we set already matches, so
+   the fault is not a codec register value.
+
+   **Restoring pmOS afterwards is documented in `backups/RESTORE.md`** and is
+   worth reading before you need it: TWRP's toybox breaks silently past 2 GiB in
+   both `dd` and `cat`, `adb push` is the only workable write path and it skips
+   the final sector, and a not-quite-perfect inner GPT leaves pmOS stuck in the
+   initramfs with `failed to mount subpartitions` and only telnet on port 23 to
+   get in with.
+
    **So what is left** is still whatever tells the codec's port logic to start
-   pulling from an enabled, correctly-configured, correctly-fed slave port. Every
+   pulling from an enabled, correctly-configured, correctly-fed slave port. The
+   three live leads, in order: the per-port status difference above; the
+   `SLIM_0_RX Channels = Two` control downstream sets and mainline has no
+   equivalent for; and the fact that `slim_stream_prepare()` **discards**
+   `slim_connect_port_channel()`'s return value, so a failed `CONNECT_SINK` looks
+   exactly like success - which is what our kretprobe saw. Every
    *static* register on the path now matches downstream; the gap is more likely a
    missing step in the enable *sequence* or its ordering. The next thing to try
    is capturing what downstream actually writes, in order, during a working
