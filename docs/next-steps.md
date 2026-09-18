@@ -1657,6 +1657,109 @@ So the work splits into three milestones, and only the first two are small:
    another had to be power-cycled. With the codec loading normally that goes away.
    If it ever has to be blacklisted again, drop the `sound` node with it.
 
+   **The MCLK pin is muxed wrong, and this is measured, not inferred.** The
+   codec's master clock reaches the Taiko on **PM8941 GPIO 15**, and downstream's
+   own device tree - read straight out of the LineageOS `boot.img` with
+   `tools/romdtb.py` - configures that pin as a *special function*, not as a
+   GPIO:
+
+        /soc/sound
+          qcom,cdc-mclk-gpios     = <phandle 15 0>
+          qcom,taiko-mclk-clk-freq = 0x927c00      (9,600,000)
+
+        /soc/.../qcom,pm8941@0/gpios/gpio@ce00     (pin 15)
+          qcom,mode      = 1   digital output
+          qcom,src-sel   = 2   QPNP_PIN_SEL_FUNC_1
+          qcom,vin-sel   = 2
+          qcom,pull      = 5   no pull
+          qcom,master-en = 1
+
+   Mainline encodes that field identically - `pinctrl-spmi-gpio`'s function
+   index 2 is `"func1"` - and on this phone the register reads:
+
+        MODE_CTL (0xce40) = 0x21   ->  value 1, function 0 ("normal"), dir in/out
+        DIG_VIN_CTL      = 0x00   (downstream: 2)
+        DIG_PULL_CTL     = 0x04   pull down   (downstream: 5, none)
+
+   Function 0 means the pin emits the GPIO's DC level. Every other ordinary GPIO
+   on this PMIC is `src-sel = 0`; the MCLK pin is one of the few downstream sets
+   to `func1`. So the codec has been fed a static high where it needs 9.6MHz.
+
+   **This is consistent with the entire investigation.** Register access rides
+   the SLIMbus clock and needs no MCLK, which is exactly why every register on
+   the path compares equal to downstream while the RX port never drains: the
+   codec's digital clock tree has no source, so nothing pulls from an enabled,
+   correctly-fed slave port.
+
+   **The earlier dismissal of this lead was wrong, and the reason is worth
+   keeping.** It rested on downstream also calling
+   `gpio_request(pdata->mclk_gpio, "TAIKO_CODEC_PMIC_MCLK")` in `msm8974.c`. It
+   does - but `gpio_request()` only *claims* the pin; the mux comes from the DT
+   pin config, which is a different mechanism and was never checked. "Downstream
+   does the same thing" is only an argument if you have compared the same layer.
+
+   **The rate question is now closed too.** Downstream does `clk_get(cpu_dai->dev,
+   "osr_clk")` then `clk_prepare_enable()` and **never calls `clk_set_rate`** -
+   identical to this port. So the `div_clk1` rate mislabel (19.2MHz in the
+   mainline clock table) is not a difference between the two stacks, and the
+   PMIC-divider route stays closed. The clock is also genuinely enabled on our
+   side: `/sys/kernel/debug/clk/div_clk1/clk_enable_count` is `0` at idle and
+   **`1` during playback**, so `clk_prepare_enable()` works. Only the pin is wrong.
+
+   **Poking the mux live is not enough on its own.** Writing `MODE_CTL = 0x15`
+   (dir out, func1, value 1) plus `VIN = 2` and `PULL = 5` mid-session makes the
+   pin's readback follow `div_clk1`'s enable state instead of the GPIO level -
+   1 while idle, 0 once the clock is enabled, where the "normal" control reads a
+   constant 1 - so the mux does reach the pin. **The overflow is unchanged.**
+   That is not a refutation: the codec had already come out of reset and run its
+   whole register init with no clock. The test that matters - first init with the
+   mux already correct - has **not** been run yet, because unloading the codec
+   oopsed (see `0065`).
+
+   Note the readback cannot prove a 9.6MHz square wave either way: the PMIC
+   samples its input through a much slower synchroniser, so a constant 0 is what
+   a clock and a dead pin both look like. Treat the pin state as "changed", not
+   as "clocking".
+
+   **`0065` fixes a remove path that oopsed every module unload.**
+   `wcd9320_remove()` called `clk_put(wcd->codec_clk)` on a clock it does not
+   own - `wcd9320_parse_dt()` takes it with `devm_clk_get()` on the **slim**
+   device and probe only copies the pointer - so it dropped a reference this
+   device never took and devm put it again on the way out. The trace is
+   `__clk_put` <- `wcd9320_remove` <- `platform_remove`. It also called
+   `devm_kfree()` on the devm-allocated private data *before*
+   `snd_soc_unregister_component()`, leaving the component's callbacks running
+   against freed memory. Both are gone; unregister is all that is needed. Until
+   this is installed, **do not `modprobe -r snd_soc_wcd9320`** - the oops leaves
+   the thread in `D` state holding `module_mutex`, which hangs every later
+   `lsmod` and `modprobe`.
+
+   **A single PMIC register can be read after all, and this supersedes the
+   "0-01 is unusable" note.** The warning elsewhere in this file is about reading
+   the *whole* file; `regmap` debugfs supports seeking, and the dump is a fixed
+   9 bytes per line (`"ce40: 21\n"`), so a window can be read directly:
+
+        # register R is at byte offset R*9; pick a bs that divides it
+        dd if=/sys/kernel/debug/regmap/0-00/registers bs=144 skip=3300 count=1
+        ->  ce40: 21 ... ce4f: 00     (0xce40 = 52800, 52800*9 = 3300*144)
+
+   `bs` must be at least one line long or `read()` returns 0 and `dd` prints
+   nothing - `bs=1` silently yields an empty result, which reads like a failed
+   permission rather than a too-small buffer. `0-00` is pm8941 SID 0, range
+   `0-ffff`, every register readable, and it takes writes as well
+   (`echo "ce40 15" > .../registers`) with the debug patch in place.
+
+   **Three reboot traps, all hit in one session.** `/proc/sys/kernel/sysrq` is
+   **16** here - sync only - so `echo b > /proc/sysrq-trigger` does nothing at all
+   and prints no error; set it to `1` first, in the *same* shell, because the
+   value is back to 16 on the next login. `sudo systemd-run --no-block` hangs
+   once `systemd-journald` has been killed, so it is not a reliable way to
+   outlive the ssh session when the system is already degraded. And plain
+   `sync(1)` can block for minutes on a wedged filesystem, which silently eats
+   the `timeout` budget of whatever was meant to run after it - put the sysrq
+   writes first, not last.
+
+
 ## Vibrator
 
 `0040`, one line. Mainline already has the driver (`pm8xxx-vibrator.c`), the config

@@ -1,0 +1,29 @@
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -3494,14 +3494,20 @@
+ 	return 0;
+ }
+ 
++/*
++ * Unregister the component and nothing else: everything this driver holds is
++ * either devm-managed on this device or owned by the slim device above it.
++ *
++ * The two calls that used to be here both oopsed a module unload. codec_clk is
++ * not ours - wcd9320_parse_dt() takes it with devm_clk_get() on the *slim*
++ * device and probe only copies the pointer across, so clk_put() here dropped a
++ * reference this device never took and devm put it a second time on the way
++ * out. And wcd9320_priv comes from devm_kzalloc() on this device, so freeing it
++ * by hand left the component's callbacks running against freed memory for the
++ * rest of the teardown; devm frees it after we return, in the right order.
++ */
+ static void wcd9320_remove(struct platform_device *pdev)
+ {
+-	struct wcd9320_priv *wcd;
+-
+-	wcd = platform_get_drvdata(pdev);
+-
+-	clk_put(wcd->codec_clk);
+-	devm_kfree(&pdev->dev, wcd);
+ 	snd_soc_unregister_component(&pdev->dev);
+ }
+ 
