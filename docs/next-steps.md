@@ -1331,6 +1331,50 @@ So the work splits into three milestones, and only the first two are small:
    is exactly why mainline models them as RPM clocks. Do not retry this. Reverted
    in full; `boot-images/boot-r90.img` restored over fastboot both times.
 
+   **A confound removed: it is not a second, unconsumed port.** Every earlier
+   overflow reading was `status_rx0 = 0x03`, both ports 0 and 1, because
+   `SLIM RX2 MUX` had been left subscribed by an earlier test while only RX1's
+   mixer was ever routed - so port 1 legitimately had no consumer. Clearing every
+   `SLIM RX<n> MUX` to `ZERO` first and subscribing only RX1 gives the clean
+   case: one channel (`0x180 = 0x01`), one port enabled, mixer on `RX1`
+   (`CONN_RX1_B1_CTL = 0x05`), chain powered (`1ab = 0xa0`, `30f = 0x01`) - and
+   `status_rx0 = 0x01`. **A single correctly-mapped, correctly-routed port still
+   never drains.** Clear the muxes first in any future test; the default state is
+   not empty.
+
+   **`CDC_CONN` is missing compared to downstream, and it is not the answer.**
+   Downstream has a supply widget this port lacks entirely -
+   `SND_SOC_DAPM_SUPPLY("CDC_CONN", WCD9XXX_A_CDC_CLK_OTHR_CTL, 2, 0, ...)` - and
+   that register reads `0x00` here, never written. It looked promising because
+   the RX mixer inputs are exactly the `CDC_CONN_RX*` registers. Sweeping every
+   bit of `A_CDC_CLK_OTHR_CTL` live during playback, up to `0xff` with all bits
+   set, changes nothing. Downstream only routes `CDC_CONN` to capture-side
+   widgets (the DEC muxes, MAD, I2S) anyway, never to the RX path.
+
+   **The wcd9335 lifecycle does not transplant.** wcd9335 is the only sibling
+   that works on mainline's SLIMbus stream API, and it runs **both**
+   `slim_stream_prepare()` and `slim_stream_enable()` from `wcd9335_trigger()` on
+   `TRIGGER_START`, with teardown on `TRIGGER_STOP`; `hw_params` only computes
+   the config, writes the interface device's channel map and watermark, and calls
+   `slim_stream_allocate()`. This port called `slim_stream_prepare()` from
+   `hw_params` - and that call is not passive, it walks the port mask running
+   `slim_connect_port_channel()` - so the port was attached to the channel long
+   before the codec chain existed. That is a real divergence and it was worth
+   trying. Matching the split exactly, verified live by kretprobe
+   (`sprep: (wcd9320_trigger+0x74 <- slim_stream_prepare) ret=0`), **does not fix
+   the overflow** and **regresses the close handshake**: the timeout returns on
+   every playback, eight in one boot. The reason is that our
+   `wcd9320_codec_enable_slim_chmask(dai, false)` wait lives in
+   `SND_SOC_DAPM_POST_PMD`, which now runs *after* `trigger(STOP)` has already
+   closed the ports, so the wait never sees them close. wcd9335 has no such wait
+   at all. Reverted; timeouts back to zero.
+
+   **Also verified equal to wcd9335, so do not re-check:** the interface register
+   arithmetic (`RX_PORT_CFG(16+p) = 0x30+16+p = 0x40+p`,
+   `RX_PORT_MULTI_CHNL_0(16+p) = 0x140+4*(16+p) = 0x180+4p`), the watermark
+   constant (`(12BYTES << 1) | ENABLE` = `0x05`), the port table
+   (`{.port = p + 16, .shift = p}`), and `port_mask` (`BIT(ch->port)`, bits 16+).
+
    **So what is left** is still whatever tells the codec's port logic to start
    pulling from an enabled, correctly-configured, correctly-fed slave port. Every
    *static* register on the path now matches downstream; the gap is more likely a
