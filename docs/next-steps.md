@@ -1235,8 +1235,75 @@ So the work splits into three milestones, and only the first two are small:
    downstream has the same shape, so it is expected rather than wrong. What is
    wrong is that the port never recovers once the interpolator does start.
 
+   **The codec is being fed the wrong master clock, and that is almost certainly
+   why nothing drains.** Every register on the path is right because register
+   access rides the SLIMbus clock and does not need MCLK at all - which is
+   exactly why months of register comparison found nothing. Measured on the
+   phone:
+
+        /sys/kernel/debug/clk/div_clk1/clk_rate          19200000
+        qcom,codec-clk-rate (DT)                          9600000
+        A_CHIP_CTL 0x06                                       0x02  = 9.6MHz
+
+   `wcd9320_parse_dt()` calls `clk_set_rate(clk, 9600000)` and **ignores the
+   return value**. A kretprobe shows the call returns **0, success**, while the
+   rate never changes. The reason is in mainline:
+
+        DEFINE_CLK_SMD_RPM_XO_BUFFER(div_clk1, 11, 19200000);
+
+        static const struct clk_ops clk_smd_rpm_branch_ops = {
+                .prepare, .unprepare, .recalc_rate      /* no .set_rate */
+        };
+
+   With no `.set_rate` and no `.determine_rate`, the clock core decides the rate
+   is already correct and returns success without touching anything. So the DT
+   comment on the codec node - "9.6MHz, which is CXO/2 and so RPM_SMD_DIV_CLK1" -
+   was wrong twice: that clock is CXO itself, 19.2MHz, and it cannot be divided.
+   A Taiko accepts **only** 9.6 or 12.288MHz, so it is running at exactly twice
+   its configured clock, or not running at all.
+
+   **The intended fix, and why it is not in the tree.** Mainline has the right
+   driver for this - `SPMI_PMIC_CLKDIV`, whose help text says "it configures the
+   frequency of clkdiv outputs of the PMIC. These clocks are typically wired
+   through alternate functions on GPIO pins." That is this board: stock's
+   `qcom,cdc-mclk-gpios` is PM8941 GPIO 15. The driver divides the 19.2MHz XO by
+   powers of two - 9.6MHz is one step - and unlike the RPM clock it implements
+   `.set_rate`. The binding's own example even assigns 9600000.
+
+   The attempt added a `qcom,spmi-clkdiv` node at `0x5b00` under `pm8941_0`,
+   pointed the codec's `clocks` at `<&pm8941_clk_divs 1>` with
+   `assigned-clock-rates = <9600000>`, muxed GPIO 15 to `function = "func1"`
+   through the codec's own `pinctrl-0`, stopped the driver claiming that pin as
+   an ordinary GPIO (`gpio_request()` muxes it straight back to "normal", so held
+   high it carries DC and not a clock), and set `CONFIG_SPMI_PMIC_CLKDIV=y`.
+
+   **It hung the boot.** The phone did not enumerate on USB at all - not the
+   network gadget, not fastboot - so it hangs before USB comes up, which is
+   earlier than a failed codec probe would explain. Reverted; the boot image was
+   restored from `boot-images/boot-r90.img` over fastboot and the modules rebuilt
+   without it. Zero close timeouts afterwards, no regression.
+
+   **If you pick this up, narrow it before flashing again.** The change did five
+   things at once and any of them could be the one that hangs. Split them: the
+   `CONFIG_SPMI_PMIC_CLKDIV=y` driver alone with no DT node at all is inert and
+   safe to boot first; then the clkdiv node alone with nothing consuming it; then
+   the pin mux; and only then move the codec's `clocks` over. Which of the three
+   CLKDIV peripherals (`0x5b00`, `0x5c00`, `0x5d00`) actually reaches GPIO 15 is
+   also unverified - the codec was pointed at the first one on the reasoning that
+   CLKDIV1 is the usual audio MCLK, and that is a guess. There is no SPMI regmap
+   in debugfs on this build, so the PMIC's clkdiv registers could not be read to
+   check; adding one would settle it without a single reboot.
+
+   **Recovery, since it will probably be needed again.** Hold power ~10s, then
+   hold Volume Up while plugging USB - the LED turns blue for fastboot - then
+   `fastboot flash boot boot-images/boot-r90.img` and `fastboot reboot`. Note the
+   modules in the rootfs may be newer than the restored kernel; `pkgver` is
+   `6.16.12` for every build so they still load, but rebuild and reinstall the
+   matching package afterwards or the two halves disagree.
+
    **So what is left** is whatever tells the codec's port logic to start pulling
-   from an enabled, correctly-configured, correctly-fed slave port. Every
+   from an enabled, correctly-configured, correctly-fed slave port - and the
+   master clock is now the leading candidate by a wide margin. Every
    *static* register on the path now matches downstream; the gap is more likely a
    missing step in the enable *sequence* or its ordering. The next thing to try
    is capturing what downstream actually writes, in order, during a working
