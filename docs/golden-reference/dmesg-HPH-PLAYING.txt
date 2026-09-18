@@ -1,0 +1,300 @@
+[  220.554112] msm_pcm_volume_ctl_get substream runtime not found
+[  244.109199] healthd: battery l=99 v=4343 t=37.2 h=2 st=2 c=284205 fc=2427000 cc=2 chg=u
+[  244.202781] healthd: battery l=99 v=4335 t=37.2 h=2 st=2 c=162675 fc=2428000 cc=2 chg=u
+[  244.162470] leds rgb: rgbcommon_sync_state_store do nothing. same state
+[  259.210077] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.210203] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.210365] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.210687] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.210756] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.210885] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.210977] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.211074] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.211166] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.211294] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.211355] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.211484] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.211580] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.211714] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.211779] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.211916] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.212014] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.212117] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.212214] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.212351] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.212419] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.212557] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.212670] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.212779] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.212879] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.213020] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.213107] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.213251] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.213432] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.213583] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.214300] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.214442] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.214541] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.214638] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.214729] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.214856] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.214916] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215042] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215135] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215233] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215324] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215450] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215512] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215645] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215739] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215867] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.215929] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216058] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216150] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216247] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216340] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216466] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216527] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216656] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216749] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216846] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.216939] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.217067] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.217129] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.217284] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.217377] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.217503] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.217564] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.217702] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.217802] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.217903] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218001] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218138] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218200] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218331] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218425] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218525] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218616] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218746] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218809] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.218936] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.219029] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.219160] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.219225] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.219364] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.219459] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.219559] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.219879] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.220018] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.220214] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.220347] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.220444] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.221151] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.221245] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.221376] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.221439] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.221570] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.221663] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.221793] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.221855] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.221987] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.222080] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.222184] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.222277] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.222405] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.222467] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.222597] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.222690] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.222787] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.222883] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.227913] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.227996] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.228137] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.228252] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.228408] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.228475] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.228610] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.229886] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.230005] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.230101] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.230815] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.231157] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.231662] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.232316] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.232599] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.232833] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.233205] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.233358] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.234532] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.235177] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.235916] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.236084] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.236456] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  259.243986] hdmi_tx_get_audio_edid_blk: failed. HDMI is not connected/ready for audio
+[  259.247474] msm_pcm_volume_ctl_get substream runtime not found
+[  259.249673] msm_pcm_volume_ctl_get substream runtime not found
+[  259.270991] msm_pcm_volume_ctl_get substream runtime not found
+[  259.305231] msm_pcm_volume_ctl_get substream runtime not found
+[  265.713617] healthd: battery l=99 v=4344 t=37.1 h=2 st=2 c=287599 fc=2427000 cc=2 chg=u
+[  266.486045] mdss_dsi_panel_off: ctrl=f53cd010 ndx=0
+[  266.657750] clearpad clearpad: synaptics_clearpad_set_power: state=running
+[  266.670825] clearpad clearpad: clearpad_vreg_suspend: vdd: set mode (LPM) ok, new mode=4
+[  266.670943] clearpad clearpad: power OFF at suspend mode OK
+[  325.704145] healthd: battery l=99 v=4345 t=36.9 h=2 st=2 c=255891 fc=2427000 cc=2 chg=u
+[  265.753062] leds rgb: rgbcommon_sync_state_store do nothing. same state
+[  325.762545] leds rgb: rgbcommon_sync_state_store do nothing. same state
+[  334.793708] healthd: battery l=99 v=4345 t=36.8 h=2 st=2 c=251755 fc=2426000 cc=2 chg=u
+[  334.875333] healthd: battery l=99 v=4343 t=36.8 h=2 st=2 c=244756 fc=2426000 cc=2 chg=u
+[  334.844591] leds rgb: rgbcommon_sync_state_store do nothing. same state
+[  334.914801] leds rgb: rgbcommon_sync_state_store do nothing. same state
+[  366.013936] [14:22:05.308587] [00000001A85B8310] [MC_Th]  wlan: [E :WDA] Failure in host offload REQ WDI API, free all the memory 3
+[  366.031822] [14:22:05.326473] [00000001A860C085] [wific]  wlan: [E :HDD] wlan_hdd_get_frame_logs: Frame Logging not init!
+[  366.043889] wlan: [2850:E :CTL] Error returned WDI_ProcessInitScanRspi:0 BMPS0
+[  366.653153] mdss_dsi_panel_on: ctrl=f53cd010 ndx=0
+[  366.670937] clearpad clearpad: synaptics_clearpad_set_power: state=running
+[  366.671445] clearpad clearpad: clearpad_vreg_suspend: vdd: set mode (HPM) ok, new mode=2
+[  366.693871] clearpad clearpad: power ON at normal mode OK
+[  369.723164] [14:22:09.017816] [00000001AC9A3331] [MC_Th]  wlan: [E :HDD] wlan_hdd_tdls_scan_done_callback: 3074: Failed to revert: Mode=0, BTC enabled=1
+[  385.739158] healthd: battery l=99 v=4345 t=36.6 h=2 st=2 c=237014 fc=2426000 cc=2 chg=u
+[  386.019179] [14:22:25.313832] [00000001BF406C42] [wific]  wlan: [E :HDD] wlan_hdd_get_frame_logs: Frame Logging not init!
+[  386.032069] wlan: [2850:E :CTL] Error returned WDI_ProcessInitScanRspi:0 BMPS0
+[  389.800378] [14:22:29.095009] [00000001C3943098] [MC_Th]  wlan: [E :HDD] wlan_hdd_tdls_scan_done_callback: 3074: Failed to revert: Mode=0, BTC enabled=1
+[  426.035005] [14:23:05.329655] [00000001ED0BCEC1] [wific]  wlan: [E :HDD] wlan_hdd_get_frame_logs: Frame Logging not init!
+[  426.047601] wlan: [2850:E :CTL] Error returned WDI_ProcessInitScanRspi:0 BMPS0
+[  429.807035] [14:23:09.101675] [00000001F15CE43A] [MC_Th]  wlan: [E :HDD] wlan_hdd_tdls_scan_done_callback: 3074: Failed to revert: Mode=0, BTC enabled=1
+[  445.765990] healthd: battery l=99 v=4346 t=36.3 h=2 st=2 c=214744 fc=2425000 cc=2 chg=u
+[  385.795300] leds rgb: rgbcommon_sync_state_store do nothing. same state
+[  445.832625] leds rgb: rgbcommon_sync_state_store do nothing. same state
+[  447.024140] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.024264] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.024436] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.024550] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.024708] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.024784] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.024942] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.025055] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.025214] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.025289] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.025449] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.025563] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.025681] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.025794] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.025952] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.026028] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.026186] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.026300] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.026420] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.026534] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.026692] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.026767] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.026925] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.027038] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.027272] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.027366] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.027549] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.027683] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.027827] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.027960] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.028142] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.028224] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.028385] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.028503] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.028639] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.028753] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.028973] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.029049] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.029207] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.029319] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.029478] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.029553] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.029745] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.029859] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.029979] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.030094] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.030253] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.030328] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.030517] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.030635] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.030756] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.030870] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.031029] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.031105] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.031264] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.031376] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.031533] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.031609] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.031768] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.031882] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.032003] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.032117] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.032274] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.032350] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.032507] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.032621] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.032741] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.032854] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.033012] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.033088] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.033246] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.033360] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.033518] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.033594] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.033753] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.033895] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.034017] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.034131] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.034289] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.034364] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.034522] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.034636] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.034756] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.034870] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.035028] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.035104] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.035262] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.035375] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.035533] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.035607] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.035766] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.035881] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.036002] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.036117] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.036274] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.036350] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.036508] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.036622] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.036743] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.036856] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.037018] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.037098] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.037287] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.037403] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.037562] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.037637] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.037796] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.037910] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.038030] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.038144] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.038303] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.038379] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.038536] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.038650] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.038770] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.038884] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.039043] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.039119] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.039278] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.039391] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.039549] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.039624] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.039783] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.039896] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.040018] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.040131] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.040290] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.040366] msm_routing_get_dolby_dap_param_to_get_control, port_id not set, returning error
+[  447.042614] hdmi_tx_get_audio_edid_blk: failed. HDMI is not connected/ready for audio
+[  447.043818] msm_pcm_volume_ctl_get substream runtime not found
+[  447.044549] msm_pcm_volume_ctl_get substream runtime not found
+[  447.056813] msm_pcm_volume_ctl_get substream runtime not found
+[  447.092661] msm_pcm_volume_ctl_get substream runtime not found

@@ -1,0 +1,18 @@
+access: RW_INTERLEAVED
+format: S16_LE
+subformat: STD
+channels: 2
+rate: 48000 (48000/1)
+period_size: 1920
+buffer_size: 3840
+--- status:
+state: RUNNING
+owner_pid   : 3656
+trigger_time: 243.604329679
+tstamp      : 263.823798255
+delay       : 3840
+avail       : 0
+avail_max   : 1920
+-----
+hw_ptr      : 973440
+appl_ptr    : 977280
