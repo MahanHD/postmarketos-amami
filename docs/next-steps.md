@@ -1579,9 +1579,37 @@ So the work splits into three milestones, and only the first two are small:
    cannot be made either way. Ours reads `03` at both. Re-capturing would mean
    wiping the install again, so treat that range as unknown.
 
-   **So what is left** is still whatever tells the codec's port logic to start
-   pulling from an enabled, correctly-configured, correctly-fed slave port - with
-   every layer above it now measured and correct. Every
+   **The per-port status byte is not the clue it looked like.** Probed directly:
+   `0x80`/`0x81` are **read-only** - writing the golden `0x20` does not stick -
+   and they are **dynamic on our side**, reading `0x42` while a stream runs and
+   **zero** at idle. Downstream's read a static `0x20` in *both* states. So the
+   two are not the same quantity and the `0x42` vs `0x20` comparison does not
+   mean what the earlier note implied. Bouncing the port enable while the chain
+   runs does not move it either. Without documentation for those bits - wcd9335
+   defines the register and never reads it - there is nothing further to get
+   from it.
+
+   **The MCLK pin function is a dead end too.** `pin 14 (gpio15)` shows
+   `(MUX UNCLAIMED)` with the GPIO claimed by our driver, so it is driven as an
+   ordinary output. That looked suspicious, but **downstream does exactly the
+   same** - `gpio_request(pdata->mclk_gpio, "TAIKO_CODEC_PMIC_MCLK")` in
+   `msm8974.c` - and downstream works. Plain-GPIO-high is correct; `func1` is not
+   the answer. (The pinctrl `pinmux-select` route also refuses with EINVAL while
+   the pin is held as a GPIO, so it cannot be tested that way regardless.)
+
+   **A tooling trap worth knowing:** writing to sysfs/debugfs from Python
+   reports failure at **close**, not at `write()`, because the write is buffered.
+   A `try/except` around the write catches nothing and the script reports
+   success. Three "no change" results were produced this way before it was
+   spotted. Use `os.write()` on a raw fd, or check the exception at close.
+
+   **So what is left** is whatever tells the codec's port logic to start pulling
+   from an enabled, correctly-configured, correctly-fed slave port. Every layer
+   around it has now been measured and is correct: the bus transactions, the DSP
+   port config, the channel map, the rate maths, every codec register on the
+   path, and the analog supplies. The remaining candidates all sit inside the
+   WCD9320 itself and none of them is visible from software we have - which is
+   the honest state of this investigation. Every
    *static* register on the path now matches downstream; the gap is more likely a
    missing step in the enable *sequence* or its ordering. The next thing to try
    is capturing what downstream actually writes, in order, during a working
