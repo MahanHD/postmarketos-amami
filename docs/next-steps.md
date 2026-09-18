@@ -1395,6 +1395,57 @@ So the work splits into three milestones, and only the first two are small:
    all, left latched from the previous playback. Latched status survives the
    stream, so always clear before measuring.)
 
+   **A golden reference is reachable with zero writes, and here is the recipe.**
+   The phone already has TWRP installed on `FOTAKernel` (mmcblk0p16) - boot it
+   with the volume-down combo, *not* `fastboot boot`, which this Sony bootloader
+   does not honour (it hangs at the Sony logo). TWRP runs the **downstream 3.4.0
+   vendor kernel**, the one whose WCD9320 driver works. adb comes up as
+   `recovery`. Nothing below writes to the device; the mounts are read-only or
+   volatile and vanish on reboot:
+
+        mount -o ro /dev/block/mmcblk0p23 /s      # system: LineageOS 18.1
+        mkdir -p /firmware/image
+        mount --bind /s/system/etc/firmware /firmware/image
+        setsid sh -c "exec 3<>/dev/subsys_adsp; sleep 600" &   # boots the ADSP
+        mount -t debugfs none /sys/kernel/debug
+
+   The ADSP really does boot this way - `pil-q6v5-lpass ... adsp: Brought out of
+   reset` - and then SLIMbus enumerates **both** `taiko-slim-ifd` and
+   `taiko-slim-pgd` and `taiko_codec` binds. So the whole downstream stack can be
+   stood up in recovery, on this phone, without touching pmOS.
+
+   **What it cannot do, so far: play.** `snd_soc_register_card()` returns
+   -EPROBE_DEFER. The very first attempt at boot got further - all the DAI
+   mappings succeeded and it then failed with `failed to init SLIMBUS_0_RX: -19`
+   0.4s after the ADSP came out of reset, which looks like it simply raced the
+   AFE service. After that failure `taiko_codec_remove()` tore the component
+   down, and every rebind since defers because the q6 DAI components are gone.
+   Unbinding and rebinding `taiko_codec` and the card in various orders does not
+   recover it. So there is still no dump of the registers *during* a working
+   playback, which is the one that would settle this.
+
+   **And the register window is narrower than hoped.** Downstream's debugfs is
+   `/sys/kernel/debug/wcd9310_slimbus_interface_device/{peek,poke}` - write an
+   address to `peek`, read the value back - but `codec_debug_write()` routes both
+   through `wcd9xxx_interface_reg_read/write`, so it reaches the **interface
+   device only**, registers <= 0x3FF. There is no PGD/codec equivalent.
+
+   **The dump we did get says the interface device matches.** Downstream, codec
+   bound, no playback, every non-zero interface register:
+
+        001: 0x21   002: 0x01   020: 0x4d   021: 0x47
+        030: 0xff   031: 0xff   032: 0xff
+
+   Identical to ours - same `0x21/0x01/0x4d/0x47`, same all-ones interrupt
+   enables. The interface device is configured the same way on both sides.
+
+   **If someone picks this up:** getting the card to register inside TWRP is the
+   cheap win, because everything else is already proven to work there. The
+   deferral is a component-ordering problem, not a hardware one - the first boot
+   nearly made it. Failing that, the expensive route is a real LineageOS boot,
+   which formats userdata and so destroys pmOS; **take a fresh backup first**,
+   because the one in `backups/` is from 2026-09-09 and predates all of this.
+
    **So what is left** is still whatever tells the codec's port logic to start
    pulling from an enabled, correctly-configured, correctly-fed slave port. Every
    *static* register on the path now matches downstream; the gap is more likely a
