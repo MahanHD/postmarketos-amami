@@ -1,0 +1,28 @@
+--- a/drivers/iio/adc/qcom-spmi-vadc.c
++++ b/drivers/iio/adc/qcom-spmi-vadc.c
+@@ -609,7 +609,24 @@
+ 	VADC_CHAN_NO_SCALE(P_MUX15_1_3, 1)
+ 	VADC_CHAN_NO_SCALE(P_MUX16_1_3, 1)
+ 
+-	VADC_CHAN_NO_SCALE(LR_MUX1_BAT_THERM, 0)
++	/*
++	 * The battery thermistor, left unscaled here, which is why it turns up
++	 * as in_voltage48_raw with no _input attribute and why nothing can read
++	 * a battery temperature on this SoC: qcom_smbb only reads the PMIC's own
++	 * BTC comparator for health and has no POWER_SUPPLY_PROP_TEMP.
++	 *
++	 * Downstream scales it with qcom,scale-function = <1>, a dedicated
++	 * battery-thermistor table that mainline does not carry. Of what mainline
++	 * does have, the 100k pullup table is the closest fit, and on amami it
++	 * lands in the right place: the channel sits at 624mV, which the table
++	 * puts at about 39C, against a PMIC die reading 45C on the same phone.
++	 *
++	 * Treat the result as indicative rather than calibrated - it is the
++	 * generic curve for a 100k part, not this battery's own. RAW is still
++	 * exposed, so the millivolts remain available for anyone who wants to do
++	 * better.
++	 */
++	VADC_CHAN_TEMP(LR_MUX1_BAT_THERM, 0, SCALE_THERM_100K_PULLUP)
+ 	VADC_CHAN_VOLT(LR_MUX2_BAT_ID, 0, SCALE_DEFAULT)
+ 	VADC_CHAN_NO_SCALE(LR_MUX3_XO_THERM, 0)
+ 	VADC_CHAN_NO_SCALE(LR_MUX4_AMUX_THM1, 0)

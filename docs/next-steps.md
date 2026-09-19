@@ -2026,6 +2026,46 @@ screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
   Follow-up worth one boot: declare the channel with `SCALE_THERM_100K_PULLUP` and
   check the reported temperature against a cold and a warm reference. If the battery's
   NTC is a 100k part the existing table may be close enough to give a real `temp`.
+- **The battery thermistor now reports a temperature (`0069`).** It was declared
+  `VADC_CHAN_NO_SCALE(LR_MUX1_BAT_THERM, 0)`, so it appeared as
+  `in_voltage48_raw` with no `_input` and nothing could read a battery
+  temperature. Mainline has no `SCALE_BATT_THERM`; of the tables it does carry,
+  `SCALE_THERM_100K_PULLUP` is the closest, and on this phone it lands sensibly:
+
+        in_temp48_label   LR_MUX1_BAT_THERM
+        in_temp48_input   39120      (39.1 C)
+        DIE_TEMP          45735      (45.7 C, same moment)
+
+  624mV on the channel, which the 100k table puts at 39C, against a PMIC die at
+  45.7C - a battery a few degrees under the die is what you would expect. The
+  scale function is chosen **in the driver**, not from DT (`prop.scale_fn_type =
+  vadc_chans[prop.channel].scale_fn_type`), so this is a driver patch and needs
+  no reflash. RAW is still exposed, so the millivolts remain available.
+
+  **Treat it as indicative, not calibrated** - it is the generic 100k curve, not
+  this battery's own table. The one supporting measurement is the older load
+  test: 10 minutes of four-core load moved the channel 606.5 -> 562.7mV while the
+  die rose 7.1C, which on this table is about +2.6C of battery rise - a plausible
+  ratio for a cell against an SoC die. A proper cold-and-warm validation has
+  **not** been done.
+
+  Note this does **not** give `qcom_smbb` a `temp` property: that driver only
+  reads the PMIC's BTC comparator for health and has no
+  `POWER_SUPPLY_PROP_TEMP`. `/sys/class/power_supply/smbb-bif` still has no
+  `temp`. Wiring one up means a driver change plus an `io-channels` entry in DT,
+  and the DT half would need a flash.
+
+- **Trap: unloading `qcom_spmi_vadc` powers the phone off.** It is `=m`, so a
+  reload looks like the cheap way to test a VADC change. It is not. The module is
+  the capacity source behind `/sys/class/power_supply/smbb-bif`, and while it is
+  gone UPower sees 0% with `warning-level: action` and performs its critical
+  action, which is now PowerOff - the old `CriticalPowerAction=Ignore` workaround
+  was removed once the fuel gauge became real (see
+  [[xperia-z1c-power-shutdown]]). The phone shut down cleanly about two minutes
+  after a `modprobe -r qcom_spmi_vadc`, on a battery reading 4.30V, and had to be
+  powered back on by hand. **Reboot to pick up a VADC change, or stop upower
+  first.**
+
 - `THERMAL_EMULATION` is still enabled. It is how the thermal trips were tested, and
   it also lets root feed the thermal core a fake low reading. Worth dropping once the
   frequency ceiling can reach 75 C honestly.
