@@ -500,6 +500,47 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
+**The DSPs are not where the power goes - measured 2026-09-19.** Before
+committing to the suspend work it was worth asking what the idle draw actually
+consists of, since both the ADSP and WCNSS are held up continuously and the ADSP
+is only up because the sensor and audio work put it there. USB unplugged, screen
+off, `in_current1_raw` sampled every 10s, 24 samples per phase:
+
+| phase | current | delta |
+|---|---|---|
+| settle | -253.6 mA | |
+| A, both DSPs running | **-245.9 mA** | baseline |
+| B, ADSP stopped | **-245.2 mA** | **-0.7 mA** |
+| C, ADSP + WCNSS stopped | **-213.9 mA** | **-31.3 mA** |
+
+Sample-to-sample spread is about +-30 mA, so with n=24 the ADSP's 0.7 mA is
+indistinguishable from nothing and WCNSS's 31 mA is real. The 245.9 mA baseline
+also lands on the previously documented 248 mA idle-screen-off figure, which is
+a useful independent check that the rig is measuring what it claims.
+
+Two conclusions. **Holding the ADSP up is free**, so the sensors and the audio
+transport cost nothing at idle and there is no reason to tear them down for
+power. **WCNSS costs about 31 mA**, 13% of idle - real, but it is WiFi being up
+rather than a bug, and worth remembering that power save is deliberately off
+(see [[xperia-z1c-wifi-fix]]), which may be part of that.
+
+**And the headline: with both DSPs stopped, 214 mA remains.** That is 87% of the
+idle draw untouched, so there is no cheap win hiding in the peripherals - the
+draw really is the SoC never collapsing, exactly as the analysis below argues.
+It does mean the deep-suspend prize is now quantified rather than assumed.
+
+**A correction to the plan below.** Sleep-set votes are described further down as
+"the cheapest first experiment by a wide margin". They are cheap to write and
+**impossible to validate**: the RPM applies the sleep set only when the APSS
+signals it has entered sleep, and nothing here ever does. `spm.c`'s
+`spm_match_table` carries `qcom,msm8974-saw2-v2.1-cpu` but **no `-l2` entry**, so
+the `saw_l2` node the DT describes at `f9012000` is never programmed, and
+cpuidle offers only per-core `cpu-spc`. Other SoCs in that table (8976, 8998,
+sdm660) do have L2 variants with their own `spm_reg_data`; msm8974 does not.
+So the votes would never fire, and doing this properly means the L2 SPM data,
+something to drive cluster-level idle, and `platform_suspend_ops` - and
+`arch/arm/mach-qcom` no longer has a `pm.c` at all.
+
 **Measured 2026-09-14, and the answer is that this is worth doing.**
 
 | state | current | real runtime |
