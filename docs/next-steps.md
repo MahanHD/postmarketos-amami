@@ -2140,6 +2140,33 @@ screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
   adds a phandle from `&smbb` to a different provider still needs its own
   `post-init-providers` entry.**
 
+- **WiFi power save retested 2026-09-19, and it still cannot be enabled.** The
+  31 mA WCNSS costs makes this worth one attempt, and the answer is unchanged
+  from 2026-09-09 - `0008` did not help:
+
+        309.37  wlan0: associated                   <- association succeeds
+        320.37  Timeout! No SMD response to req 78  <- hal_enter_bmps, FIRST failure
+        320.38  Can not enter BMPS!
+        340.86+ every later request times out       <- firmware wedged for good
+
+  `hal_enter_bmps` is the first thing to fail, and after it the firmware answers
+  nothing: `hal_set_link_st`, `hal_switch_channel`, `hal_enter_imps`,
+  `hal_delete_sta_self` and `hal_stop` each burn their full 10s timeout. Only a
+  reboot recovers WiFi. The 31 mA stays.
+
+  **Two traps if anyone retries.** NetworkManager stores power save *per
+  connection*, in `/etc/NetworkManager/system-connections/<name>.nmconnection`
+  as `powersave=3`, and that overrides the global `conf.d` file - so one attempt
+  wedges WiFi on **every subsequent boot** until the profile is edited back.
+  And `nmcli` cannot undo it once things are wedged, because NM dies with the
+  device; the revert is a `sed` on the file plus a reboot.
+
+  The thing to investigate, if it is ever worth another wedge-and-reboot cycle,
+  is why the firmware never answers `ENTER_BMPS`.
+  `wcn36xx_smd_enter_bmps()` sends `msg_body.tbtt = vif->bss_conf.sync_tsf` and
+  `msg_body.dtim_period = vif_priv->dtim_period`; a zero or stale value in
+  either is the usual cause.
+
 - **Trap: unloading `qcom_spmi_vadc` powers the phone off.** It is `=m`, so a
   reload looks like the cheap way to test a VADC change. It is not. The module is
   the capacity source behind `/sys/class/power_supply/smbb-bif`, and while it is
