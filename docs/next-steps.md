@@ -1858,6 +1858,73 @@ So the work splits into three milestones, and only the first two are small:
    does nothing.
 
 
+   **A SLIMbus capture path now exists (`0067`, `0068`), and the bisection it was
+   built for is inconclusive.** The idea was to test the CDC-to-port interface
+   in the other direction: the overflow already proves the port engine's
+   *receive* half works, since bus data really does land in the port FIFO, so
+   what is broken is specifically the transfer from that FIFO into the CDC. If
+   the codec could fill a TX port, the interface works and the fault is
+   RX-specific.
+
+   `0067` adds the codec half: the `tx_chs` table (the card was already passing
+   `tx_ch[] = {128, 129, ...}` to `set_channel_map` and it was being dropped
+   because `tx_chs` was NULL), a capture DAI, a `SLIM TX1 MUX` to subscribe a
+   channel, an `enable_slimtx` widget handler, and `wcd_slim_tx_stream_prepare()`
+   as a **separate function** rather than a direction flag on the RX one - the RX
+   path is the only thing that works as far as the bus and it was not worth
+   risking to save the duplication. `0068` adds the two dai-links the card needs
+   (`MultiMedia2` frontend, `SLIMBUS_0_TX` backend on codec DAI index 1); without
+   them `arecord` listed no capture devices at all. That one needs a **boot image
+   flash**, since it is device tree - it went in cleanly and the phone booted in
+   90 seconds.
+
+   **It works as far as it goes:** `card 0, device 2: MultiMedia2` appears, the
+   stream runs, and our TX port registers are written correctly - `cfg 0x50 =
+   0x05`, `chmap 0x100 = 0x01`.
+
+   **But both instruments failed their controls, so nothing can be concluded.**
+
+   - *TX port status is not an instrument.* `INT_STATUS_TX_0` reads `0x00` in
+     every condition, including with the decimator's clock switched **off**
+     mid-capture, which starves the port and should underflow. The TX interrupts
+     are genuinely enabled (`INT_TX_EN0` is `0x30 + 2` = `0x32`, reading `0xff`),
+     so this is not a masking artefact - the bit simply never asserts. Note the
+     RX side reports overflow and port-closed reliably, so this asymmetry is
+     itself unexplained.
+   - *The captured audio is not an instrument either.* With the TX slave port
+     **disabled** (`cfg 0x50 = 0x04`), `arecord` still produced a byte-identical
+     384044-byte file of zeros. The ADSP manufactures a well-formed 48kHz stream
+     whether or not the codec contributes anything.
+
+   **What it would take to finish.** Real, non-zero audio from the codec, which
+   means an analog mic path: micbias, the ADC enable, and the decimator input
+   mux. The golden reference cannot shortcut this - downstream was playing to
+   headphones when it was captured and had **no TX path active** (`0x30a = 0x00`,
+   TX clock off), so there are no known-good TX values to copy. That is
+   implementing capture properly rather than running an experiment, and it is the
+   same work the microphone needs, so it is not wasted - but it should be chosen
+   as a feature, not as a probe.
+
+   **A bug worth not repeating, introduced and fixed here.** The first version of
+   `slim_tx_mux_put()` called `list_add_tail()` without checking whether the node
+   was already linked. Setting the control twice spliced the channel list into a
+   **cycle**, and `wcd9320_get_channel_map()` then walked it forever, writing past
+   the end of the caller's 16-entry `tx_slot[]` array - a stack smash inside
+   `msm_snd_hw_params()`, whose trace came back with the return address
+   overwritten by `0x80`, which is `BASE_CH_NUM`, the value being written. The RX
+   mux guards this with `wcd_slim_rx_vport_validation()`. The fix makes the
+   subscribe idempotent. **Any list_add on these shared channel nodes needs that
+   guard.**
+
+   **Operational note: do not unbind and rebind the card to reload the codec.**
+   `0065` and `0066` make `modprobe -r` and `modprobe` work, but
+   `echo sound > .../bind` afterwards oopsed in `regmap_write` inside the
+   component probe. That path has never once completed successfully. Test codec
+   changes on a **fresh boot** instead - and note that every oops here is followed
+   by a reboot that wedges with sshd never starting, which costs a physical
+   power-cycle (**Power + Volume Up**).
+
+
 ## Vibrator
 
 `0040`, one line. Mainline already has the driver (`pm8xxx-vibrator.c`), the config

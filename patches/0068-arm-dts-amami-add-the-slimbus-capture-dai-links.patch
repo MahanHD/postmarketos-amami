@@ -1,0 +1,44 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -291,6 +291,41 @@
+ 				sound-dai = <&wcd9320_codec 0>;
+ 			};
+ 		};
++
++		/*
++		 * The capture side. MULTIMEDIA2 is already declared as a
++		 * Q6ASM_DAI_TX frontend by 0041, and the q6 routing already
++		 * carries SLIMBUS_0_TX mixer controls - what was missing is
++		 * the pair of dai-links that turn those into a PCM, which is
++		 * why arecord listed no capture devices at all.
++		 *
++		 * The codec's DAI index 1 is the capture DAI added by 0067.
++		 * Indices here are positions in the codec driver's dai array,
++		 * not the AIF ids, so 0 is playback and 1 is capture.
++		 */
++		mm2-dai-link {
++			link-name = "MultiMedia2";
++
++			cpu {
++				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
++			};
++		};
++
++		slim-tx-dai-link {
++			link-name = "SLIM Capture";
++
++			cpu {
++				sound-dai = <&q6afedai SLIMBUS_0_TX>;
++			};
++
++			platform {
++				sound-dai = <&q6routing>;
++			};
++
++			codec {
++				sound-dai = <&wcd9320_codec 1>;
++			};
++		};
+ 	};
+ };
+ 

@@ -1,0 +1,342 @@
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -40,6 +40,8 @@
+ 
+ #define WCD9XXX_SLIM_NUM_PORT_REG 3
+ #define WCD9320_RX_PORT_START_NUMBER  16
++#define WCD9320_TX_PORT_START_NUMBER  0
++#define WCD9320_TX_MAX                16
+ #define WCD9320_HPH_PA_SETTLE_COMP_ON 3000
+ #define WCD9320_HPH_PA_SETTLE_COMP_OFF 13000
+ #define NUM_INTERPOLATORS 7
+@@ -331,6 +333,36 @@
+ 	WCD_SLIM_CH(WCD9320_RX_PORT_START_NUMBER + 12, 12),
+ };
+ 
++/*
++ * The TX side of the same table. Slave TX ports are numbered from 0, so the
++ * port and the shift are the same value here - unlike RX, where the ports
++ * start at 16 and the shift is the port's index within that block.
++ *
++ * The card already hands us these: apq8096.c passes tx_ch[] = {128, 129, ...}
++ * to set_channel_map, and mywcd_slim_init_slimslave() has always been ready to
++ * take them - it just found tx_chs NULL and printed "Not able to allocate
++ * memory for 0 slimbus tx ports" instead. Allocating this is what turns that
++ * message into a usable channel list.
++ */
++static const struct wcd_slim_ch wcd9320_tx_chs[WCD9320_TX_MAX] = {
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 0, 0),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 1, 1),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 2, 2),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 3, 3),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 4, 4),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 5, 5),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 6, 6),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 7, 7),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 8, 8),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 9, 9),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 10, 10),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 11, 11),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 12, 12),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 13, 13),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 14, 14),
++	WCD_SLIM_CH(WCD9320_TX_PORT_START_NUMBER + 15, 15),
++};
++
+ static const u32 comp_shift[] = {
+ 	4, /* Compander 0's clock source is on interpolator 7 */
+ 	0,
+@@ -967,6 +999,40 @@
+ 	return ret;
+ }
+ 
++/*
++ * Capture mirror of wcd9320_codec_enable_slimrx(). Same ordering, and for the
++ * same reason: the channel is activated from POST_PMU, once the port
++ * interrupts and the channel mask are set up, rather than from the DAI's
++ * prepare callback.
++ */
++static int wcd9320_codec_enable_slimtx(struct snd_soc_dapm_widget *w,
++				       struct snd_kcontrol *kcontrol,
++				       int event)
++{
++	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
++	struct wcd9320_priv *wcd = dev_get_drvdata(component->dev);
++	struct wcd_slim_codec_dai_data *dai;
++
++	if (wcd->intf_type != WCD_INTERFACE_TYPE_SLIMBUS)
++		return 0;
++
++	dai = &wcd->dai[w->shift];
++
++	switch (event) {
++	case SND_SOC_DAPM_POST_PMU:
++		wcd9320_codec_enable_int_port(dai, component);
++		(void) wcd9320_codec_enable_slim_chmask(dai, true);
++		wcd_slim_stream_enable(wcd->slim_data, dai);
++		break;
++	case SND_SOC_DAPM_POST_PMD:
++		wcd9320_codec_enable_slim_chmask(dai, false);
++		slim_stream_unprepare(dai->sruntime);
++		slim_stream_disable(dai->sruntime);
++		break;
++	}
++	return 0;
++}
++
+ static int wcd9320_get_compander(struct snd_kcontrol *kcontrol,
+ 			       struct snd_ctl_elem_value *ucontrol)
+ {
+@@ -1808,7 +1874,80 @@
+ 	SOC_ENUM_SINGLE(WCD9320_A_CDC_RX7_B4_CTL, 0, 3, rx_cf_text);
+ 
+ 
++static const char *const slim_tx_mux_text[] = {
++	"ZERO", "AIF1_CAP",
++};
++
++static int slim_tx_mux_get(struct snd_kcontrol *kcontrol,
++			   struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component =
++		snd_soc_dapm_kcontrol_component(kcontrol);
++	struct wcd9320_priv *wcd = dev_get_drvdata(component->dev);
++
++	ucontrol->value.enumerated.item[0] = wcd->tx_port_value;
++	return 0;
++}
++
++/*
++ * Subscribe one slave TX port to the capture DAI, the mirror of
++ * slim_rx_mux_put(). Only AIF1_CAP exists for now - this is the capture path
++ * the port-engine bisection needs, not the full TX complement.
++ */
++static int slim_tx_mux_put(struct snd_kcontrol *kcontrol,
++			   struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_dapm_widget *widget =
++		snd_soc_dapm_kcontrol_widget(kcontrol);
++	struct snd_soc_component *component =
++		snd_soc_dapm_kcontrol_component(kcontrol);
++	struct wcd9320_priv *wcd = dev_get_drvdata(component->dev);
++	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
++	struct snd_soc_dapm_update *update = NULL;
++	u32 port_id = widget->shift;
++
++	if (port_id >= WCD9320_TX_MAX)
++		return -EINVAL;
++
++	wcd->tx_port_value = ucontrol->value.enumerated.item[0];
++
++	/*
++	 * Unlink first, unconditionally. Setting this control twice used to
++	 * list_add_tail() a node that was already on the list, which splices
++	 * the list into a cycle - and then wcd9320_get_channel_map() walks it
++	 * forever, writing past the end of the caller's tx_slot[] array. That
++	 * is a stack smash in msm_snd_hw_params(), not a warning: the trace
++	 * came back with the return address overwritten by 0x80, which is
++	 * BASE_CH_NUM, the value being written.
++	 *
++	 * The RX mux guards this with wcd_slim_rx_vport_validation(); doing it
++	 * by making the subscribe idempotent is simpler and also covers the
++	 * node having been left on some other DAI's list.
++	 */
++	if (!list_empty(&wcd->slim_data->tx_chs[port_id].list))
++		list_del_init(&wcd->slim_data->tx_chs[port_id].list);
++
++	if (wcd->tx_port_value)
++		list_add_tail(&wcd->slim_data->tx_chs[port_id].list,
++			      &wcd->dai[AIF1_CAP].wcd_slim_ch_list);
++
++	snd_soc_dapm_mux_update_power(widget->dapm, kcontrol,
++				      wcd->tx_port_value, e, update);
++	return 0;
++}
++
++static const struct soc_enum slim_tx_mux_enum =
++	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(slim_tx_mux_text), slim_tx_mux_text);
++
++static const struct snd_kcontrol_new slim_tx1_mux =
++	SOC_DAPM_ENUM_EXT("SLIM TX1 Mux", slim_tx_mux_enum,
++			  slim_tx_mux_get, slim_tx_mux_put);
++
+ static const struct snd_soc_dapm_route wcd9320_audio_map[] = {
++	/* Capture, for the SLIMbus TX port bisection */
++	{"SLIM TX1 MUX", "AIF1_CAP", "TX SRC"},
++	{"AIF1 CAP", NULL, "SLIM TX1 MUX"},
++
+ 	/* Headset (RX MIX1 and RX MIX2) */
+ 	{"HEADPHONE", NULL, "HPHL"},
+ 	{"HEADPHONE", NULL, "HPHR"},
+@@ -2308,6 +2447,12 @@
+ 
+ static const struct snd_soc_dapm_widget wcd9320_dapm_widgets[] = {
+ 
++	SND_SOC_DAPM_INPUT("TX SRC"),
++	SND_SOC_DAPM_MUX("SLIM TX1 MUX", SND_SOC_NOPM, 0, 0, &slim_tx1_mux),
++	SND_SOC_DAPM_AIF_OUT_E("AIF1 CAP", "AIF1 Capture", 0, SND_SOC_NOPM,
++			       AIF1_CAP, 0, wcd9320_codec_enable_slimtx,
++			       SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
++
+ 	SND_SOC_DAPM_AIF_IN_E("AIF1 PB", "AIF1 Playback", 0, SND_SOC_NOPM,
+ 				AIF1_PB, 0, wcd9320_codec_enable_slimrx,
+ 				SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
+@@ -2753,6 +2898,100 @@
+ 
+ }
+ 
++/*
++ * The capture equivalent, kept as its own function rather than a direction
++ * flag on the one above. The RX path is the only thing on this codec that
++ * currently works end to end as far as the bus, and this exists to probe
++ * whether the CDC-to-port interface moves data in the other direction; it is
++ * not worth risking the working path to save the duplication.
++ *
++ * Three things differ from RX. Slave TX ports are numbered from 0, so the
++ * port mask is not offset by 0x10. The channel bitmap is 16 bits wide and
++ * splits across two registers once the port index reaches 8. And the stream
++ * has to be declared as capture, which the RX path never sets - it leaves
++ * direction at 0, which is SNDRV_PCM_STREAM_PLAYBACK.
++ */
++static int wcd_slim_tx_stream_prepare(struct wcd9320_priv *wcd,
++				      struct wcd_slim_codec_dai_data *dai_data)
++{
++	struct slim_stream_config *cfg = &dai_data->sconfig;
++	struct list_head *ch_list = &dai_data->wcd_slim_ch_list;
++	struct wcd_slim_data *wcd_sd = wcd->slim_data;
++	struct wcd_slim_ch *tx;
++	u16 payload = 0;
++	u16 codec_port;
++	int ret, i = 0;
++
++	cfg->ch_count = 0;
++	cfg->port_mask = 0;
++
++	list_for_each_entry(tx, ch_list, list) {
++		payload |= 1 << tx->shift;
++		cfg->port_mask |= 1 << tx->shift;
++		cfg->ch_count++;
++	}
++
++	if (!cfg->ch_count) {
++		dev_err(wcd->dev, "no tx channels subscribed\n");
++		return -EINVAL;
++	}
++
++	cfg->chs = kcalloc(cfg->ch_count, sizeof(unsigned int), GFP_KERNEL);
++	if (!cfg->chs)
++		return -ENOMEM;
++
++	cfg->rate = dai_data->rate;
++	cfg->bps = dai_data->bit_width;
++	cfg->direction = SNDRV_PCM_STREAM_CAPTURE;
++
++	list_for_each_entry(tx, ch_list, list) {
++		codec_port = tx->port;
++		cfg->chs[i++] = tx->ch_num;
++
++		ret = regmap_write(wcd_sd->if_regmap,
++				   SB_PGD_TX_PORT_MULTI_CHANNEL_0(codec_port),
++				   payload & 0x00ff);
++		if (ret < 0) {
++			dev_err(wcd->dev, "tx chmap lo write failed port %d: %d\n",
++				codec_port, ret);
++			goto err;
++		}
++
++		if (codec_port >= 8) {
++			ret = regmap_write(wcd_sd->if_regmap,
++					   SB_PGD_TX_PORT_MULTI_CHANNEL_1(codec_port),
++					   (payload & 0xff00) >> 8);
++			if (ret < 0) {
++				dev_err(wcd->dev, "tx chmap hi write failed port %d: %d\n",
++					codec_port, ret);
++				goto err;
++			}
++		}
++
++		ret = regmap_write(wcd_sd->if_regmap,
++				   SB_PGD_PORT_CFG_BYTE_ADDR(
++					   wcd_sd->port_tx_cfg_reg_base, codec_port),
++				   WATER_MARK_VAL);
++		if (ret < 0)
++			dev_err(wcd->dev, "tx watermark failed port %d: %d\n",
++				codec_port, ret);
++	}
++
++	dai_data->sruntime = slim_stream_allocate(wcd->slim, "WCD9320-SLIM-TX");
++	if (!dai_data->sruntime) {
++		ret = -ENOMEM;
++		goto err;
++	}
++
++	slim_stream_prepare(dai_data->sruntime, cfg);
++	return 0;
++
++err:
++	kfree(cfg->chs);
++	cfg->chs = NULL;
++	return ret;
++}
++
+ static int wcd9320_prepare(struct snd_pcm_substream *substream,
+ 			 struct snd_soc_dai *dai)
+ {
+@@ -2866,6 +3105,22 @@
+ 		}
+ 		wcd->dai[dai->id].rate = params_rate(params);
+ 		break;
++	case SNDRV_PCM_STREAM_CAPTURE:
++		/*
++		 * Capture returns early: the RX-only steps below it - the SB port
++		 * sample width and the RX stream prepare - would address the wrong
++		 * half of the codec.
++		 */
++		switch (params_width(params)) {
++		case 16:
++			wcd->dai[dai->id].bit_width = 16;
++			break;
++		case 24:
++			wcd->dai[dai->id].bit_width = 24;
++			break;
++		}
++		wcd->dai[dai->id].rate = params_rate(params);
++		return wcd_slim_tx_stream_prepare(wcd, &wcd->dai[dai->id]);
+ 	default:
+ 		dev_err(wcd->dev, "Invalid stream type %d\n",
+ 			substream->stream);
+@@ -2908,6 +3163,20 @@
+ 		},
+ 		.ops = &wcd9320_dai_ops,
+ 	},
++	[1] = {
++		.name = "wcd9320_tx1",
++		.id = AIF1_CAP,
++		.capture = {
++			.stream_name = "AIF1 Capture",
++			.rates = WCD9320_RATES,
++			.formats = WCD9320_FORMATS_S16_S24_LE,
++			.rate_max = 192000,
++			.rate_min = 8000,
++			.channels_min = 1,
++			.channels_max = 4,
++		},
++		.ops = &wcd9320_dai_ops,
++	},
+ };
+ 
+ static const struct wcd9320_reg_mask_val wcd9320_codec_reg_common_defaults[] = {
+@@ -3459,6 +3728,13 @@
+ 
+ 	memcpy(wcd->slim_data->rx_chs, wcd9320_rx_chs, sizeof(wcd9320_rx_chs));
+ 
++	wcd->slim_data->tx_chs = devm_kzalloc(dev, sizeof(wcd9320_tx_chs),
++					      GFP_KERNEL);
++	if (!wcd->slim_data->tx_chs)
++		return -ENOMEM;
++
++	memcpy(wcd->slim_data->tx_chs, wcd9320_tx_chs, sizeof(wcd9320_tx_chs));
++
+ 	dev_set_drvdata(dev, wcd);
+ 
+ 	wcd->regmap = control->regmap;
