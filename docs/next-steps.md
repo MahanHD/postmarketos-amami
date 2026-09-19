@@ -2111,6 +2111,35 @@ screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
   `temp`. Wiring one up means a driver change plus an `io-channels` entry in DT,
   and the DT half would need a flash.
 
+- **The charger now reports that temperature too (`0070`, `0071`).**
+  `qcom_smbb` gained `POWER_SUPPLY_PROP_TEMP`, reading a `batt-therm` IIO
+  channel looked up lazily on first use exactly as `vbat` is, and the DT hands
+  it `VADC_LR_MUX1_BAT_THERM`. Verified end to end on r119:
+
+        iio in_temp48_input          35714 m C
+        smbb-bif/temp                  357        (tenths, so 35.7 C)
+        upower temperature            35.7 degrees C
+
+  Two unit traps in that path, both live in `smbb_battery_temp()`: IIO processed
+  temperature is milli-degrees while `POWER_SUPPLY_PROP_TEMP` is **tenths**,
+  hence the `/100`; and `iio_read_channel_processed()` returns `IIO_VAL_INT` on
+  success rather than 0, so only a negative is an error - the same quirk that
+  bit the fuel gauge.
+
+  `CONFIG_CHARGER_QCOM_SMBB=y`, so the driver half needs a flash as much as the
+  DT half does; one flash covered both.
+
+  **This is the change the USB trap warns about, and it was safe only because
+  the mitigation was already there.** Adding `io-channels` to `&smbb` is what
+  once killed USB through fw_devlink. The new channel comes from the *same*
+  provider as the existing `vbat` one, and `post-init-providers =
+  <&pm8941_vadc>` was already on the node, so the edge stays cleared. Confirmed
+  in the built DTB rather than the patch text - `charger@1000` shows
+  `io-channels = 0xa5:0x06, 0xa5:0x30` with one provider - and confirmed again
+  after the flash by `/sys/class/udc/ci_hdrc.0` still existing. **Anything that
+  adds a phandle from `&smbb` to a different provider still needs its own
+  `post-init-providers` entry.**
+
 - **Trap: unloading `qcom_spmi_vadc` powers the phone off.** It is `=m`, so a
   reload looks like the cheap way to test a VADC change. It is not. The module is
   the capacity source behind `/sys/class/power_supply/smbb-bif`, and while it is

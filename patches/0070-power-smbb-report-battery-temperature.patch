@@ -1,0 +1,89 @@
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -128,6 +128,9 @@
+ 	/* optional: battery voltage sense + profile for capacity reporting */
+ 	struct mutex vbat_lock;
+ 	struct iio_channel *vbat;
++	/* optional: battery thermistor, for TEMP */
++	struct mutex btherm_lock;
++	struct iio_channel *btherm;
+ 	struct power_supply_battery_info *batt_info;
+ };
+ 
+@@ -634,6 +637,50 @@
+ }
+ 
+ /*
++ * The battery thermistor, looked up lazily for the same reasons as vbat above
++ * and offered only on boards that wire a "batt-therm" io-channel.
++ *
++ * Two unit traps. The IIO channel is processed in milli-degrees while
++ * POWER_SUPPLY_PROP_TEMP is in tenths of a degree, hence the /100. And as
++ * above, a successful iio_read_channel_processed() returns IIO_VAL_INT rather
++ * than 0, so only a negative is an error.
++ *
++ * This is not the comparator the charger itself acts on: the SMBB decides
++ * hot/cold from its own BTC thresholds and that is what HEALTH reports. This is
++ * the measured value, and it is only as good as the VADC's scaling for the
++ * thermistor actually fitted - on amami that is mainline's generic 100k curve
++ * rather than the battery's own table, so treat it as indicative.
++ */
++static int smbb_battery_temp(struct smbb_charger *chg, int *decidegc)
++{
++	int rc, millidegc;
++
++	if (!chg->btherm) {
++		struct iio_channel *ch;
++
++		mutex_lock(&chg->btherm_lock);
++		/* another reader may have got there while we waited */
++		if (!chg->btherm) {
++			ch = devm_iio_channel_get(chg->dev, "batt-therm");
++			if (!IS_ERR(ch))
++				chg->btherm = ch;
++		}
++		mutex_unlock(&chg->btherm_lock);
++
++		if (!chg->btherm)
++			return -ENODATA;
++	}
++
++	rc = iio_read_channel_processed(chg->btherm, &millidegc);
++	if (rc < 0)
++		return rc;
++
++	*decidegc = millidegc / 100;
++
++	return 0;
++}
++
++/*
+  * Capacity is read straight off the resting OCV curve, so it reads high while
+  * charging: the terminal voltage then sits above the cell's true open-circuit
+  * voltage. That is good enough to stop userspace believing the battery is flat,
+@@ -729,6 +776,9 @@
+ 	case POWER_SUPPLY_PROP_CAPACITY:
+ 		rc = smbb_battery_capacity(chg, &val->intval);
+ 		break;
++	case POWER_SUPPLY_PROP_TEMP:
++		rc = smbb_battery_temp(chg, &val->intval);
++		break;
+ 	default:
+ 		rc = -EINVAL;
+ 		break;
+@@ -788,6 +838,7 @@
+ 	POWER_SUPPLY_PROP_TECHNOLOGY,
+ 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+ 	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_TEMP,
+ };
+ 
+ static const struct reg_off_mask_default {
+@@ -926,6 +977,7 @@
+ 	chg->dev = &pdev->dev;
+ 	mutex_init(&chg->statlock);
+ 	mutex_init(&chg->vbat_lock);
++	mutex_init(&chg->btherm_lock);
+ 
+ 	chg->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+ 	if (!chg->regmap) {

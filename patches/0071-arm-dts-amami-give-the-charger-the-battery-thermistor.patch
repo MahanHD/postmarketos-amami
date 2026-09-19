@@ -1,0 +1,20 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -311,8 +311,15 @@
+ 	 */
+ 	qcom,jeita-extended-temp-range;
+ 
+-	io-channels = <&pm8941_vadc VADC_VBAT_SNS>;
+-	io-channel-names = "vbat";
++	/*
++	 * VBAT_SNS gives VOLTAGE_NOW and the OCV-derived percentage;
++	 * LR_MUX1_BAT_THERM gives TEMP. Both come from the same provider, so
++	 * the post-init-providers below already covers the fw_devlink edge for
++	 * the pair - see the comment on it.
++	 */
++	io-channels = <&pm8941_vadc VADC_VBAT_SNS>,
++		      <&pm8941_vadc VADC_LR_MUX1_BAT_THERM>;
++	io-channel-names = "vbat", "batt-therm";
+ 
+ 	/*
+ 	 * The USB controller and its PHY take their VBUS state from this node's
