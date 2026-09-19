@@ -2043,11 +2043,26 @@ screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
   no reflash. RAW is still exposed, so the millivolts remain available.
 
   **Treat it as indicative, not calibrated** - it is the generic 100k curve, not
-  this battery's own table. The one supporting measurement is the older load
-  test: 10 minutes of four-core load moved the channel 606.5 -> 562.7mV while the
-  die rose 7.1C, which on this table is about +2.6C of battery rise - a plausible
-  ratio for a cell against an SoC die. A proper cold-and-warm validation has
-  **not** been done.
+  this battery's own table. But it does genuinely *track*, which was checked
+  rather than assumed (2026-09-19, five minutes of four-core load then cooldown,
+  sampled every 30s):
+
+        base   39.29 -> 39.34 C   die 45.69 -> 45.49    flat
+        LOAD   39.34 -> 40.96 C   die 45.49 -> 51.14    monotonic, every sample
+        cool   40.96 -> 41.14 C   die 51.14 -> 49.15    still RISING
+               41.14 -> 40.78 C   die       -> 47.73    then decaying slowly
+
+  Three things there are hard to fake. The baseline is flat to 0.05C, so the
+  channel is not drifting or noisy. The load ramp is monotonic on every single
+  sample, +1.62C of battery against +5.65C of die - about 29%, which is the right
+  order for a cell against an SoC die rather than the 1:1 you would see if this
+  were secretly reading the die. And on cooldown the **battery keeps rising for
+  60-90s after the load stops**, peaking at 41.14C while the die has already
+  dropped 2C, then decays slowly. That lag is the signature of a large thermal
+  mass, and neither a stuck reading nor a mislabelled channel produces it.
+
+  What is still unverified is the *absolute* calibration - a cold reference would
+  need the phone put somewhere cold, which nobody has done.
 
   Note this does **not** give `qcom_smbb` a `temp` property: that driver only
   reads the PMIC's BTC comparator for health and has no
