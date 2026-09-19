@@ -10,12 +10,18 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state: the r90 boot image is flashed** (`uname -v` = `#91`), and
-`/lib/modules` is **r114** (2026-09-19). Those disagree on purpose and it is not a mistake:
-the codec is `CONFIG_SND_SOC_WCD9320=m`, so every patch from `0049` on ships in
-`snd-soc-wcd9320.ko` and an `apk add` is enough - `dd` to the boot partition is
-only needed when a `=y` driver changes. `uname -v` reports the boot image, so it
-will keep saying `#91` while the codec work advances.
+**Device state as of 2026-09-19 end of day: r119 is flashed and installed**, so
+the boot image and `/lib/modules` agree for the first time in a while and
+`uname -v` prints `#120`. Images kept in `boot-images/`: r119
+`73600a403efcdf28397441abccbc7099`, r116 `66305348a849b9749e013a805624fe59`
+(the last one before the battery-temperature work), r90
+`c2f94594ff341f68e5a1ce5aa04a1abd`.
+
+They do not always agree, and that is not a mistake when they differ: the codec
+is `CONFIG_SND_SOC_WCD9320=m`, so codec patches ship in `snd-soc-wcd9320.ko` and
+an `apk add` is enough. A `dd` to the boot partition is only needed when a `=y`
+driver or the device tree changes - which `0068` (capture dai-links), `0070`
+(`CONFIG_CHARGER_QCOM_SMBB=y`) and `0071` all did.
 
 **The codec reloads now, so stop rebooting between codec builds.** `0065` and
 `0066` fixed the unload and the reload respectively, and the whole cycle is:
