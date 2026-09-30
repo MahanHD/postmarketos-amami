@@ -506,6 +506,49 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
+**BLOCKER found 2026-10-01: there is no wakeup path for a collapsed APSS.**
+This is the prerequisite the scoping below missed, and it has to be solved before
+`platform_suspend_ops` is worth writing at all - without it, a suspend that
+collapses the SoC is a phone that **never wakes**.
+
+The existing per-core SPC path works because other cores stay online and the GIC
+distributor stays powered. During suspend the PM core parks the secondaries, so
+collapsing CPU0 with `L2_OFF` takes the GIC down with it, and nothing is left
+watching for a wakeup. That job belongs to the MPM - the always-on block that
+holds the wakeup set while the APSS is down - and **mainline has no MPM for this
+SoC**:
+
+        MPM node in qcom-msm8974.dtsi   none
+        CONFIG_QCOM_MPM                 not set
+
+Worse, the driver mainline does have is a different generation:
+
+        mainline    IRQCHIP_MATCH("qcom,mpm", ...)
+                    expects qcom,mpm-pin-count and qcom,mpm-pin-map
+        8974        compatible = "qcom,mpm-v2"     (qcom,mpm@fc4281d0)
+                    reg = vmpm 0xfc4281d0, ipc 0xf9011008
+                    qcom,gic-map  (504 bytes)   qcom,gpio-map (312 bytes)
+
+So it is not a matter of adding a DT node. It needs the downstream mapping
+translated into mainline's binding (roughly 63 GIC entries and 39 GPIO entries),
+and the driver's assumptions checked against 8974's `vmpm` + `ipc` layout rather
+than the RPM-message-RAM layout it was written for. GIC state save/restore across
+the collapse is a further piece downstream carries and mainline does not.
+
+**Revised assessment.** Deep suspend is not "the L2 data plus 150-200 lines". It
+is: the L2 SAW (**done**, `0072`), an **MPM irqchip port**, `platform_suspend_ops`,
+GIC save/restore, and RPM sleep votes. That is a subsystem port, not a patch, and
+the MPM is the gate.
+
+**One untested idea worth recording rather than acting on.** The L2 SPM has a
+**retention** sequence as well as pc, and retention does not power the block
+down - so a suspend path that drove the L2 to RET instead of PC might keep the
+GIC alive and still save something, with no MPM needed. Whether RET is enough for
+the RPM to apply its sleep set is unknown and probably not, since the RPM keys
+off the APSS reaching a sleep state. It would be a cheap experiment once there is
+any suspend hook at all, and it is the only route here that does not start with
+the MPM.
+
 **Step 1 landed 2026-09-30 (`0072`): the L2 SAW is programmed.** `f9012000` now
 binds alongside the four CPU SAWs -
 
