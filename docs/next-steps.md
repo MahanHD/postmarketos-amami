@@ -506,6 +506,34 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
+**Step 1 landed 2026-09-30 (`0072`): the L2 SAW is programmed.** `f9012000` now
+binds alongside the four CPU SAWs -
+
+        f9012000.power-manager   <- new
+        f9089000.power-manager  f9099000.power-manager
+        f90a9000.power-manager  f90b9000.power-manager
+
+and nothing regressed: cpuidle still collects WFI and cpu-spc residency, cpufreq
+still ramps all four cores to 960 MHz under load and settles back to 300 MHz, no
+oopses. `CONFIG_QCOM_SPM=y`, so it needed a flash; r120 is
+`1a3b95afe7cdd8c795bed60c3219c819`.
+
+The patch carries a separate `spm_reg_offset_v2_1_l2` table rather than
+extending `spm_reg_offset_v2_1`, because the shared one is missing PMIC_DATA and
+adding it there would start writing zeroes over the CPU SAWs' pmic data, which
+downstream never does. The offsets (0x40/0x44) are confirmed from downstream's
+own `spm-v2.c` register map, whose `VERSION 0xFD0` cross-checks against the DT's
+`qcom,saw2-ver-reg`.
+
+**It is not quite inert, and that is worth being precise about.** It adds no new
+caller, but `spm.c`'s probe finishes with
+`spm_set_low_power_mode(drv, PM_SLEEP_MODE_STBY)`, and the L2 has no standby
+sequence - so that resolves to index 0, the **retention** sequence, with
+`SPM_CTL_EN` set. The L2 SAW is therefore now armed where Linux previously left
+it alone. That matches the shipped state rather than inventing one: downstream's
+L2 node carries `qcom,saw2-spm-ctl = 0x00000001`, which is the enable bit with
+index 0.
+
 **Scoped 2026-09-30: the SPM data is in hand, and TrustZone does the hard part.**
 No code yet, but the shape of the job is now known and it is smaller than
 "implement suspend from scratch".
