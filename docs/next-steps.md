@@ -506,6 +506,110 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
+**Scoped 2026-09-30: the SPM data is in hand, and TrustZone does the hard part.**
+No code yet, but the shape of the job is now known and it is smaller than
+"implement suspend from scratch".
+
+*The enabling discovery.* The per-core idle path already collapses a CPU through
+firmware, not through anything Linux programs:
+
+        static int qcom_pm_collapse(unsigned long int unused)
+        {
+                qcom_scm_cpu_power_down(QCOM_SCM_CPU_PWR_DOWN_L2_ON);
+
+and the flag for the other case **already exists and is exported**:
+
+        #define QCOM_SCM_CPU_PWR_DOWN_L2_ON   0x0
+        #define QCOM_SCM_CPU_PWR_DOWN_L2_OFF  0x1
+        void qcom_scm_cpu_power_down(u32 flags);   /* EXPORT_SYMBOL_GPL */
+
+So the cluster collapse itself is a TrustZone call we can already make, and the
+warm-boot resume path is already set up and proven - `cpuidle-qcom-spm.c` calls
+`qcom_scm_set_warm_boot_addr(cpu_resume_arm)` at probe and the per-core SPC path
+round-trips through it thousands of times per boot.
+
+*What the SPM driver does and does not do.* `spm.c`'s probe only **initialises** a
+SAW - writes the sequences, cfg, delays and pmic data, then selects STBY.
+`spm_set_low_power_mode()` is the only mode switch and its one in-tree caller is
+`cpuidle-qcom-spm.c`, which is strictly **per-CPU** (it finds each CPU's SAW via
+`qcom,saw` on the cpu node). So adding an L2 entry programs the cluster SAW and
+**nothing would ever drive it to PC**. On the ARM64 SoCs that do have L2 entries
+(8976, 8998, sdm660) PSCI firmware does that driving; `ARM_PSCI` is off here.
+There is no prior art to copy either: `arch/arm/mach-qcom/pm.c` has **never**
+existed upstream (checked v4.19 through v6.1 - only Kconfig, Makefile,
+platsmp.c), and nothing in qcom code registers `suspend_set_ops`.
+
+*The data, extracted from the LineageOS DTB with `tools/romdtb.py`.* Downstream
+describes every SAW, and the extraction is **validated**: mainline's existing
+8974 CPU entry turns out to be downstream's `wfi` and `spc` sequences
+concatenated, byte for byte, with `start_index` on the boundaries -
+
+        downstream wfi (3B)  03 0b 0f
+        downstream spc (18B)          00 20 80 10 e8 5b 03 3b e8 5b 82 10 0b 30 06 26 30 0f
+        mainline .seq (21B)  03 0B 0F 00 20 80 10 E8 5B 03 3B E8 5B 82 10 0B 30 06 26 30 0F
+                             ^STBY=0  ^SPC=3
+
+  **L2 SAW, `qcom,spm@f9012000`** (mainline's `saw_l2` at the same address):
+
+        saw2-cfg        0x00000014      saw2-spm-ctl  0x00000001
+        saw2-spm-dly    0x3c102800      core-id       0x0000ffff
+        pmic-data0      0x02030080      pmic-data1    0x00030000
+        L2-spm-is-apcs-master           (boolean)
+        cmd-ret   (5B)  1f 00 03 00 0f
+        cmd-gdhs (10B)  00 32 42 03 44 50 02 32 50 0f
+        cmd-pc   (16B)  00 10 32 b0 11 42 07 01 b0 12 44 50 02 32 50 0f
+
+  **CPU SAWs** (f9089000/f9099000/f90a9000/f90b9000, cfg 0x1, dly 0x3c102800):
+
+        cmd-wfi   (3B)  03 0b 0f
+        cmd-spc  (18B)  00 20 80 10 e8 5b 03 3b e8 5b 82 10 0b 30 06 26 30 0f
+        cmd-pc   (18B)  00 20 80 10 e8 5b 07 3b e8 5b 82 10 0b 30 06 26 30 0f
+        cmd-ret  (13B)  42 1b 00 d8 5b 03 d8 5b 0b 00 42 1b 0f
+
+  Note **CPU pc differs from spc in exactly one byte** - `0x03` becomes `0x07` at
+  offset 6 - so "also drop L2" is a single flag in the sequence. That is a useful
+  sanity check on any hand-derived table.
+
+*So the L2 entry writes itself*, following the same concatenation convention
+(`MAX_SEQ_DATA` is 64, so 21 bytes is fine):
+
+        static const struct spm_reg_data spm_reg_8974_8084_l2 = {
+                .reg_offset = spm_reg_offset_v2_1,   /* see caveat below */
+                .spm_cfg = 0x14,
+                .spm_dly = 0x3c102800,
+                .pmic_data[0] = 0x02030080,
+                .pmic_data[1] = 0x00030000,
+                .seq = { 0x1f, 0x00, 0x03, 0x00, 0x0f,
+                         0x00, 0x10, 0x32, 0xb0, 0x11, 0x42, 0x07, 0x01,
+                         0xb0, 0x12, 0x44, 0x50, 0x02, 0x32, 0x50, 0x0f },
+                .start_index[PM_SLEEP_MODE_RET] = 0,
+                .start_index[PM_SLEEP_MODE_PC]  = 5,
+        };
+
+  and the CPU entry needs `start_index[PM_SLEEP_MODE_PC]` plus the 18-byte pc
+  block appended to its `seq` (giving 39 bytes, PC at index 21).
+
+*Four things to resolve before writing code.*
+
+  1. **`spm_reg_offset_v2_1` has no `PMIC_DATA_0/1` offsets** - only CFG,
+     SPM_CTL, DLY and SEQ_ENTRY. The L2 node carries pmic data, so those writes
+     would land at offset 0. `v2_3` puts them at 0x40/0x44; whether the v2.1 L2
+     SAW agrees needs checking against the hardware or downstream's
+     `spm-devices.c` before trusting it.
+  2. **Nothing drives PC.** This is the actual work: a small
+     `platform_suspend_ops` whose `.enter` sets the CPU and L2 SAWs to PC and
+     calls `cpu_suspend(0, ...)` with a collapse function passing
+     `QCOM_SCM_CPU_PWR_DOWN_L2_OFF`. Suspend is the easy case - the PM core has
+     already parked the secondaries, so there is no last-man-standing race to
+     solve, unlike runtime cluster idle.
+  3. **`spm_set_low_power_mode()` is not exported** and the L2's
+     `spm_driver_data` is private to `spm.c`, so a suspend path needs a small
+     accessor (by phandle, or a registration hook).
+  4. **RPM sleep votes are still needed** for the rails to actually drop once the
+     SoC does collapse - that is the piece that turns a collapsed SoC into saved
+     milliamps, and it remains unwritten (`qcom_smd-regulator.c` votes only
+     `QCOM_SMD_RPM_ACTIVE_STATE`).
+
 **The DSPs are not where the power goes - measured 2026-09-19.** Before
 committing to the suspend work it was worth asking what the idle draw actually
 consists of, since both the ADSP and WCNSS are held up continuously and the ADSP
