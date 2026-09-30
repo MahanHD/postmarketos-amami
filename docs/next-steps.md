@@ -506,6 +506,68 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
+**Revised again, 2026-10-01: the MPM is a DT node plus a data translation, not a
+driver port, and the wakeup we need is covered.** The blocker below stands - there
+is no wakeup path today - but it is far more tractable than first assessed.
+
+*The mainline driver already fits this hardware.* `irq-qcom-mpm.c` deliberately
+does **not** touch physical MPM registers: it drives a shared SRAM region it calls
+vMPM and then notifies RPM by mailbox, which copies vMPM into the real registers.
+That is exactly 8974's shape - downstream's node carries
+`reg = vmpm 0xfc4281d0, ipc 0xf9011008` - and the driver matches plain
+`compatible = "qcom,mpm"`, so no new compatible is needed.
+
+*The mailbox already works here.* `qcom,ipc-bit-offset = 1`, and `f9011008` is the
+APCS block at offset 8. Mainline's msm8974.dtsi already has
+`apcs: mailbox@f9011000` with `#mbox-cells = <1>`, `CONFIG_QCOM_APCS_IPC=y`, and
+the remoteprocs already use it (`mboxes = <&apcs 10>` and friends). So the MPM
+node just needs `mboxes = <&apcs 1>`.
+
+*The pin map, decoded from downstream.* `qcom,gic-map` has 63 entries but **only
+five carry a real pin**; the other 58 are pin 255, which is the sentinel for
+"wakeup-capable but not MPM-routed". The numbers are **hwirq**, not SPI - `GIC_SPI
+n` is hwirq `n+32`:
+
+        pin  2 -> hwirq 216  (GIC_SPI 184)   thermal sensor
+        pin 47 -> hwirq 165  (GIC_SPI 133)
+        pin 50 -> hwirq 172  (GIC_SPI 140)
+        pin 53 -> hwirq 104  (GIC_SPI  72)
+        pin 62 -> hwirq 222  (GIC_SPI 190)   SPMI arbiter -> PM8941 -> power key
+
+  which drops straight into mainline's binding as
+
+        qcom,mpm-pin-map = <2 216>, <47 165>, <50 172>, <53 104>, <62 222>;
+
+  **That numbering is confirmed two ways rather than assumed.** `spmi@fc4cf000` is
+  `GIC_SPI 190` in mainline's dtsi, which is hwirq 222; and the live kernel's own
+  wakeup-enabled GIC interrupts are hwirq **222** and **216** - precisely two of
+  the five MPM-routed pins. So the power button, which arrives through the PMIC on
+  the SPMI arbiter, **is** MPM-routed, on pin 62. A collapsed SoC can be woken.
+
+  There are also 39 GPIO entries (`qcom,gpio-map`, pins 3-41 -> TLMM 102, 1, 5,
+  9, ...). Mainline handles GPIO wakeups differently, through
+  `wakeup-parent = <&mpm>` on the TLMM plus a `wakeirq_map` in the pinctrl driver,
+  which msm8974's pinctrl does not have. Not needed for a first suspend, since the
+  power key comes in over SPMI.
+
+*What is left for a first suspend,* in order:
+
+  1. An MPM DT node - `compatible = "qcom,mpm"`, the vMPM `reg`, `mboxes =
+     <&apcs 1>`, `interrupts = <GIC_SPI 171 IRQ_TYPE_EDGE_RISING>` (downstream's
+     `<0 0xab 1>`), the pin map above, and `qcom,mpm-pin-count` - the count still
+     needs confirming, likely 64, which gives `reg_stride` 2.
+  2. `CONFIG_QCOM_MPM=y`.
+  3. **A hook to flush vMPM at suspend.** `mpm_pd_power_off()` does it, but it is
+     registered as a genpd `power_off`, and with no genpd-based cpuidle here
+     nothing calls it. Either attach a consumer to that domain or add a small
+     exported entry point.
+  4. `platform_suspend_ops` driving PC, plus GIC save/restore across the collapse.
+  5. RPM sleep votes, which is what turns a collapsed SoC into saved milliamps.
+
+  The vMPM `reg` form still needs checking against how newer DTs express it - on
+  those SoCs it is a slice of `qcom,rpm-msg-ram`, and `0xfc4281d0` looks like
+  exactly that (`fc428000 + 0x1d0`).
+
 **BLOCKER found 2026-10-01: there is no wakeup path for a collapsed APSS.**
 This is the prerequisite the scoping below missed, and it has to be solved before
 `platform_suspend_ops` is worth writing at all - without it, a suspend that
