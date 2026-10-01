@@ -1,0 +1,30 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -1447,7 +1447,26 @@
+ 					   "s9_p1_backup", "s9_p2_backup",
+ 					   "s10_p1_backup", "s10_p2_backup";
+ 			#qcom,sensors = <11>;
+-			interrupts = <GIC_SPI 184 IRQ_TYPE_LEVEL_HIGH>;
++			/*
++			 * Routed through the MPM rather than straight to the
++			 * GIC, on pin 2, which is where downstream has this
++			 * interrupt too.
++			 *
++			 * The MPM is a hierarchical domain that forwards to the
++			 * GIC, so this is transparent while the SoC is awake -
++			 * it is only when the APSS collapses that the pin
++			 * matters, because the MPM is the only thing still
++			 * watching. Nothing else changes: the parent is still
++			 * GIC_SPI 184, which pin 2 maps to.
++			 *
++			 * tsens is deliberately the first interrupt moved over.
++			 * It exercises the domain while being harmless if the
++			 * routing is wrong - losing it degrades thermal trip
++			 * points, where getting the SPMI arbiter wrong would
++			 * take the PMIC, the charger and the USB extcon with
++			 * it, and leave the phone needing fastboot.
++			 */
++			interrupts-extended = <&mpm 2 IRQ_TYPE_LEVEL_HIGH>;
+ 			interrupt-names = "uplow";
+ 			#thermal-sensor-cells = <1>;
+ 		};

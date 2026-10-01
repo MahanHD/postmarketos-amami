@@ -506,6 +506,25 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
+**Step 3 landed 2026-10-01 (`0074`): the MPM domain actually works.** tsens was
+moved from `<GIC_SPI 184 ...>` to `interrupts-extended = <&mpm 2 ...>` and comes
+back as
+
+        irq 46   hwirq=2   chip=mpm   fc4a9000.thermal-sensor
+
+with all thirteen thermal zones still reading 37-57C and no oops. `hwirq` being
+**2** is the point: that is the MPM pin rather than the GIC number, so the
+interrupt really is allocated in the MPM domain, and tsens still working proves
+the domain forwards to its GIC parent correctly. r122 is
+`e54bb08747239bb0eaa78ff7518e03c4`.
+
+tsens was chosen deliberately as the first interrupt to move. It is level-high
+like the one that matters, it is in downstream's map on pin 2, and it is harmless
+if the routing is wrong - losing it costs thermal trip points, whereas getting the
+SPMI arbiter wrong takes the PMIC, the charger, the RTC, the power key and the
+USB extcon with it, which is a phone that needs fastboot and a physical cable
+dance. With the mechanism now proven, moving SPMI is a much smaller bet.
+
 **Step 2 landed 2026-10-01 (`0073`): the MPM binds.**
 
         /sys/bus/platform/drivers/qcom_mpm/interrupt-controller   bound
