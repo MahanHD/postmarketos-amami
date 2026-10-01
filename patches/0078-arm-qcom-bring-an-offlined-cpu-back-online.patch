@@ -1,0 +1,61 @@
+--- a/arch/arm/mach-qcom/platsmp.c
++++ b/arch/arm/mach-qcom/platsmp.c
+@@ -47,7 +47,17 @@
+ #ifdef CONFIG_HOTPLUG_CPU
+ static void qcom_cpu_die(unsigned int cpu)
+ {
+-	wfi();
++	/*
++	 * __cpu_disable() has already masked this CPU's per-CPU interrupts
++	 * through ipi_teardown(), so the wakeup IPI that qcom_boot_secondary()
++	 * sends can no longer be delivered here and a plain WFI would never
++	 * return.  The way back onto this core is the ACC/SAW release
++	 * sequence, which drags it through a core reset and back in at the
++	 * cold boot address, so do not return - and in particular do not fall
++	 * through to the resuscitate path in arch_cpu_idle_dead().
++	 */
++	while (1)
++		wfi();
+ }
+ #endif
+ 
+@@ -311,17 +321,22 @@
+ 	return ret;
+ }
+ 
+-static DEFINE_PER_CPU(int, cold_boot_done);
+-
+ static int qcom_boot_secondary(unsigned int cpu, int (*func)(unsigned int))
+ {
+-	int ret = 0;
++	int ret;
+ 
+-	if (!per_cpu(cold_boot_done, cpu)) {
+-		ret = func(cpu);
+-		if (!ret)
+-			per_cpu(cold_boot_done, cpu) = true;
+-	}
++	/*
++	 * Run the power-up and reset-release sequence on every online rather
++	 * than only on the first one.  qcom_cpu_die() parks an offlined core
++	 * in WFI with its interrupts masked, so resetting it is the only way
++	 * to get it fetching instructions again; __cpu_up() refreshes
++	 * secondary_data before every call, so coming back in at the cold
++	 * boot address works just as well for a re-online as it does for the
++	 * initial bringup.
++	 */
++	ret = func(cpu);
++	if (ret)
++		return ret;
+ 
+ 	/*
+ 	 * Send the secondary CPU a soft interrupt, thereby causing
+@@ -330,7 +345,7 @@
+ 	 */
+ 	arch_send_wakeup_ipi_mask(cpumask_of(cpu));
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static int msm8660_boot_secondary(unsigned int cpu, struct task_struct *idle)

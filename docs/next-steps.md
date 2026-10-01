@@ -10,13 +10,15 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-01 end of day: r126 is flashed and installed**, so
-the boot image and `/lib/modules` agree and `uname -v` prints `#127`. r126 is
-r125 with `0077` dropped, so it keeps the whole MPM and L2 SAW groundwork while
-leaving `mem_sleep` at `[s2idle]` and all four cores up. Images kept in
-`boot-images/`, newest first:
+**Device state as of 2026-10-01 end of day: r128 is flashed and installed**, so
+the boot image and `/lib/modules` agree and `uname -v` prints `#129`. r128 is
+r126's patch set again - `0072`-`0076`, no suspend ops, no `0078` - so `mem_sleep`
+is `[s2idle]` and all four cores are up. Images kept in `boot-images/`, newest
+first:
 
-        r126  (current)                            0072-0076, no suspend ops
+        r128  (current)  7eed4cecf1a5c16c8da822bf7d21f722   0072-0076, as r126
+        r127  DO NOT BOOT  a0b235222e63d100a6f98371b169acc6  + 0078: resets the SoC
+        r126  0072-0076, no suspend ops  (apk overwritten, see below)
         r125  cd88e313099ccfab02f18f69a451c614   + 0077, leaves the phone single-core
         r123  0b1481b0e20963c8cfa3e3b24849a667   spmi through the MPM
         r122  e54bb08747239bb0eaa78ff7518e03c4   tsens through the MPM, PMIC untouched
@@ -27,6 +29,16 @@ leaving `mem_sleep` at `[s2idle]` and all four cores up. Images kept in
 
 r122 is the one to fall back to if anything about the PMIC interrupt turns out to
 be wrong, since it has the MPM working but leaves SPMI on the GIC.
+
+**r127 is kept only as evidence and must not be booted.** Offlining a core on it is
+fine; onlining one hard-resets the phone. r128 exists because `0078` had to come back
+out, and it is byte-for-byte r126's patch set at a new `pkgrel`.
+
+**One bookkeeping casualty worth knowing about:** `r126.apk` in the pmbootstrap
+package dir was rebuilt *with* `0078` before the `pkgrel` was bumped, so that apk no
+longer matches `boot-images/boot-r126.img`, which is the genuine pre-`0078` image. The
+image is the trustworthy artifact; the apk of that number is not. Bump `pkgrel`
+**before** building, not after.
 
 They do not always agree, and that is not a mistake when they differ: the codec
 is `CONFIG_SND_SOC_WCD9320=m`, so codec patches ship in `snd-soc-wcd9320.ko` and
@@ -146,11 +158,14 @@ prerequisite.
    decimator muxes are not symmetric - `dec1_mux_text` is
    `{"ZERO", "DMIC1", "ADC6"}`, so DEC1 cannot take ADC1 at all; ADC1 is offered
    only to DEC6 and DEC7. Assuming DEC*n* pairs with ADC*n* would be wrong.
-2. **CPU hotplug online**, which is now the gate on deep suspend and is broken on
-   its own terms: a core can be offlined and never brought back. Mechanism
-   identified in `arch/arm/mach-qcom/platsmp.c`, see Phase 2. ARM SMP work rather
-   than power work, and worth doing for its own sake - hotplug being broken is a
-   bug regardless of suspend.
+2. **CPU hotplug online**, the gate on deep suspend, and now diagnosed rather than
+   merely identified (Phase 2). The core never wakes because `ipi_teardown()` masks
+   `IPI_WAKEUP` before it parks in `wfi()`. The cheap-looking fix was tried and is
+   harmful: re-running the ACC/SAW release on a core that is powered and parked
+   clamps and resets a live core and **hard-resets the SoC** (`0078`, parked). The
+   real fix needs the dying core power-collapsed through its SPM first, which means
+   exporting an entry point from `drivers/soc/qcom/spm.c`. That makes this power
+   work after all, not pure ARM SMP work - correcting what this list said before.
 3. **Deep suspend**, blocked on (2). Everything else for it is built and verified:
    `0072`-`0076` give a programmed L2 SAW, a bound MPM that flushes itself, and the
    PMIC interrupt MPM-routed and armed, and TrustZone does the collapse through an
@@ -169,6 +184,16 @@ the unexplained half of the CPU wedge (two failures, different signatures).
   effectively unkillable while it runs. Three attempts pushed load average past 5.
   The SMBB notes elsewhere in this file describe reading `0-00` that way - treat that
   as "for a small range, patiently", not as a general technique.
+- **pstore/ramoops retains nothing on this device, so it cannot be used for
+  post-mortem.** The DT reserves `ramoops@3e8e0000` and the kernel says
+  `printk: legacy console [ramoops-1] enabled` and `Registered ramoops as persistent
+  store backend`, which all looks like a working black box. `/sys/fs/pstore` is
+  nevertheless **empty after an ordinary clean reboot** - that control was run on
+  2026-10-01. An empty pstore after a crash therefore says nothing whatever about how
+  the machine went down. Reasoning from its emptiness produced one wrong conclusion
+  here already (a confident "DDR lost its contents", withdrawn). If a post-mortem is
+  ever actually needed, make ramoops work first and prove it with a deliberate
+  `sysrq-trigger` crash.
 - **Do not `pkill -f <script>` from the host** to clean up something running on the
   phone. The pattern matches the local `ssh` command that contains the script name,
   so it kills the session issuing it. Kill by PID over ssh, on the phone.
@@ -565,17 +590,38 @@ So this is a pre-existing mainline limitation on msm8974, and it blocks
 unconditional on that path - every mem suspend parks the secondaries whether the
 platform can bring them back or not.
 
-**The mechanism, from `arch/arm/mach-qcom/platsmp.c`.** Two things look wrong
-together:
+**The mechanism, established 2026-10-01 and no longer a guess.** The core never
+wakes, and the reason is that its wakeup interrupt has been masked:
+
+        __cpu_disable()
+          -> ipi_teardown(cpu)
+               for (i = 0; i < nr_ipi; i++)
+                       disable_percpu_irq(ipi_irq_base + i);
+
+`nr_ipi` covers the whole `ipi_msg_type` enum, and `IPI_WAKEUP` is the **first**
+entry in it. So by the time the dying core reaches
 
         static void qcom_cpu_die(unsigned int cpu)
         {
                 wfi();
         }
 
-  a bare `wfi()` where `cpu_die` is expected not to return - ARM's
-  `arch_cpu_idle_dead()` falls through into `secondary_start_kernel` when it does
-  - and
+its own wakeup IPI is disabled at the GIC, and the `arch_send_wakeup_ipi_mask()`
+that `qcom_boot_secondary()` sends can never be delivered to it. The `wfi()` never
+returns, `cpu_die` never returns, and ARM's fallthrough into
+`secondary_start_kernel` is therefore unreachable.
+
+**The confirming observation is a missing message.** `arch_cpu_idle_dead()` prints
+`smp_ops.cpu_die() returned, trying to resuscitate` before it falls through. On a
+failed online we get
+
+        CPU1: failed to come online
+
+and **no** resuscitate line. That separates "woke up and then failed" from "never
+woke at all", and it is the second.
+
+**`cold_boot_done` is the other half, but fixing it the obvious way makes things
+worse - this was tried.** The gate
 
         static DEFINE_PER_CPU(int, cold_boot_done);
         if (!per_cpu(cold_boot_done, cpu)) {
@@ -583,10 +629,52 @@ together:
                 per_cpu(cold_boot_done, cpu) = true;
         }
 
-  so the ACC and SAW release sequence runs **once per CPU, ever**. A core that has
-  been down is re-woken with only an IPI and no re-initialisation. Fixing this is
-  its own project in ARM SMP code, not something the suspend work can route
-  around.
+does run the ACC/SAW release sequence **once per CPU, ever**. `0078` dropped the
+gate so it re-ran on every online, and made `qcom_cpu_die()` loop in `wfi()` so a
+stray wake could not resuscitate behind the kernel's back. Built as r127, flashed,
+and it **hard-resets the SoC** at the online, three times out of three:
+
+        --- offline cpu1
+          rc=0 online=0,2-3
+          IRQ75/78/87: set affinity failed(-22)
+        --- online cpu1          <- written and synced
+                                 <- nothing further; SoC resets here
+
+**Why, and it is the whole lesson.** `kpssv2_release_secondary()` is a *cold boot*
+power-up sequence: `APC_PWR_GATE_CTL` (BHS on, LDO bypass), the L2 SAW's
+`APCS_SAW2_2_VCTL`, then `CLAMP | COREPOR_RST` asserted and released. That is only
+valid on a core that is **genuinely powered off**. `0078` left the core powered and
+clocked in `wfi()`, so the sequence clamps and resets a live core with the L2 and
+the fabric up; the bus hangs and the secure side resets the SoC. Re-running the
+release is necessary but not sufficient - the core has to be off first.
+
+**So the real fix is bigger than ARM SMP code**, which is a correction to what this
+file said before. The dying core must be power-collapsed, not parked: `qcom_cpu_die()`
+needs to put its own SPM into collapse mode and then `wfi()`, letting the SPM and ACC
+sequence the core off the way downstream's `msm_cpu_die` does. Only then is the
+cold-boot release sequence operating on the state it expects. The pieces are mostly
+in the tree already - `0072` programmed the L2 SAW's PC sequences, the per-CPU SPM
+has `start_index[PM_SLEEP_MODE_SPC]`, and `qcom_scm_cpu_power_down()` is
+`EXPORT_SYMBOL_GPL` - but `spm_set_low_power_mode()` is private to
+`drivers/soc/qcom/spm.c` and its cpuidle driver, so it needs an exported entry
+point before `platsmp.c` can call it.
+
+**Two things that are *not* explained, recorded so they are not mistaken for
+settled.** First, there is **no watchdog driver bound at all** on this device -
+`/sys/class/watchdog` is empty and systemd's `RuntimeWatchdogUSec` is 0 - so whatever
+resets the SoC, "a watchdog bit" is not the mechanism; that hypothesis was raised here
+and is withdrawn. Second, the phone also hard-reset **once on r126, which has no
+`0078`**, about 13 minutes after a failed online, in the middle of an `apk add`. On
+r126 the failed online returns `EIO` without running the release sequence at all, so
+that reset cannot have the same cause as r127's. A core left parked in `wfi()` may
+leave the machine in a state that fails later, or it may be unrelated. One
+observation, not reproduced, and pstore cannot help (see the traps).
+
+**One thing offlining does that is survivable but worth knowing:** it strands a few
+interrupts, `IRQ75/78/87: set affinity failed(-22)` (the numbers move between boots;
+in one boot 75 was `msmgpio 62` SD card-detect, 79 `wcnss`, 85 `q6v5 wdog`). Those
+are edge interrupts with zero counts, and the offline itself completes and the phone
+keeps running. It is the online that kills it.
 
 **`0077` is parked, not in the build**, and that matters for more than tidiness:
 registering any `platform_suspend_ops` makes `deep` the **default** `mem_sleep`,
@@ -2551,6 +2639,12 @@ That makes camera the largest single area left, ahead of audio.
 
 Out of the build, kept because the data in them was expensive to recover:
 
+- `0078` - dropping `cold_boot_done` so the ACC/SAW release re-runs on every
+  online, plus a non-returning `qcom_cpu_die()`. **Parked because it is actively
+  dangerous**, not merely incomplete: it hard-resets the SoC at the online, every
+  time, by clamping and resetting a core that is still powered. Kept because the
+  diagnosis in it is right (see Phase 2) and because the next attempt needs exactly
+  this plus a prior power collapse. Do not re-add it on its own.
 - `0077` - the `platform_suspend_ops`. Correct as far as it goes, and parked only
   because `PM_SUSPEND_MEM` parks the secondary CPUs and this SoC cannot bring them
   back. Note it is not inert if re-added: registering any suspend ops makes `deep`
