@@ -10,10 +10,14 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-01 end of day: r123 is flashed and installed**, so
-the boot image and `/lib/modules` agree and `uname -v` prints `#124`. Images kept
-in `boot-images/`, newest first:
+**Device state as of 2026-10-01 end of day: r126 is flashed and installed**, so
+the boot image and `/lib/modules` agree and `uname -v` prints `#127`. r126 is
+r125 with `0077` dropped, so it keeps the whole MPM and L2 SAW groundwork while
+leaving `mem_sleep` at `[s2idle]` and all four cores up. Images kept in
+`boot-images/`, newest first:
 
+        r126  (current)                            0072-0076, no suspend ops
+        r125  cd88e313099ccfab02f18f69a451c614   + 0077, leaves the phone single-core
         r123  0b1481b0e20963c8cfa3e3b24849a667   spmi through the MPM
         r122  e54bb08747239bb0eaa78ff7518e03c4   tsens through the MPM, PMIC untouched
         r121  b8154484e19e74a88417326f19abf9b8   MPM bound, nothing routed
@@ -125,15 +129,30 @@ what makes this work. Removed once it was known safe.
 
 ### The next jobs
 
-1. **The WCD9320 codec driver** - now the only thing between this phone and
-   sound, and the largest single piece of audio work. APR, the Q6 services, the
-   frontend DAIs and SLIMbus are all up, and the Taiko enumerates on the bus;
-   mainline simply has no driver for that part. wcd9335 is the closest relative
-   to work from. See Phase 3.
-2. **Deep suspend**, now measured to be worth it: s2idle saves only 37%, and the gap
-   between 156 mA and single-digit standby is the largest remaining battery item. See
-   Phase 2.
-3. **Proximity**, still the one sensor that enumerates but never reports.
+Rewritten 2026-10-01. The old list named the codec driver, deep suspend and
+proximity; the driver exists, proximity works, and deep suspend has acquired a
+prerequisite.
+
+1. **The microphone.** The largest unblocked piece, and the only remaining angle on
+   why playback is silent. `0067` and `0068` already give a working capture PCM at
+   `card 0, device 2`; what is missing is the analog path - micbias, the ADC
+   enable, and the decimator input muxes. Doing it also finishes the TX bisection
+   as a side effect, which is the one experiment that could still say something
+   about the RX direction. See Phase 3.
+2. **CPU hotplug online**, which is now the gate on deep suspend and is broken on
+   its own terms: a core can be offlined and never brought back. Mechanism
+   identified in `arch/arm/mach-qcom/platsmp.c`, see Phase 2. ARM SMP work rather
+   than power work, and worth doing for its own sake - hotplug being broken is a
+   bug regardless of suspend.
+3. **Deep suspend**, blocked on (2). Everything else for it is built and verified:
+   `0072`-`0076` give a programmed L2 SAW, a bound MPM that flushes itself, and the
+   PMIC interrupt MPM-routed and armed, and TrustZone does the collapse through an
+   already-exported SCM call. `0077` is parked and ready.
+4. **Camera**, still the largest untouched area and still its own project.
+
+Smaller, self-contained: wire a battery `temp` consumer if anything wants one,
+drop `THERMAL_EMULATION` once the frequency ceiling can reach 75 C honestly, and
+the unexplained half of the CPU wedge (two failures, different signatures).
 
 ### Two traps worth not rediscovering
 
@@ -2423,6 +2442,10 @@ That makes camera the largest single area left, ahead of audio.
 
 Out of the build, kept because the data in them was expensive to recover:
 
+- `0077` - the `platform_suspend_ops`. Correct as far as it goes, and parked only
+  because `PM_SUSPEND_MEM` parks the secondary CPUs and this SoC cannot bring them
+  back. Note it is not inert if re-added: registering any suspend ops makes `deep`
+  the **default** `mem_sleep`, so ordinary idle suspends take that path too.
 - `0034`, `0035`, `0036`, `0037` - the GPU and MDP IOMMUs, and the page-size fix.
 - `0018`, `0025` - the earlier `qcom_iommu` node and the GPU's binding to it.
 - `0027` - the non-secure BFB settings.
