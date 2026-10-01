@@ -2136,8 +2136,8 @@ So the work splits into three milestones, and only the first two are small:
    (**stale as of 2026-10-01 - it no longer happens at all; it decoded to
    TX_MSG_SENT | TX_NACKED_2, see the dated note later in this section**)
    during stream setup. `SLIM RX3`..`RX7 MUX` warn "has no paths", which is
-   expected while only RX1/RX2 are routed. Capture is absent entirely - the
-   driver registers one playback DAI - so "Not able to allocate memory for 0
+   expected while only RX1/RX2 are routed. Capture is **no longer** absent - `0067`
+   added a capture DAI and `tx_chs`, so the old "Not able to allocate memory for 0
    slimbus tx ports" is not a fault.
 
    **Boot gets slow if the codec is blacklisted**, because the card's dai-links
