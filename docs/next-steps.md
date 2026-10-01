@@ -506,6 +506,33 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
+**Step 2 landed 2026-10-01 (`0073`): the MPM binds.**
+
+        /sys/bus/platform/drivers/qcom_mpm/interrupt-controller   bound
+        supplier:platform:f9011000.mailbox                        mailbox resolved
+        genpd "interrupt-controller"  off-0                       the flush hook exists
+
+and nothing regressed - both remoteprocs running, WiFi connected, no oops. The
+node is at root level following the `smp2p-*` pattern, with the vMPM slice added
+to `rpm_msg_ram` as `apss_mpm: sram@1d0` sized **0x30**, not downstream's lazy
+0x1000, which would have run straight over `mpss_master_stats` at 0xb50.
+`CONFIG_QCOM_MPM=y`. r121 is `b8154484e19e74a88417326f19abf9b8`.
+
+*It watches nothing yet, and that is the next step.* The MPM is a hierarchical
+irq domain: a device only gets watched if its interrupt is allocated **through**
+that domain. The wakeup-enabled interrupts are still straight GIC children -
+
+        irq 37  hwirq 222  (spmi arbiter)      irq 46  hwirq 216  (tsens)
+
+so making the power key a wakeup source means re-routing the SPMI arbiter's
+interrupt from `<&intc GIC_SPI 190 ...>` to `interrupts-extended = <&mpm 62 ...>`.
+That should be transparent while awake, since the MPM domain forwards to the GIC,
+but it changes how the PMIC interrupt is wired in normal operation, so it wants
+its own flash and its own check that the PMIC still works.
+
+*Then* the remaining chain is unchanged: a caller for the genpd `power_off` that
+flushes vMPM, `platform_suspend_ops` with GIC save/restore, and RPM sleep votes.
+
 **Revised again, 2026-10-01: the MPM is a DT node plus a data translation, not a
 driver port, and the wakeup we need is covered.** The blocker below stands - there
 is no wakeup path today - but it is far more tractable than first assessed.
@@ -534,9 +561,18 @@ n` is hwirq `n+32`:
         pin 53 -> hwirq 104  (GIC_SPI  72)
         pin 62 -> hwirq 222  (GIC_SPI 190)   SPMI arbiter -> PM8941 -> power key
 
-  which drops straight into mainline's binding as
+  **Those are hwirq numbers, and this binding wants GIC SPI numbers** - an
+  earlier version of this note said they dropped straight in, which was wrong and
+  would have silently cost the wakeup. Downstream's own driver compares against
+  `irq_data->hwirq`, and its source says so (`mpm-of.c`: "a tuple mapping hwirq to
+  a MPM"), while mainline's driver feeds the value into a GIC fwspec as
+  `param[1]` with `param[0] = 0` - a **SPI** number. So every entry loses 32:
 
-        qcom,mpm-pin-map = <2 216>, <47 165>, <50 172>, <53 104>, <62 222>;
+        qcom,mpm-pin-map = <2 184>, <47 133>, <50 140>, <53 72>, <62 190>;
+
+  Confirmed two independent ways: the dtsi gives `tsens` as `GIC_SPI 184` and
+  `spmi` as `GIC_SPI 190`, and the running kernel reports those same two devices
+  on hwirq **216** and **222** - exactly 32 apart.
 
   **That numbering is confirmed two ways rather than assumed.** `spmi@fc4cf000` is
   `GIC_SPI 190` in mainline's dtsi, which is hwirq 222; and the live kernel's own

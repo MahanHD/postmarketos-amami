@@ -1,0 +1,72 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -348,6 +348,52 @@
+ 		hwlocks = <&tcsr_mutex 3>;
+ 	};
+ 
++	/*
++	 * The MPM watches a few wakeup interrupts while the APSS is collapsed
++	 * and replays them to the GIC on resume. Nothing can wake a fully
++	 * collapsed SoC without it, so it is a prerequisite for any suspend
++	 * deeper than s2idle - and it does nothing on its own, because the
++	 * driver only flushes vMPM to RPM from a genpd power_off that nothing
++	 * on this SoC currently calls.
++	 *
++	 * Everything here is downstream's qcom,mpm@fc4281d0 for this board,
++	 * translated into this binding:
++	 *
++	 *   qcom,ipc-bit-offset = 1   ->  mboxes = <&apcs 1>
++	 *   interrupts <0 0xab 1>     ->  GIC_SPI 171, edge rising
++	 *
++	 * The pin map needs care. Downstream's qcom,gic-map is **hwirq**
++	 * numbered - its own driver compares against irq_data->hwirq - while
++	 * this binding wants **GIC SPI** numbers, which the driver feeds
++	 * straight into a GIC fwspec. So every entry loses 32. Getting that
++	 * backwards would cost nothing visible at boot and leave the phone
++	 * unable to wake.
++	 *
++	 * Of downstream's 63 entries only these five carry a real pin; the
++	 * other 58 are pin 255, the sentinel for wakeup-capable but not
++	 * MPM-routed. Pin 62 is the one that matters: hwirq 222 is GIC_SPI 190,
++	 * the SPMI arbiter, which is how the PM8941's power key gets in.
++	 * Cross-checked both ways - the dtsi gives spmi GIC_SPI 190 and tsens
++	 * GIC_SPI 184, and the running kernel's wakeup-enabled GIC interrupts
++	 * are hwirq 222 and 216.
++	 */
++	mpm: interrupt-controller {
++		compatible = "qcom,mpm";
++		qcom,rpm-msg-ram = <&apss_mpm>;
++		interrupts = <GIC_SPI 171 IRQ_TYPE_EDGE_RISING>;
++		mboxes = <&apcs 1>;
++		interrupt-controller;
++		#interrupt-cells = <2>;
++		interrupt-parent = <&intc>;
++		qcom,mpm-pin-count = <64>;
++		qcom,mpm-pin-map = <2 184>,	/* tsens */
++				   <47 133>,
++				   <50 140>,
++				   <53 72>,
++				   <62 190>;	/* spmi -> pm8941 -> power key */
++		#power-domain-cells = <0>;
++	};
++
+ 	smp2p-adsp {
+ 		compatible = "qcom,smp2p";
+ 		qcom,smem = <443>, <429>;
+@@ -1287,6 +1333,16 @@
+ 				reg = <0x150 0x14>;
+ 			};
+ 
++			/*
++			 * The APSS slice of vMPM. Downstream maps 0x1000 here,
++			 * which would run straight over mpss_master_stats at
++			 * 0xb50; the layout is only (2 + 5 * stride) words, so
++			 * 0x30 for a 64-pin MPM.
++			 */
++			apss_mpm: sram@1d0 {
++				reg = <0x1d0 0x30>;
++			};
++
+ 			mpss_master_stats: sram@b50 {
+ 				reg = <0xb50 0x14>;
+ 			};
