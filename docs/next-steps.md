@@ -133,12 +133,19 @@ Rewritten 2026-10-01. The old list named the codec driver, deep suspend and
 proximity; the driver exists, proximity works, and deep suspend has acquired a
 prerequisite.
 
-1. **The microphone.** The largest unblocked piece, and the only remaining angle on
-   why playback is silent. `0067` and `0068` already give a working capture PCM at
-   `card 0, device 2`; what is missing is the analog path - micbias, the ADC
-   enable, and the decimator input muxes. Doing it also finishes the TX bisection
-   as a side effect, which is the one experiment that could still say something
-   about the RX direction. See Phase 3.
+1. **The microphone**, and it is now a prerequisite rather than a feature. Every
+   capture-side measurement on this codec is currently uninterpretable because
+   nothing is known to put non-zero data on a SLIM TX port - the RX-to-TX loopback
+   via `RMIX1` was tried and cannot be read for exactly that reason (Phase 3). A
+   working mic is the only available positive control. `0067` and `0068` give the
+   PCM; what is missing is micbias, the ADC enable and the decimator input muxes.
+
+   Two board facts already extracted, from downstream's `qcom,audio-routing`:
+   `AMIC1 <- MIC BIAS1 External <- Handset Mic` is the main mic, and the
+   loudspeaker is **bridged LINEOUT1-4**, not SPK DRV. And one trap: the
+   decimator muxes are not symmetric - `dec1_mux_text` is
+   `{"ZERO", "DMIC1", "ADC6"}`, so DEC1 cannot take ADC1 at all; ADC1 is offered
+   only to DEC6 and DEC7. Assuming DEC*n* pairs with ADC*n* would be wrong.
 2. **CPU hotplug online**, which is now the gate on deep suspend and is broken on
    its own terms: a core can be offlined and never brought back. Mechanism
    identified in `arch/arm/mach-qcom/platsmp.c`, see Phase 2. ARM SMP work rather
@@ -2319,6 +2326,39 @@ So the work splits into three milestones, and only the first two are small:
    this phone off is **Power + Volume Up**, not a ten-second power hold, which
    does nothing.
 
+
+   **The RX-to-TX loopback: a good idea that is still unmeasurable, and why the
+   microphone is now the blocking piece.** A SLIM TX port can carry more than a
+   decimator. From downstream's own mux:
+
+        sb_tx1_mux_text = { "ZERO", "RMIX1".."RMIX7", "DEC1" }
+        CONN_TX_SB_B1_CTL (0x3a3) shift 0: 0=ZERO, 1..7=RMIX1..RMIX7, 8=DEC1
+
+   `RMIX1` is the **RX1 mixer output** - the playback path. So the codec can loop
+   playback back to the AP over SLIMbus with no microphone involved, which looked
+   like the bisection that had been impossible to measure: play on RX1, capture
+   RMIX1, and non-zero would prove the RX chain carries data internally.
+
+   Run properly - playback confirmed `RUNNING` across all five captures, each four
+   seconds - every setting gives zeros:
+
+        ZERO -> zeros   RMIX1 -> zeros   RMIX2 -> zeros   DEC1 -> zeros   ZERO -> zeros
+
+   **And that cannot be interpreted.** The capture path has never been shown to
+   carry *any* data: with the TX slave port outright **disabled** it still returned
+   byte-identical zeros. So uniform zeros is exactly what a dead capture path
+   produces whatever RMIX1 holds. The result is *consistent* with the RX chain
+   carrying nothing, and proves nothing.
+
+   **What is missing is a positive control** - a signal known to be non-zero
+   arriving on a SLIM TX port. The TX mux offers only RMIX1-7 (which needs RX to
+   work, so circular) and DEC1 (which needs a decimator fed by a real
+   microphone). There is no internal test tone. So the analog capture path is not
+   just a feature any more: **it is the only way to get an instrument**, and
+   without it no capture-side measurement on this codec means anything.
+
+   That makes the microphone the next piece of work, and gives it a sharper
+   purpose than "the phone should have a mic".
 
    **A SLIMbus capture path now exists (`0067`, `0068`), and the bisection it was
    built for is inconclusive.** The idea was to test the CDC-to-port interface
