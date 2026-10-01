@@ -10,12 +10,19 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-09-19 end of day: r119 is flashed and installed**, so
-the boot image and `/lib/modules` agree for the first time in a while and
-`uname -v` prints `#120`. Images kept in `boot-images/`: r119
-`73600a403efcdf28397441abccbc7099`, r116 `66305348a849b9749e013a805624fe59`
-(the last one before the battery-temperature work), r90
-`c2f94594ff341f68e5a1ce5aa04a1abd`.
+**Device state as of 2026-10-01 end of day: r123 is flashed and installed**, so
+the boot image and `/lib/modules` agree and `uname -v` prints `#124`. Images kept
+in `boot-images/`, newest first:
+
+        r123  0b1481b0e20963c8cfa3e3b24849a667   spmi through the MPM
+        r122  e54bb08747239bb0eaa78ff7518e03c4   tsens through the MPM, PMIC untouched
+        r121  b8154484e19e74a88417326f19abf9b8   MPM bound, nothing routed
+        r120  1a3b95afe7cdd8c795bed60c3219c819   L2 SAW only
+        r119  73600a403efcdf28397441abccbc7099   before any suspend work
+        r90   c2f94594ff341f68e5a1ce5aa04a1abd   long-standing fallback
+
+r122 is the one to fall back to if anything about the PMIC interrupt turns out to
+be wrong, since it has the MPM working but leaves SPMI on the GIC.
 
 They do not always agree, and that is not a mistake when they differ: the codec
 is `CONFIG_SND_SOC_WCD9320=m`, so codec patches ship in `snd-soc-wcd9320.ko` and
