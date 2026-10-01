@@ -2132,7 +2132,9 @@ So the work splits into three milestones, and only the first two are small:
         amixer -c 0 cset name='HPHL DAC Switch' 1
         amixer -c 0 cset name='HPHL Volume' 70%
 
-   **Loose ends.** The controller logs `Error Interrupt received 0x82000000`
+   **Loose ends.** The controller **used to** log `Error Interrupt received 0x82000000`
+   (**stale as of 2026-10-01 - it no longer happens at all; it decoded to
+   TX_MSG_SENT | TX_NACKED_2, see the dated note later in this section**)
    during stream setup. `SLIM RX3`..`RX7 MUX` warn "has no paths", which is
    expected while only RX1/RX2 are routed. Capture is absent entirely - the
    driver registers one playback DAI - so "Not able to allocate memory for 0
