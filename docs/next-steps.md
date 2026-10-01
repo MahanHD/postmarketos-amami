@@ -2327,6 +2327,32 @@ So the work splits into three milestones, and only the first two are small:
    does nothing.
 
 
+   **Two leads chased and closed 2026-10-01, both recorded so nobody repeats them.**
+
+   *The NGD "Error Interrupt received 0x82000000" is stale.* It is listed further
+   down as a loose end, and it decodes to something that looked very promising
+   once the fault was known to be direction-agnostic:
+
+        0x82000000 = NGD_INT_TX_MSG_SENT (BIT 31) | NGD_INT_TX_NACKED_2 (BIT 25)
+
+   bit 25 being a message **not acknowledged by the target device** - exactly the
+   shape of a setup message being rejected while ordinary register traffic works.
+   But it **no longer happens**: zero "Error Interrupt received" since boot and none
+   during a playback that still overflows. It was from an earlier build and one of
+   `0053`-`0056` evidently fixed it. The bus layer now reports no errors at all.
+
+   *Mainline does no SLIMbus bandwidth or clock-gear management, and that is
+   probably fine.* Downstream's core computes a required clock gear from the
+   scheduled channels and sends it; mainline has none of that machinery - no
+   `usedslots`, no `slim_reconfigure_now`, no gear computation - and the NGD simply
+   does
+
+        ctrl->ctrl.clkgear = SLIM_MAX_CLK_GEAR;    /* once, at probe */
+
+   Worth knowing as a real architectural difference, but max gear is the generous
+   choice: one stereo 48kHz channel is far inside it. Not a plausible cause of
+   zero data.
+
    **2026-10-01, the sharpest statement of the fault so far: the codec moves no
    data in EITHER direction, while register access over the same bus is perfect.**
 
