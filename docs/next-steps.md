@@ -2327,6 +2327,47 @@ So the work splits into three milestones, and only the first two are small:
    does nothing.
 
 
+   **2026-10-01, the sharpest statement of the fault so far: the codec moves no
+   data in EITHER direction, while register access over the same bus is perfect.**
+
+   The capture side was poked by hand, with no driver changes, down the only chain
+   SB TX port 0 can carry - `ADC6 -> DEC1 -> port 0` (port 0 offers only DEC1 or
+   RMIX, and DEC1 accepts only DMIC1 or ADC6). Every register confirmed by
+   readback, and MCLK confirmed running at `div_clk1 enable_count = 1` by keeping a
+   playback open alongside:
+
+        30c=03  ADC block clock      13d=f6  micbias4 enabled
+        167=0a  TX_5_6_EN            169=82  ADC6 enabled
+        393=02  DEC1 <- ADC6         30a=01  DEC1 clock
+        223=40  ADC source (not DMIC) 3a3=08  SB TX port 0 <- DEC1
+        311=01  CDC_CLK_MCLK_CTL
+
+   Capture: **exactly zeros**, with the ADC on, with it off, and on again.
+
+   **MCLK was a real confound and is now excluded.** `div_clk1` is only enabled
+   while playback runs, and the capture path added by `0067` has no MCLK supply
+   route - so the first version of this test had no clock for the decimator at all.
+   Repeating it with a playback open fixes that, and changes nothing.
+
+   **What this buys.** Put it beside the RX result and the fault is direction
+   agnostic: the RX port **fills and is never drained** (overflow, and that bit was
+   validated against a control - an enabled port with nothing feeding it does not
+   overflow), and the TX port **is never filled**. Bus-level delivery demonstrably
+   works, because data arrives at the RX port. What does not work is the codec's own
+   side of its data ports.
+
+   That retires, in one go, every hypothesis specific to the RX chain: the
+   interpolators, Class-H, the DSM/DAC, the mixer routing, the RX port sample
+   width, and the MCLK pin mux. Any remaining explanation has to be something the
+   two directions share - the codec's port engine, or how its data channels are
+   established on the bus.
+
+   **Honest limit of this result.** The hand-poked TX chain is not a validated
+   instrument either; it could in principle be missing a decimator rate or width
+   setting. What is validated is the RX overflow bit, so "data arrives and is not
+   consumed" is solid, and "and nothing comes back the other way" is strong
+   corroboration rather than proof.
+
    **The RX-to-TX loopback: a good idea that is still unmeasurable, and why the
    microphone is now the blocking piece.** A SLIM TX port can carry more than a
    decimator. From downstream's own mux:
