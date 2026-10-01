@@ -1,0 +1,29 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi
+@@ -1749,7 +1749,25 @@
+ 			      <0xfc4cb000 0x1000>,
+ 			      <0xfc4ca000 0x1000>;
+ 			interrupt-names = "periph_irq";
+-			interrupts = <GIC_SPI 190 IRQ_TYPE_LEVEL_HIGH>;
++			/*
++			 * Through the MPM on pin 62, which is where downstream
++			 * routes it too, rather than straight to GIC_SPI 190.
++			 *
++			 * This is the interrupt that makes suspend usable. Every
++			 * PM8941 interrupt arrives here - the arbiter demuxes
++			 * them - so the power key, the RTC alarm and the charger
++			 * all reach the SoC through this one line. Once the APSS
++			 * collapses the GIC is down and the MPM is the only
++			 * thing still watching, so unless this pin is armed
++			 * there is no way back from suspend.
++			 *
++			 * Transparent while awake: the MPM domain forwards to
++			 * the same GIC_SPI 190 it replaced. Verified first with
++			 * tsens on pin 2 (0074) so that a mistake in the
++			 * routing would not take the PMIC, the charger and the
++			 * USB extcon down with it.
++			 */
++			interrupts-extended = <&mpm 62 IRQ_TYPE_LEVEL_HIGH>;
+ 			qcom,ee = <0>;
+ 			qcom,channel = <0>;
+ 			#address-cells = <2>;

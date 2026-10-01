@@ -506,6 +506,41 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
+**Step 4 landed 2026-10-01 (`0075`): the wakeup path is complete.** The SPMI
+arbiter now goes through the MPM on pin 62 instead of `GIC_SPI 190`:
+
+        irq 37  hwirq=62  chip=mpm  wakeup=enabled    <- PMIC: power key, RTC, charger
+        irq 46  hwirq=2   chip=mpm  wakeup=enabled    <- tsens
+
+and nothing that depends on the PMIC broke: all three power supplies present,
+battery reading 91% at 39.1C, `rtc-pm8xxx` bound, the pwrkey input device there,
+and `udc ci_hdrc.0` still alive - which was the failure mode worth fearing, since
+USB takes its VBUS state from the charger. Existing s2idle still works
+(`rtcwake -m freeze -s 5` round-tripped, suspend count 1). r123 is
+`0b1481b0e20963c8cfa3e3b24849a667`.
+
+`wakeup=enabled` on pin 62 is the part that matters. The driver's mask/unmask
+track the vMPM ENABLE bit, and the PM core disables non-wakeup interrupts on the
+way into suspend, so at the moment the flush happens only wakeup sources will be
+armed - which falls out of the existing plumbing rather than needing anything
+written.
+
+**What remains, and it is now only the suspend side:**
+
+  1. **A caller for the genpd `power_off`.** `mpm_pd_power_off()` clears STATUS and
+     does `mbox_send_message()` to hand vMPM to RPM. It is a genpd callback and
+     nothing on this SoC calls it, so vMPM is never flushed to hardware. Either
+     attach a consumer to that domain or add an entry point.
+  2. **`platform_suspend_ops`** whose `.enter` puts the CPU and L2 SAWs in
+     `PM_SLEEP_MODE_PC` and calls `cpu_suspend(0, ...)` with a collapse function
+     passing `QCOM_SCM_CPU_PWR_DOWN_L2_OFF`. The pieces are all public: the L2's
+     `spm_driver_data` via `of_parse_phandle`/`dev_get_drvdata` off the
+     `l2-cache` node's `qcom,saw`, `spm_set_low_power_mode()` from
+     `<soc/qcom/spm.h>`, and `qcom_scm_cpu_power_down()` which is exported.
+  3. **GIC save/restore** across the collapse.
+  4. **RPM sleep votes**, which is what turns a collapsed SoC into saved
+     milliamps.
+
 **Step 3 landed 2026-10-01 (`0074`): the MPM domain actually works.** tsens was
 moved from `<GIC_SPI 184 ...>` to `interrupts-extended = <&mpm 2 ...>` and comes
 back as
