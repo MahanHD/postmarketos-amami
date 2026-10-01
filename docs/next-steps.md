@@ -513,6 +513,68 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
+**BLOCKED 2026-10-01: deep suspend cannot work until CPU hotplug online does.**
+The first `PM_SUSPEND_MEM` attempt suspended and resumed correctly - and came back
+on **one core**.
+
+        Disabling non-boot CPUs ...
+        Enabling non-boot CPUs ...
+        CPU1: failed to come online     Error taking CPU1 up: -5
+        CPU2: failed to come online     Error taking CPU2 up: -5
+        CPU3: failed to come online     Error taking CPU3 up: -5
+        post: online cpus=0     nproc=1
+
+`suspend success=1`, `rtcwake` returned 0, the MPM flush did not abort anything.
+The suspend worked. The CPUs did not come back, and nothing in userspace can
+recover them - writing 1 to `cpuN/online` reports success in the file and changes
+nothing; `/proc/cpuinfo` stays at one processor until a reboot.
+
+**It is not the suspend path.** Plain hotplug, with no suspend anywhere near it:
+
+        echo 0 > cpu1/online   ->  ok, nproc 3
+        echo 1 > cpu1/online   ->  "write error: I/O error", CPU1: failed to come online
+
+So this is a pre-existing mainline limitation on msm8974, and it blocks
+`PM_SUSPEND_MEM` completely, because `pm_sleep_disable_secondary_cpus()` is
+unconditional on that path - every mem suspend parks the secondaries whether the
+platform can bring them back or not.
+
+**The mechanism, from `arch/arm/mach-qcom/platsmp.c`.** Two things look wrong
+together:
+
+        static void qcom_cpu_die(unsigned int cpu)
+        {
+                wfi();
+        }
+
+  a bare `wfi()` where `cpu_die` is expected not to return - ARM's
+  `arch_cpu_idle_dead()` falls through into `secondary_start_kernel` when it does
+  - and
+
+        static DEFINE_PER_CPU(int, cold_boot_done);
+        if (!per_cpu(cold_boot_done, cpu)) {
+                ret = func(cpu);     /* kpssv2_release_secondary: the ACC/SAW init */
+                per_cpu(cold_boot_done, cpu) = true;
+        }
+
+  so the ACC and SAW release sequence runs **once per CPU, ever**. A core that has
+  been down is re-woken with only an IPI and no re-initialisation. Fixing this is
+  its own project in ARM SMP code, not something the suspend work can route
+  around.
+
+**`0077` is parked, not in the build**, and that matters for more than tidiness:
+registering any `platform_suspend_ops` makes `deep` the **default** `mem_sleep`,
+so it is not only a deliberate test that takes the new path - an ordinary idle
+suspend would too, and would leave the phone single-core. Removed from the recipe
+and the device is back to `mem_sleep: [s2idle]` on r126. `0076` stays in the build
+and is inert, since syscore only runs on the mem path.
+
+**What survives and is worth keeping:** `0072`-`0076`. The L2 SAW is programmed,
+the MPM binds and flushes itself, and the PMIC's interrupt is MPM-routed and
+armed. That is the whole wakeup side, and it is all still correct - it is the
+*entry* side that is blocked. If CPU hotplug is ever fixed, `0077` plus the
+collapse is a short step from here.
+
 **Step 4 landed 2026-10-01 (`0075`): the wakeup path is complete.** The SPMI
 arbiter now goes through the MPM on pin 62 instead of `GIC_SPI 190`:
 

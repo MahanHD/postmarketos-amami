@@ -1,0 +1,56 @@
+--- a/drivers/irqchip/irq-qcom-mpm.c
++++ b/drivers/irqchip/irq-qcom-mpm.c
+@@ -21,6 +21,7 @@
+ #include <linux/slab.h>
+ #include <linux/soc/qcom/irq.h>
+ #include <linux/spinlock.h>
++#include <linux/syscore_ops.h>
+ 
+ /*
+  * This is the driver for Qualcomm MPM (MSM Power Manager) interrupt controller,
+@@ -309,6 +310,35 @@
+ 	return 0;
+ }
+ 
++/*
++ * Flushing vMPM is a genpd power_off, which assumes something downstream of this
++ * domain gets powered down - on SoCs with PSCI that is the CPU cluster, whose
++ * genpd chain reaches here. This SoC has no genpd-based cpuidle and nothing
++ * consumes this domain, so power_off would never run and vMPM would never reach
++ * the hardware: the wakeup set would be configured and then thrown away.
++ *
++ * Flush from syscore instead. It runs after the noirq phase on the boot CPU with
++ * interrupts already off, which is the same point the genpd path would have
++ * reached, and by then the PM core has disabled every non-wakeup interrupt - so
++ * the ENABLE bits left set in vMPM are exactly the wakeup sources.
++ *
++ * A failure here deliberately aborts the suspend. Going to sleep with vMPM
++ * unflushed means going to sleep with nothing watching for a wakeup.
++ */
++static struct qcom_mpm_priv *qcom_mpm_syscore_priv;
++
++static int qcom_mpm_syscore_suspend(void)
++{
++	if (!qcom_mpm_syscore_priv)
++		return 0;
++
++	return mpm_pd_power_off(&qcom_mpm_syscore_priv->genpd);
++}
++
++static struct syscore_ops qcom_mpm_syscore_ops = {
++	.suspend = qcom_mpm_syscore_suspend,
++};
++
+ static bool gic_hwirq_is_mapped(struct mpm_gic_map *maps, int cnt, u32 hwirq)
+ {
+ 	int i;
+@@ -466,6 +496,9 @@
+ 		goto remove_domain;
+ 	}
+ 
++	qcom_mpm_syscore_priv = priv;
++	register_syscore_ops(&qcom_mpm_syscore_ops);
++
+ 	return 0;
+ 
+ remove_domain:

@@ -1,0 +1,84 @@
+--- a/drivers/soc/qcom/spm.c
++++ b/drivers/soc/qcom/spm.c
+@@ -22,6 +22,7 @@
+ #include <linux/regulator/driver.h>
+ 
+ #include <soc/qcom/spm.h>
++#include <linux/suspend.h>
+ 
+ #define FIELD_SET(current, mask, val)	\
+ 	(((current) & ~(mask)) | FIELD_PREP((mask), (val)))
+@@ -72,6 +73,9 @@
+ 	u8 seq[MAX_SEQ_DATA];
+ 	u8 start_index[PM_SLEEP_MODE_NR];
+ 
++	/* this SAW is the cluster's, and owns the system suspend path */
++	bool system_pc;
++
+ 	smp_call_func_t set_vdd;
+ 	/* for now we support only a single range */
+ 	struct linear_range *range;
+@@ -261,6 +265,7 @@
+ 		0x0F },
+ 	.start_index[PM_SLEEP_MODE_RET] = 0,
+ 	.start_index[PM_SLEEP_MODE_PC] = 5,
++	.system_pc = true,
+ };
+ 
+ /* SPM register data for 8226 */
+@@ -564,6 +569,38 @@
+ };
+ MODULE_DEVICE_TABLE(of, spm_match_table);
+ 
++/*
++ * System suspend.
++ *
++ * Registering any platform_suspend_ops at all is what makes PM_SUSPEND_MEM
++ * reachable: without it "mem" silently falls back to s2idle, and the mem path is
++ * the only one that parks the secondaries and runs syscore_suspend() - which is
++ * where the MPM flushes its wakeup set. So this has to exist before a collapse
++ * can be either armed or attempted.
++ *
++ * .enter is deliberately only a WFI for now. Everything around it is the real
++ * article - the PM core has already parked the secondary CPUs and disabled
++ * interrupts, and syscore_suspend() has handed vMPM to the RPM - but the CPU and
++ * L2 SAWs are left in their idle modes and no SCM power-down is issued, so the
++ * SoC does not actually collapse. That makes this testable without the failure
++ * mode being a phone that never wakes: the step that puts the SAWs into
++ * PM_SLEEP_MODE_PC and calls qcom_scm_cpu_power_down(L2_OFF) comes next, and
++ * belongs here, where drv is already the cluster's SAW.
++ */
++static struct spm_driver_data *spm_system_drv;
++
++static int spm_suspend_enter(suspend_state_t state)
++{
++	cpu_do_idle();
++
++	return 0;
++}
++
++static const struct platform_suspend_ops spm_suspend_ops = {
++	.enter = spm_suspend_enter,
++	.valid = suspend_valid_only_mem,
++};
++
+ static int spm_dev_probe(struct platform_device *pdev)
+ {
+ 	const struct of_device_id *match_id;
+@@ -611,6 +648,16 @@
+ 	if (drv->reg_data->reg_offset[SPM_REG_SPM_CTL])
+ 		spm_set_low_power_mode(drv, PM_SLEEP_MODE_STBY);
+ 
++	/*
++	 * Only the cluster SAW gets to own this; the per-CPU ones all probe
++	 * through here too and would each overwrite the hook.
++	 */
++	if (drv->reg_data->system_pc && !spm_system_drv) {
++		spm_system_drv = drv;
++		suspend_set_ops(&spm_suspend_ops);
++		dev_info(&pdev->dev, "registered as the system suspend SAW\n");
++	}
++
+ 	if (IS_ENABLED(CONFIG_REGULATOR))
+ 		return spm_register_regulator(&pdev->dev, drv);
+ 
