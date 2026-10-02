@@ -10,13 +10,22 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-02: r134 is flashed and installed**, so the boot image
+**Device state as of 2026-10-02: r138 is flashed and installed**, `uname -v` prints
+`#139`. It is r134 plus `0083` (the CPU collapse at suspend) and two diagnostics that
+are still in the build - `debug/9005`'s vMPM dump and `0083`'s own
+`cpu_suspend()`-return line. Both earn their keep for now; drop them before this is
+called finished. Earlier text, still true of r134 itself:
+
+**r134**, so the boot image
 and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plus
 `0079`-`0081`: **CPU hotplug online works**, and **`PM_SUSPEND_MEM` completes and
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r134  (current)  82f8d601106f4ab8541076ea68245986   + 0077: deep suspend works
+        r138  (current)  1d3b75ff257eac44cd23e5f1f3fc13a1   + 0083: CPU collapse WORKS
+        r137  176b6e2f1d90a1b2c2d19cba87068b49   0083 without the collapse probe
+        r136  cee2aae351ab9691d09656364b059142   + debug/9005, the vMPM dump
+        r134  82f8d601106f4ab8541076ea68245986   + 0077: deep suspend path works
         r135  DO NOT SUSPEND DEEP  639c7868e86cb43734ec60411f4c3980  + 0082: never wakes
         r133  1517dfe0422ab4517e55dfa4f4bbc02c   + 0079-0081: hotplug WORKS
         r132  fea23635de62cbe9cb9ee638277e49fa   + 0079,0080: survives, online fails
@@ -167,13 +176,13 @@ prerequisite.
    Power-collapse the dying core through its SPM, re-run the release sequence on a
    re-online, and let a recalled core leave the collapse loop so ARM's resuscitate
    path can take it into `secondary_start_kernel`. See Phase 2. This unblocks (3).
-3. **Deep suspend: the path works, the collapse was tried and does not wake.** As of
-   r134 the mem route completes and resumes on four cores (Phase 2). The collapse itself
-   was written as `0082` and **failed on hardware: the SoC went down and never came
-   back**, needing Power+VolUp. `0082` is parked. The next move is not another attempt at
-   the collapse - it is to find out *why* it did not wake, and the discriminating
-   experiment is in Phase 2. Worth measuring against the 214 mA the SoC costs in s2idle
-   once it works.
+3. **Deep suspend: the CPU collapse works (`0083`, r138); the L2 half does not.** The
+   mem route completes, the CPU genuinely power-collapses and resumes 3/3, and the vMPM
+   wakeup set is proven correct. `L2_OFF` still hangs the phone (`0082`, parked). Two
+   things left, in order: **measure the power saving** - it is completely unmeasured and
+   needs USB unplugged, so it needs a person - and then split `0082`'s two variables to
+   find which of `L2_OFF` or `0072`'s L2 SAW PC sequence is the one that hangs. Phase 2
+   has both experiments written out.
 4. **Camera**, still the largest untouched area and still its own project.
 
 Smaller, self-contained: wire a battery `temp` consumer if anything wants one,
@@ -644,14 +653,49 @@ re-checked:
   the phone - 28 s elapsed for a 20 s alarm, so it really stayed down. Suggestive, not
   conclusive.
 
-**The discriminating experiment, and it is cheap: after a collapse, does a power-key
-press wake it?** If yes, the collapse and its resume are fine and only the RTC's wake
-arming is at fault, which is a small fix. If no, the whole wakeup side fails under real
-collapse and the MPM/RPM handshake is the thing to chase. It needs a person to press the
-button and probably another Power+VolUp, which is why it has not been run. Anything that
-makes the collapse observable - a wake that does not depend on the MPM, or a check that
-the RPM acknowledged the vMPM set *before* entering - is worth more than another blind
-attempt.
+### Both hypotheses tested 2026-10-02, and the CPU half now works
+
+**(a) is refuted: the wakeup set is armed correctly.** `debug/9005` dumps the MPM
+`ENABLE` words at the instant `syscore_suspend()` hands vMPM to the RPM, on a kernel
+that does wake. During a `mem` suspend:
+
+        mpm: vMPM ENABLE[0] = 0x00000004   (pin 2  = tsens)
+        mpm: vMPM ENABLE[1] = 0x40000000   (pin 62 = SPMI, so every PMIC wakeup)
+
+Pin 62 is set, and sysfs agrees (`irq 37: mpm hwirq=62 wakeup=enabled`, fed by a
+wake-armed `pmic_arb` child). `mbox_send_message()` must also have succeeded, since
+`0076` aborts the suspend otherwise and the suspend reported success. So the
+`IRQCHIP_MASK_ON_SUSPEND` worry does not bite, and the wakeup side is **not** the
+problem.
+
+**(b) is where the fault is, and the CPU half of the collapse works.** `0083` is `0082`
+with `QCOM_SCM_CPU_PWR_DOWN_L2_ON` instead of `L2_OFF`, and with the L2 SAW left alone.
+On r138 it collapses and resumes, three rounds out of three:
+
+        round 1: rc=0 elapsed=23s nproc=4 boot_id_same=YES
+          spm: suspend collapse happened (cpu_suspend returned 0)
+        round 2/3: the same, success=3 fail=0
+
+**`cpu_suspend()` returning 0 is the load-bearing part of that**, and it is why the
+probe exists: `spm_pm_collapse()` returns -1 if an interrupt beats the power-down, and a
+suspend that merely fell through still resumes and still reports success. Without
+reading that return there is no way to tell a real collapse from nothing happening.
+
+**What is still unmeasured: whether this saves power.** The collapse demonstrably
+happens, but current draw needs USB unplugged (see the battery notes), so the saving is
+unquantified. Measuring it against the 214 mA s2idle costs is the obvious next thing and
+it needs a person to pull the cable.
+
+**Why `L2_OFF` fails is now narrowed, and the next experiment is obvious: `0082` changed
+two things at once.** It both passed `L2_OFF` to TrustZone *and* armed the L2 SAW for
+`PM_SLEEP_MODE_PC`. `0083` reverted both. So split them:
+
+- `L2_OFF` with the L2 SAW left in standby - tests the SCM flag alone.
+- `L2_ON` with the L2 SAW armed for PC - tests `0072`'s L2 PC sequence alone, which has
+  never run.
+
+Whichever one hangs is the culprit. Each costs a Power+VolUp if it hangs, which is the
+price of the answer.
 
 ---
 
