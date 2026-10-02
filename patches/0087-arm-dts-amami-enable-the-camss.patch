@@ -1,0 +1,16 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -28,3 +28,13 @@
+ 	qcom,fast-charge-current-limit = <1300000>;
+ 	qcom,dc-current-limit = <1300000>;
+ };
++
++&camss {
++	/*
++	 * The CSIDs' vdda. Downstream has this as qcom,mipi-csi-vdd-supply on
++	 * each csid node, pointing at 8941_l12 at a fixed 1.8V.
++	 */
++	vdda-supply = <&pm8941_l12>;
++
++	status = "okay";
++};

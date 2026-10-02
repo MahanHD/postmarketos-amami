@@ -1,0 +1,19 @@
+--- a/drivers/media/platform/qcom/camss/Kconfig
++++ b/drivers/media/platform/qcom/camss/Kconfig
+@@ -2,7 +2,15 @@
+ 	tristate "Qualcomm V4L2 Camera Subsystem driver"
+ 	depends on V4L_PLATFORM_DRIVERS
+ 	depends on VIDEO_DEV
+-	depends on (ARCH_QCOM && IOMMU_DMA) || COMPILE_TEST
++	#
++	# BRING-UP ONLY. IOMMU_DMA is "def_bool ARM64 || X86 || S390", so it
++	# cannot be selected on 32-bit ARM at all - every SoC this driver
++	# supports today is arm64, and msm8974 would be the first arm32 one.
++	# Dropping it lets the subdevs probe, which is all the msm8974 resource
++	# tables need in order to be tested, but it is NOT shippable: with no
++	# IOMMU the dma-sg capture buffers have no way to hand scattered pages
++	# to the VFE. See the camera notes.
++	depends on ARCH_QCOM || COMPILE_TEST
+ 	select MEDIA_CONTROLLER
+ 	select VIDEO_V4L2_SUBDEV_API
+ 	select VIDEOBUF2_DMA_SG

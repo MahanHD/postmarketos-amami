@@ -2961,13 +2961,80 @@ bring up CCI, power the sensor per the sequence the DT already spells out, and r
 register. The DT carries the exact per-module `power_on`/`power_off` command lists and PLL
 tables, which is a real gift - the ordering does not have to be guessed.
 
+### Step 1 attempted 2026-10-03: the patches exist, and the kernel stopped booting
+
+**What is solid, and worth keeping whatever happens to the boot problem.** All of this was
+read out of the Lineage DT and cross-checked, and none of it depends on the patches working:
+
+- the register map above, and the CAMSS base of 0xfda00000;
+- **the interrupts, confirmed three independent ways.** Downstream writes `<0 N 0>` =
+  `<GIC_SPI N ...>`, so the numbers need no offset - verified because downstream's SPMI is
+  `0xbe` = 190 and mainline msm8974.dtsi independently has that arbiter at `GIC_SPI 190`.
+  They also match msm8916's CAMSS SPIs exactly, and mainline's *existing* `cci@fda0c000`
+  node already uses `GIC_SPI 50`, which is downstream's `0x32`. csiphy0-2 = 78/79/80,
+  csid0-3 = 51/52/53/54, ispif = 55, vfe0/1 = 57/58, cci = 50.
+- **every clock exists in `qcom,mmcc-msm8974.h`**, and the rates are msm8974's own, from
+  the mmcc driver: CSI0-3 and the CSIPHY timers offer 100/200 MHz, VFE has its own
+  13-entry table from 37.5 to 465 MHz.
+- **the regulators, resolved from downstream's phandles:** CSI `vdda` is `8941_l12` at a
+  fixed 1.8V. For the sensors later: vdig `8941_l3` 1.2V, vana `8941_l17` 2.7V, vio
+  `8941_lvs2`, vaf `8941_l23` 2.8V. The VFE's `vdd` is the `gdsc_vfe` domain, i.e.
+  `CAMSS_VFE_GDSC`.
+- **mainline already has a complete `cci@fda0c000` node**, both I2C buses and pinctrl,
+  only `status = "disabled"`. Step 2 is therefore much closer than it looked.
+
+**A blocker that explains why no msm8974 CAMSS exists, and that the first survey missed.**
+
+        config VIDEO_QCOM_CAMSS
+                depends on (ARCH_QCOM && IOMMU_DMA) || COMPILE_TEST
+        config IOMMU_DMA
+                def_bool ARM64 || X86 || S390
+
+`IOMMU_DMA` cannot be selected on 32-bit ARM at all. Every SoC this driver supports is
+arm64; msm8974 would be the first arm32 one. So this is not only a missing resource table,
+it is an architectural assumption - which makes the earlier "step 1 is a weekend" estimate
+wrong. `debug/9006` drops the dependency for bring-up and says in the file that it is not
+shippable: with no IOMMU there is no way to hand `dma-sg`'s scattered pages to the VFE.
+Real capture will want the CAMSS IOMMU, and the downstream DT does show two SMMUs at
+`0xfda44000` and `0xfda64000`, which connects this to the parked IOMMU work.
+
+**And the kernel does not boot with these patches in, cause not yet identified.**
+
+        build  media config  camss module  camss DT node  boots
+        r140   off           absent        absent         YES
+        r142   on            yes           enabled        no
+        r143   on            yes           disabled       no
+
+r143 is the informative one and it refutes the obvious theory: a `disabled` node creates no
+platform device and no fw_devlink edges, so the DT node is largely exonerated, and the
+driver is a module so its code is not in the kernel proper. The effective-config diff
+(both apks ship `boot/config`, so the post-`syncconfig` result can be compared directly)
+shows 24 new built-ins that are all inert media core - `DVB_CORE`, `MEDIA_TUNER`,
+`V4L2_FWNODE`, `VIDEO_DEV` and so on - 159 new modules, and nothing removed or downgraded.
+Ruled out and worth not re-checking: the boot partition is 20 MiB against an 18.38 MB
+image; the kernel grew only 116 KB and the ramdisk loads 33 MB above it; the compiled DTB
+is well-formed, 31 clock pairs all resolving to mmcc with matching `clock-names`.
+
+**The open question is whether "does not boot" is even the right description** - it has
+only been inferred from the phone not appearing on USB, and a dead USB gadget with an
+otherwise healthy system looks identical from here. That is exactly the shape of the
+`io-channels on &smbb` trap recorded elsewhere in this file. Settle it by looking at the
+screen before bisecting further.
+
+Recovery each time was fastboot: Volume Up held while plugging in, then
+`fastboot flash boot boot-images/boot-r140.img`.
+
 ### Suggested order, each step observable
 
-1. **CAMSS plumbing**: `CAMSS_8x74` + resource tables + DT node. Milestone: the subdevs
-   probe and `/dev/video*` and `/dev/media*` appear, with no sensor involved at all.
+1. **CAMSS plumbing** - `0085` (resources), `0086` (DT node), `0087` (enable on amami),
+   `debug/9006` (arm32 bring-up). Written and building; **blocked on the boot failure
+   above**. Next step is to flash *config-only*, with all four camera patches dropped: if
+   that fails the config is confirmed and the camera work is innocent, and if it boots the
+   problem is inside the camss patches despite the node being disabled, which would be
+   surprising and worth understanding before continuing.
 2. **CCI and sensor identity**: get an ACK on CCI master 0 and read the rear sensor's ID
    register. Milestone: a number that either confirms IMX220 or says what it really is.
-   This is where the geometry inference gets replaced by a fact.
+   Mainline's `cci` node already exists, so this is mostly enabling it.
 3. **A sensor driver** for whatever step 2 names. The long pole, and the only part that is
    genuinely open-ended.
 
