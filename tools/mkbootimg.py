@@ -56,10 +56,14 @@ PAGE_SIZE = 2048
 # rcu_exp_cpu_stall_timeout - MILLISECONDS, unlike its sibling which is seconds.
 #                         The default of 20 fires on the harmless ~3-jiffy
 #                         expedited stall this device emits at ~36 s of every boot.
+# mem_sleep_default matters as soon as anything registers platform_suspend_ops:
+# mem_sleep_default is PM_SUSPEND_MEM in the kernel, so registering the ops makes
+# "deep" the default and an ordinary idle suspend takes the collapse path. Pinning
+# it to s2idle keeps "deep" opt-in via /sys/power/mem_sleep.
 BASE_CMDLINE = (
     "plymouth.enable=0 msm.vram=192m msm.allow_vram_carveout=1 "
     "sysctl.kernel.panic_on_rcu_stall=1 panic=10 "
-    "rcupdate.rcu_exp_cpu_stall_timeout=21000"
+    "rcupdate.rcu_exp_cpu_stall_timeout=21000 mem_sleep_default=s2idle"
 )
 
 # These identify the rootfs to the initramfs; they are this phone's partitions.

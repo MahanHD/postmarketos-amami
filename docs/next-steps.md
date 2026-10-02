@@ -10,12 +10,14 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-02: r133 is flashed and installed**, so the boot image
-and `/lib/modules` agree and `uname -v` prints `#134`. r133 is `0072`-`0076` plus
-`0079`-`0081`, which means **CPU hotplug online works** and `mem_sleep` is still
-`[s2idle]` (no suspend ops yet). Images kept in `boot-images/`, newest first:
+**Device state as of 2026-10-02: r134 is flashed and installed**, so the boot image
+and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plus
+`0079`-`0081`: **CPU hotplug online works**, and **`PM_SUSPEND_MEM` completes and
+resumes on all four cores** - though it does not yet save power, because the collapse
+itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r133  (current)  1517dfe0422ab4517e55dfa4f4bbc02c   + 0079-0081: hotplug WORKS
+        r134  (current)  82f8d601106f4ab8541076ea68245986   + 0077: deep suspend works
+        r133  1517dfe0422ab4517e55dfa4f4bbc02c   + 0079-0081: hotplug WORKS
         r132  fea23635de62cbe9cb9ee638277e49fa   + 0079,0080: survives, online fails
         r131  c137394c9a2be27ba0f2a7fb369a5074   + 0079 only: safe, online fails EIO
         r128  7eed4cecf1a5c16c8da822bf7d21f722   0072-0076, as r126
@@ -164,10 +166,13 @@ prerequisite.
    Power-collapse the dying core through its SPM, re-run the release sequence on a
    re-online, and let a recalled core leave the collapse loop so ARM's resuscitate
    path can take it into `secondary_start_kernel`. See Phase 2. This unblocks (3).
-3. **Deep suspend**, blocked on (2). Everything else for it is built and verified:
-   `0072`-`0076` give a programmed L2 SAW, a bound MPM that flushes itself, and the
-   PMIC interrupt MPM-routed and armed, and TrustZone does the collapse through an
-   already-exported SCM call. `0077` is parked and ready.
+3. **Deep suspend: the path works, the collapse does not exist yet.** As of r134 the
+   mem route completes and resumes on four cores (Phase 2), so what is left is the one
+   step that actually saves power: in `spm_suspend_enter()`, put the CPU and L2 SAWs
+   into `PM_SLEEP_MODE_PC` and issue `qcom_scm_cpu_power_down(L2_OFF)`. This is now the
+   highest-value job, and the riskiest - its failure mode is a phone that does not wake,
+   so it wants a short `rtcwake` and a tested fallback image before the first attempt.
+   Worth measuring against the 214 mA the SoC currently costs in s2idle.
 4. **Camera**, still the largest untouched area and still its own project.
 
 Smaller, self-contained: wire a battery `temp` consumer if anything wants one,
@@ -562,7 +567,44 @@ That last point suggests the cheapest first experiment by a wide margin: sleep-s
 votes are a regulator concern, not a suspend concern, and could be investigated on
 their own without implementing suspend at all.
 
-**BLOCKED 2026-10-01: deep suspend cannot work until CPU hotplug online does.**
+**UNBLOCKED 2026-10-02: the mem path now completes and resumes on all four cores.**
+With `0079`-`0081` fixing hotplug and `0077` unparked, r134 does this:
+
+        PM: suspend entry (deep)
+        Disabling non-boot CPUs ...
+          CPU1/2/3: going down by SPM power collapse
+        Enabling non-boot CPUs ...
+          CPU1 is up / CPU2 is up / CPU3 is up
+        PM: suspend exit
+
+`rtcwake -m mem -s 20` returned 0, `suspend_stats/success` = 1, `fail` = 0, resumed
+with `nproc=4` and `boot_id` unchanged, 28 s elapsed across the 20 s alarm. WiFi
+reconnected on its own. Compare the original failure below, which resumed single-core.
+
+**What this does NOT yet mean: there is no power saving.** `0077`'s `.enter` is still
+only `cpu_do_idle()`, deliberately, so the SoC does not actually collapse - the PM core
+parks the secondaries and `syscore_suspend()` hands vMPM to the RPM, but the CPU and L2
+SAWs stay in their idle modes and no `qcom_scm_cpu_power_down(L2_OFF)` is issued. So
+what is proven is that the whole *path* works and is safe to stand on, not that it
+saves anything. **The remaining job is the collapse itself**, in `spm_suspend_enter()`,
+where `drv` is already the cluster's SAW: put the SAWs into `PM_SLEEP_MODE_PC` and
+issue the SCM power-down. Until that lands, `deep` costs the same as `s2idle`.
+
+**`mem_sleep_default=s2idle` is now on the kernel command line** (in
+`tools/mkbootimg.py`), which is what makes unparking `0077` safe. The kernel's own
+default is `PM_SUSPEND_MEM`, so registering any `platform_suspend_ops` would otherwise
+make `deep` the default and send every ordinary idle suspend down the collapse path.
+With the guard, `/sys/power/mem_sleep` reads `[s2idle] deep` and `deep` is opt-in.
+
+One loose end seen on resume: a single `[drm:mdp5_irq_error_handler] *ERROR* errors:
+04000000`, about six seconds after the CPUs came back. `fb0/blank` reads 4
+(FB_BLANK_POWERDOWN) afterwards, which is what an off screen looks like either way - and
+per the display notes elsewhere in this file those numbers pass while the panel is black,
+so whether the display survives a deep suspend has to be confirmed **by looking**.
+
+---
+
+**Historical, 2026-10-01: deep suspend could not work until CPU hotplug online did.**
 The first `PM_SUSPEND_MEM` attempt suspended and resumed correctly - and came back
 on **one core**.
 
