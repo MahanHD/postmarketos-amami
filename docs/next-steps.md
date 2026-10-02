@@ -23,6 +23,7 @@ resumes on all four cores** - though it does not yet save power, because the col
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
         r138  (current)  1d3b75ff257eac44cd23e5f1f3fc13a1   + 0083: CPU collapse WORKS
+        r139  DO NOT SUSPEND DEEP  5fa270a0901a51136aa7f45213653b5a  + 0084: L2_OFF, hangs
         r137  176b6e2f1d90a1b2c2d19cba87068b49   0083 without the collapse probe
         r136  cee2aae351ab9691d09656364b059142   + debug/9005, the vMPM dump
         r134  82f8d601106f4ab8541076ea68245986   + 0077: deep suspend path works
@@ -686,16 +687,46 @@ happens, but current draw needs USB unplugged (see the battery notes), so the sa
 unquantified. Measuring it against the 214 mA s2idle costs is the obvious next thing and
 it needs a person to pull the cable.
 
-**Why `L2_OFF` fails is now narrowed, and the next experiment is obvious: `0082` changed
-two things at once.** It both passed `L2_OFF` to TrustZone *and* armed the L2 SAW for
-`PM_SLEEP_MODE_PC`. `0083` reverted both. So split them:
+**`L2_OFF` is the culprit on its own, and the L2 SAW is exonerated.** `0082` had changed
+two things at once - the SCM flag *and* arming the L2 SAW for `PM_SLEEP_MODE_PC` - so
+`0084` isolated the first: `L2_OFF` with the L2 SAW deliberately left in standby. It
+hangs too. The table:
 
-- `L2_OFF` with the L2 SAW left in standby - tests the SCM flag alone.
-- `L2_ON` with the L2 SAW armed for PC - tests `0072`'s L2 PC sequence alone, which has
-  never run.
+        patch   SCM flag   L2 SAW      result
+        0082    L2_OFF     armed PC    hangs, no wake
+        0083    L2_ON      standby     WORKS, 3/3, collapse confirmed
+        0084    L2_OFF     standby     hangs, no wake
 
-Whichever one hangs is the culprit. Each costs a Power+VolUp if it hangs, which is the
-price of the answer.
+So `L2_OFF` fails regardless of what the L2 SAW is doing, and `0072`'s L2 PC sequence is
+not implicated. That also kills most of the value of the other half of the split
+(`L2_ON` + SAW armed): it would only say whether the SAW is *additionally* harmful, which
+no longer matters for getting a working collapse.
+
+**A hypothesis for why, explicitly not established** - there is no post-mortem for a hang
+(pstore keeps nothing): this port has no L2 retention or restore path for a genuine L2
+power-down. `L2_ON` works because the L2 stays up and TrustZone only has to save and
+restore the core, which is the same thing it does for every cpuidle collapse and every
+`qcom_cpu_die()`. `L2_OFF` additionally requires the secure side to deal with L2 contents
+and bring the cache back, and either this device's TZ firmware does not support that for
+the AP or it needs setup never done here - downstream drives L2 power-down through its
+own RPM and SPM sequencing that mainline has no equivalent of.
+
+**So the realistic end state for this port is `0083`:** a real CPU power collapse at
+system suspend with the L2 left on. Verified, by `cpu_suspend()` returning 0, to be an
+actual collapse rather than a fall-through. Whether it is worth having is exactly what
+the power measurement answers, and that measurement is now the open question rather than
+any more collapse variants.
+
+**Measuring it is awkward, and the instruments are the reason.** There is no coulomb
+counter: `smbb-bif` offers only `capacity`, `voltage_now` and `temp`, and `capacity` is
+voltage-derived, which at 94% sits in the flat part of the curve. The only current
+instrument is the IADC (`in_current0_raw`), and reading it needs the CPU awake, so it
+cannot sample during a suspend. That leaves capacity drop over a long suspend, compared
+against the already-measured 214 mA that the SoC costs in s2idle - about 9 %/hour on this
+battery, so a 30-minute `deep` suspend should drop ~4-5 % if nothing improved and ~1 % if
+the collapse is doing real work. One run, not two, since the s2idle baseline is already
+known. It needs USB out, which also means the phone must be left asleep and unreachable
+for the duration.
 
 ---
 
