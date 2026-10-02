@@ -2897,19 +2897,82 @@ to a stop.
 Enabled on amami only rather than rhine-wide, since honami and togari cannot be
 tested here.
 
-## Camera: bigger than audio
+## Camera: bigger than audio, but the CAMSS half is much smaller than it looked
 
-Surveyed, not started. Mainline's CAMSS driver matches `qcom,msm8916-camss`,
-`msm8953`, `msm8996`, `sc7280`, `sc8280xp` and `sdm660` - **there is no msm8974
-support**, so it would need a new resource table and version alongside those.
+Surveyed properly 2026-10-03 against the LineageOS device tree, and the conclusion from
+the first pass needs revising: **the CAMSS block is the same generation as msm8916's,
+which mainline already supports.** The register offsets inside the CAMSS window are
+*identical*; only the base address differs.
 
-Worse, the sensors are not described in any standard way. Stock binds
-`qcom,camera@20` and `@6c` as `qcom,sony_camera_0` / `_1`, Sony's own binding, with
-the actual parts identified only by module codes and per-module power sequences -
-`SOI08BS2` and `SOI20BS0` at the rear, `LGI02BN1` and `SEM02BN1` at the front. So
-even after CAMSS, each module needs identifying and a sensor driver wiring up.
+        block              msm8916 (supported)   amami / msm8974
+        csiphy0            0x01b0ac00  0x200     0xfda0ac00  0x200
+        csiphy0_clk_mux    0x01b00030  0x4       0xfda00030  0x4
+        csid0              0x01b08000  0x100     0xfda08000  0x100
+        ispif              0x01b0a000  0x500     0xfda0a000  0x500
+        csi_clk_mux        0x01b00020  0x10      0xfda00020  0x10
+        vfe0               0x01b10000  0x1000    0xfda10000  0x1000
 
-That makes camera the largest single area left, ahead of audio.
+So the base is 0x01b00000 there and 0xfda00000 here, and every offset within it matches.
+Downstream calls the VFE `qcom,vfe40` and the ISPIF `qcom,ispif-v3.0`. msm8974 simply has
+**more instances**: 3 CSIPHY (vs 2), 4 CSID (vs 2), 2 VFE (vs 1), plus CPP and three JPEG
+blocks that are not needed for capture.
+
+**And the supporting plumbing already exists in mainline.** Every clock the subsystem
+needs is already in `include/dt-bindings/clock/qcom,mmcc-msm8974.h`: `CAMSS_CSI0..3_CLK`,
+`CAMSS_VFE_VFE0/1_CLK`, `CAMSS_CSI_VFE0/1_CLK`, `CAMSS_CCI_CCI_CLK`,
+`CAMSS_PHY0..2_CSI0..2PHYTIMER_CLK`, `CAMSS_ISPIF_AHB_CLK`, `CAMSS_TOP_AHB_CLK`, and the
+`*_CLK_SRC` parents. `CAMSS_VFE_GDSC` and `CAMSS_JPEG_GDSC` exist for `power-domains`.
+Nothing new is needed from mmcc.
+
+**How much driver work that leaves:** `CAMSS_8x16` appears only 8 times across 5 files, so
+the per-SoC switching is light. A msm8974 port is plausibly a `CAMSS_8x74` enum value,
+resource tables for 3 CSIPHY / 4 CSID / 1 ISPIF / 2 VFE reusing `csiphy_ops_2ph_1_0`,
+`csid_ops_4_1`, `vfe_ops_4_1` and the existing ispif code, and a DT node. That is a
+moderate, mostly-mechanical job - **not** a new VFE driver, which is what the earlier note
+implied. It wants verifying rather than assuming: the identical register map makes 4-1 ops
+*likely* to fit VFE40, not certain.
+
+### The sensors are the hard half, and the rear one has no mainline driver
+
+Pulled from the Lineage DT, `qcom,cci@fda0c000` (CCI itself matches mainline's CCI driver
+shape - `reg 0xfda0c000 0x1000`, one interrupt, two I2C masters):
+
+        rear   qcom,camera@20   sony_camera_0   CCI master 0, CSIPHY/CSID index 0
+               4 data lanes (lane-mask 0x1f), MCLK = GPIO 15, RESET = GPIO 94
+               cam_vdig 1.2V, cam_vana 2.7V, cam_vio (fixed), cam_vaf 2.8V
+               modules: SOI20BS0 (default), SOI08BS2
+               5248 x 3936 = 20.7 MP, diagonal 7.87 mm (1/2.3"), 1.20 um, f/2.0
+               subdev_code 0x3007 = MEDIA_BUS_FMT_SBGGR10_1X10
+
+        front  qcom,camera@6c   sony_camera_1   CCI master 1, CSIPHY/CSID index 2
+               2 data lanes (lane-mask 0x7), MCLK = GPIO 17, RESET = GPIO 18
+               cam_vdig 1.2V, cam_vana 2.7V, cam_vio (fixed), no VAF
+               modules: SEM02BN1 (default), LGI02BN1 - 2 MP class, diagonal 2.59 mm
+
+**The rear part is almost certainly a Sony IMX220** - 20.7 MP at 1/2.3" with 1.2 um pixels
+is that sensor and little else - but that is an *inference from geometry*, not a reading,
+and it is worth stressing because mainline has no `imx220` driver (it has imx208, 214,
+219, 258, 274, 283, 290, 296, 319, 334, 335, 355, 412, 415). The module codes are module
+vendors, not parts: `SOI` is Sony, `LGI` LG Innotek, `SEM` Samsung Electro-Mechanics, so
+the front module vendor varies between units while the sensor inside may not.
+
+**Confirming the part is itself a good milestone**, and it comes before any sensor driver:
+bring up CCI, power the sensor per the sequence the DT already spells out, and read its ID
+register. The DT carries the exact per-module `power_on`/`power_off` command lists and PLL
+tables, which is a real gift - the ordering does not have to be guessed.
+
+### Suggested order, each step observable
+
+1. **CAMSS plumbing**: `CAMSS_8x74` + resource tables + DT node. Milestone: the subdevs
+   probe and `/dev/video*` and `/dev/media*` appear, with no sensor involved at all.
+2. **CCI and sensor identity**: get an ACK on CCI master 0 and read the rear sensor's ID
+   register. Milestone: a number that either confirms IMX220 or says what it really is.
+   This is where the geometry inference gets replaced by a fact.
+3. **A sensor driver** for whatever step 2 names. The long pole, and the only part that is
+   genuinely open-ended.
+
+Camera remains the largest area left, but step 1 is a weekend rather than a project, and
+steps 1 and 2 together answer whether step 3 is worth starting.
 
 ## Parked patches
 
