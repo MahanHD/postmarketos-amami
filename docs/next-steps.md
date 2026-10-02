@@ -10,19 +10,30 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-02: r138 is flashed and installed**, `uname -v` prints
-`#139`. It is r134 plus `0083` (the CPU collapse at suspend) and two diagnostics that
-are still in the build - `debug/9005`'s vMPM dump and `0083`'s own
-`cpu_suspend()`-return line. Both earn their keep for now; drop them before this is
-called finished. Earlier text, still true of r134 itself:
+**Device state as of 2026-10-02 end of day: r140 is flashed and installed**, `uname -v`
+prints `#141`. This is the cleaned-up end state of the suspend work: `0072`-`0076` plus
+`0079`-`0081`, with `0077`, `0082`, `0083`, `0084` and `debug/9005` all out. So **CPU
+hotplug online works** and `mem_sleep` is back to `[s2idle]` alone. Verified after the
+cleanup: `mem_sleep` offers only s2idle, nothing registers a suspend SAW, no vMPM debug
+output, `cpu-spc` idle collapse live, and all-secondaries-off-and-back still works
+(`nproc` 4 -> 1 -> 4, cpu3 executing +295 jiffies, `boot_id` unchanged).
 
-**r134**, so the boot image
+`mem_sleep_default=s2idle` stays on the command line even though nothing registers suspend
+ops now, so it is inert - it is kept as insurance in case `0077` is ever unparked.
+
+One cosmetic leftover from the day's three hard resets: `/boot` (the ext2 loop image)
+mounts with `EXT4-fs (loop0p1): warning: mounting unchecked fs, running e2fsck is
+recommended`. Harmless, and `boot-deploy` rewrites that image on every kernel install
+anyway.
+
+**Historical, r134:**, so the boot image
 and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plus
 `0079`-`0081`: **CPU hotplug online works**, and **`PM_SUSPEND_MEM` completes and
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r138  (current)  1d3b75ff257eac44cd23e5f1f3fc13a1   + 0083: CPU collapse WORKS
+        r140  (current)  b6307908b71a609b4b40a5d236c7feea   0072-0076 + 0079-0081, clean
+        r138  1d3b75ff257eac44cd23e5f1f3fc13a1   + 0083: CPU collapse WORKS, saves nothing
         r139  DO NOT SUSPEND DEEP  5fa270a0901a51136aa7f45213653b5a  + 0084: L2_OFF, hangs
         r137  176b6e2f1d90a1b2c2d19cba87068b49   0083 without the collapse probe
         r136  cee2aae351ab9691d09656364b059142   + debug/9005, the vMPM dump
