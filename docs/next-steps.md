@@ -717,7 +717,46 @@ actual collapse rather than a fall-through. Whether it is worth having is exactl
 the power measurement answers, and that measurement is now the open question rather than
 any more collapse variants.
 
-**Measuring it is awkward, and the instruments are the reason.** There is no coulomb
+### Measured 2026-10-02: the collapse saves nothing, because cpuidle already did it
+
+One unplugged session, 20 minutes in each mode back to back on the same battery:
+
+        mode                    duration   dV        dcapacity
+        s2idle                  1208s      38.0 mV   3%
+        deep (CPU collapse)     1203s      41.8 mV   4%
+
+`deep` came out marginally *worse*, which is inside the ordering confound - it ran second
+and so from a lower state of charge, where the curve is steeper. The honest reading is **no
+measurable saving**, not that it costs more. The collapse definitely happened: the run
+logged `spm: suspend collapse happened (cpu_suspend returned 0)`.
+
+**And the reason is plain, which makes this a conclusive negative rather than a weak
+one.** cpuidle on this SoC *already* power-collapses the CPU:
+
+        /sys/devices/system/cpu/cpu0/cpuidle/
+          state0: name=WFI      usage=18572
+          state1: name=cpu-spc  usage=23781  time=516738346us
+
+`cpu-spc` is the SPM driver's `PM_SLEEP_MODE_SPC` plus
+`qcom_scm_cpu_power_down(L2_ON)` - the identical sequence `0083` runs at suspend - and the
+idle governor enters it tens of thousands of times a boot. So in s2idle the cores are
+already collapsing whenever idle, and doing it once more at suspend entry adds nothing.
+The CPU core was never where the suspend power was going.
+
+**Which means `deep` offers nothing on this port.** `L2_ON` is no better than s2idle
+(measured) and `L2_OFF` does not wake (`0082`/`0084`). The remaining power is in the rest
+of the SoC - L2, DDR, clocks, regulators, the RPM's own vote set - and reaching it needs
+the full-SoC collapse that `L2_OFF` was the route to. The 214 mA figure recorded earlier
+is consistent with that: it is the SoC, not the Kraits.
+
+**So the suspend work is finished for now, and the honest summary is that it fixed a real
+bug and produced no power win.** What is worth keeping is `0079`-`0081`, because CPU
+hotplug online was broken on its own terms, and `0072`-`0076`, which are correct and leave
+the MPM bound and the wakeup set armed. `0077` and `0083` give a working `deep` that is
+measurably no better than the default - keep them parked rather than shipped, since a
+`deep` mode nothing should select is risk without benefit.
+
+**Historical note on the instruments, kept because it shaped the method.** There is no coulomb
 counter: `smbb-bif` offers only `capacity`, `voltage_now` and `temp`, and `capacity` is
 voltage-derived, which at 94% sits in the flat part of the curve. The only current
 instrument is the IADC (`in_current0_raw`), and reading it needs the CPU awake, so it
