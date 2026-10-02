@@ -1,0 +1,102 @@
+--- a/drivers/soc/qcom/spm.c
++++ b/drivers/soc/qcom/spm.c
+@@ -24,6 +24,9 @@
+ #include <soc/qcom/spm.h>
+ #include <linux/suspend.h>
+ 
++#include <linux/firmware/qcom/qcom_scm.h>
++#include <asm/suspend.h>
++
+ #define FIELD_SET(current, mask, val)	\
+ 	(((current) & ~(mask)) | FIELD_PREP((mask), (val)))
+ 
+@@ -575,23 +578,65 @@
+  * Registering any platform_suspend_ops at all is what makes PM_SUSPEND_MEM
+  * reachable: without it "mem" silently falls back to s2idle, and the mem path is
+  * the only one that parks the secondaries and runs syscore_suspend() - which is
+- * where the MPM flushes its wakeup set. So this has to exist before a collapse
+- * can be either armed or attempted.
+- *
+- * .enter is deliberately only a WFI for now. Everything around it is the real
+- * article - the PM core has already parked the secondary CPUs and disabled
+- * interrupts, and syscore_suspend() has handed vMPM to the RPM - but the CPU and
+- * L2 SAWs are left in their idle modes and no SCM power-down is issued, so the
+- * SoC does not actually collapse. That makes this testable without the failure
+- * mode being a phone that never wakes: the step that puts the SAWs into
+- * PM_SLEEP_MODE_PC and calls qcom_scm_cpu_power_down(L2_OFF) comes next, and
+- * belongs here, where drv is already the cluster's SAW.
++ * where the MPM flushes its wakeup set.
+  */
+ static struct spm_driver_data *spm_system_drv;
+ 
++/*
++ * The per-CPU SAWs, so the suspend path can reach the last CPU's own one. The
++ * driver otherwise only records a CPU in drv->reg_cpu, and only when the SoC
++ * supplies a set_vdd callback - which msm8974 does not - so there is no existing
++ * mapping to borrow.
++ */
++static DEFINE_PER_CPU(struct spm_driver_data *, cpu_spm_drv);
++
++static int spm_pm_collapse(unsigned long unused)
++{
++	qcom_scm_cpu_power_down(QCOM_SCM_CPU_PWR_DOWN_L2_OFF);
++
++	/*
++	 * Only reached if an interrupt was pending and we did not go down as a
++	 * result, in which case the suspend is simply a no-op and the PM core
++	 * unwinds normally.
++	 */
++	return -1;
++}
++
+ static int spm_suspend_enter(suspend_state_t state)
+ {
+-	cpu_do_idle();
++	struct spm_driver_data *l2 = spm_system_drv;
++	struct spm_driver_data *cpu = per_cpu(cpu_spm_drv, smp_processor_id());
++
++	/*
++	 * By here the PM core has parked every secondary CPU - which on this SoC
++	 * means they are genuinely power collapsed, see qcom_cpu_die() - and
++	 * syscore_suspend() has handed the vMPM wakeup set to the RPM. So this
++	 * is the last CPU up and the L2 belongs to nobody else: both SAWs can go
++	 * to full power collapse and TrustZone can take the SoC down with the L2
++	 * off. The way back is the warm boot address the SPM cpuidle driver
++	 * registered, which lands inside cpu_suspend() below.
++	 *
++	 * If either SAW is missing, gate the clock instead of failing the
++	 * suspend. That is what this did before the collapse existed, and it
++	 * still resumes.
++	 */
++	if (!cpu || !l2) {
++		cpu_do_idle();
++		return 0;
++	}
++
++	spm_set_low_power_mode(cpu, PM_SLEEP_MODE_PC);
++	spm_set_low_power_mode(l2, PM_SLEEP_MODE_PC);
++
++	cpu_suspend(0, spm_pm_collapse);
++
++	/*
++	 * Back up. A SAW left armed turns the next unrelated WFI into a power
++	 * collapse, so put both back to standby before returning - the L2 first,
++	 * in the reverse order they were armed.
++	 */
++	spm_set_low_power_mode(l2, PM_SLEEP_MODE_STBY);
++	spm_set_low_power_mode(cpu, PM_SLEEP_MODE_STBY);
+ 
+ 	return 0;
+ }
+@@ -656,6 +701,11 @@
+ 		spm_system_drv = drv;
+ 		suspend_set_ops(&spm_suspend_ops);
+ 		dev_info(&pdev->dev, "registered as the system suspend SAW\n");
++	} else {
++		int cpu = spm_get_cpu(&pdev->dev);
++
++		if (cpu >= 0)
++			per_cpu(cpu_spm_drv, cpu) = drv;
+ 	}
+ 
+ 	if (IS_ENABLED(CONFIG_REGULATOR))

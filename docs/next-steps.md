@@ -17,6 +17,7 @@ resumes on all four cores** - though it does not yet save power, because the col
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
         r134  (current)  82f8d601106f4ab8541076ea68245986   + 0077: deep suspend works
+        r135  DO NOT SUSPEND DEEP  639c7868e86cb43734ec60411f4c3980  + 0082: never wakes
         r133  1517dfe0422ab4517e55dfa4f4bbc02c   + 0079-0081: hotplug WORKS
         r132  fea23635de62cbe9cb9ee638277e49fa   + 0079,0080: survives, online fails
         r131  c137394c9a2be27ba0f2a7fb369a5074   + 0079 only: safe, online fails EIO
@@ -166,13 +167,13 @@ prerequisite.
    Power-collapse the dying core through its SPM, re-run the release sequence on a
    re-online, and let a recalled core leave the collapse loop so ARM's resuscitate
    path can take it into `secondary_start_kernel`. See Phase 2. This unblocks (3).
-3. **Deep suspend: the path works, the collapse does not exist yet.** As of r134 the
-   mem route completes and resumes on four cores (Phase 2), so what is left is the one
-   step that actually saves power: in `spm_suspend_enter()`, put the CPU and L2 SAWs
-   into `PM_SLEEP_MODE_PC` and issue `qcom_scm_cpu_power_down(L2_OFF)`. This is now the
-   highest-value job, and the riskiest - its failure mode is a phone that does not wake,
-   so it wants a short `rtcwake` and a tested fallback image before the first attempt.
-   Worth measuring against the 214 mA the SoC currently costs in s2idle.
+3. **Deep suspend: the path works, the collapse was tried and does not wake.** As of
+   r134 the mem route completes and resumes on four cores (Phase 2). The collapse itself
+   was written as `0082` and **failed on hardware: the SoC went down and never came
+   back**, needing Power+VolUp. `0082` is parked. The next move is not another attempt at
+   the collapse - it is to find out *why* it did not wake, and the discriminating
+   experiment is in Phase 2. Worth measuring against the 214 mA the SoC costs in s2idle
+   once it works.
 4. **Camera**, still the largest untouched area and still its own project.
 
 Smaller, self-contained: wire a battery `temp` consumer if anything wants one,
@@ -596,11 +597,61 @@ default is `PM_SUSPEND_MEM`, so registering any `platform_suspend_ops` would oth
 make `deep` the default and send every ordinary idle suspend down the collapse path.
 With the guard, `/sys/power/mem_sleep` reads `[s2idle] deep` and `deep` is opt-in.
 
-One loose end seen on resume: a single `[drm:mdp5_irq_error_handler] *ERROR* errors:
-04000000`, about six seconds after the CPUs came back. `fb0/blank` reads 4
-(FB_BLANK_POWERDOWN) afterwards, which is what an off screen looks like either way - and
-per the display notes elsewhere in this file those numbers pass while the panel is black,
-so whether the display survives a deep suspend has to be confirmed **by looking**.
+A loose end seen on resume turned out to be pre-existing: a single
+`[drm:mdp5_irq_error_handler] *ERROR* errors: 04000000` about six seconds after the CPUs
+come back. **Control run 2026-10-02: the identical error appears after an `s2idle`
+resume too**, so it is not specific to the deep path and not a regression from `0077`.
+Still unexplained, but old.
+
+### The collapse: tried as `0082`, and the phone did not wake
+
+`spm_suspend_enter()` was filled in - the boot CPU's own SAW and the L2 SAW both to
+`PM_SLEEP_MODE_PC`, then `cpu_suspend()` into
+`qcom_scm_cpu_power_down(QCOM_SCM_CPU_PWR_DOWN_L2_OFF)`, and both SAWs back to standby
+on the way out. Built as r135, flashed, and `rtcwake -m mem -s 20`:
+
+        --- rtcwake -m mem -s 20 WITH the SoC collapse
+        rtcwake: wakeup from "mem" using /dev/rtc0 at ...
+        (nothing further, ever)
+
+The phone stopped answering and **was not enumerated on USB at all** - no Sony device,
+no usb net interface, no ping. It needed Power+VolUp. So the SoC did collapse; it simply
+never came back. The same alarm on r134, where nothing actually powers down, resumes
+reliably.
+
+**There is no post-mortem evidence, and that needs saying plainly.** The on-disk log
+stops at the line before the suspend; `suspend_stats` is reset by the reboot; and
+pstore/ramoops retains nothing on this device (see the traps). So what follows are
+*hypotheses*, and this file should not be read as though one of them were established:
+
+- **(a) the wakeup is never armed for a real collapse.** On r134 the SoC stays powered,
+  so a wake can arrive by any route; under a genuine collapse the GIC is off and every
+  wake has to come through the MPM and the RPM. The vMPM flush in `0076` runs, but
+  whether the RPM honours the set has never been exercised with the SoC actually down.
+- **(b) the collapse or its resume is broken with the L2 off.** `QCOM_SCM_CPU_PWR_DOWN_L2_ON`
+  is used thousands of times a second by cpuidle and works; `L2_OFF` has never been used
+  on this port, and the L2 SAW's own PC sequence from `0072` has never actually run.
+
+Two things were checked in source and **neither settles it**, recorded so they are not
+re-checked:
+
+- `qpnpint_irq_set_wake()` in the SPMI arbiter *does* forward to the arbiter's summary
+  interrupt (`irq_set_irq_wake(bus->irq, on)`), which `0075` routes to MPM pin 62. So the
+  chain from a PMIC interrupt up to the MPM exists. That refutes the first guess made.
+- `rtc-pm8xxx` calls only `devm_device_init_wakeup()` and never `enable_irq_wake()` or
+  `dev_pm_set_wake_irq()`, which looks like the alarm is not armed as a system wake
+  source at all. But that cannot be the whole story, because on r134 the alarm *did* wake
+  the phone - 28 s elapsed for a 20 s alarm, so it really stayed down. Suggestive, not
+  conclusive.
+
+**The discriminating experiment, and it is cheap: after a collapse, does a power-key
+press wake it?** If yes, the collapse and its resume are fine and only the RTC's wake
+arming is at fault, which is a small fix. If no, the whole wakeup side fails under real
+collapse and the MPM/RPM handshake is the thing to chase. It needs a person to press the
+button and probably another Power+VolUp, which is why it has not been run. Anything that
+makes the collapse observable - a wake that does not depend on the MPM, or a check that
+the RPM acknowledged the vMPM set *before* entering - is worth more than another blind
+attempt.
 
 ---
 
@@ -2739,6 +2790,11 @@ That makes camera the largest single area left, ahead of audio.
 
 Out of the build, kept because the data in them was expensive to recover:
 
+- `0082` - the actual SoC collapse in `spm_suspend_enter()`. Correct-looking and
+  **the phone does not wake from it** (r135, Phase 2). Parked rather than deleted
+  because the sequence is probably right and the wakeup side is the suspect, so
+  whatever fixes the wakeup will want this back unchanged. r135 is safe to run but
+  must never be sent to `deep`.
 - `0078` - dropping `cold_boot_done` so the ACC/SAW release re-runs on every
   online, plus a non-returning `qcom_cpu_die()`. **Parked because it is actively
   dangerous**, not merely incomplete: it hard-resets the SoC at the online, every
