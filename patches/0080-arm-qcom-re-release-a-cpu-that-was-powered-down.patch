@@ -14,7 +14,7 @@
  #ifdef CONFIG_HOTPLUG_CPU
  static DEFINE_PER_CPU(struct spm_driver_data *, qcom_cpu_spm);
  
-@@ -121,7 +128,16 @@
+@@ -132,7 +139,16 @@
  	for (;;) {
  		if (drv) {
  			spm_set_low_power_mode(drv, PM_SLEEP_MODE_SPC);
@@ -31,7 +31,7 @@
  			/*
  			 * Still here, so an interrupt beat the collapse and the
  			 * SPM brought us back through the warm boot address.
-@@ -398,16 +414,54 @@
+@@ -409,16 +425,54 @@
  
  static DEFINE_PER_CPU(int, cold_boot_done);
  
@@ -92,7 +92,7 @@
  	/*
  	 * Send the secondary CPU a soft interrupt, thereby causing
  	 * the boot monitor to read the system wide flags register,
-@@ -415,7 +469,7 @@
+@@ -426,7 +480,7 @@
  	 */
  	arch_send_wakeup_ipi_mask(cpumask_of(cpu));
  

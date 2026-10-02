@@ -16,7 +16,7 @@
  
  
  #define VDD_SC1_ARRAY_CLAMP_GFS_CTL	0x35a0
-@@ -45,9 +49,90 @@
+@@ -45,9 +49,101 @@
  extern void secondary_startup_arm(void);
  
  #ifdef CONFIG_HOTPLUG_CPU
@@ -90,6 +90,17 @@
 +	 * by asserting CLAMP and COREPOR_RST; run against a core that is still
 +	 * powered and clocked it hangs the fabric and the SoC is reset.
 +	 */
++	/*
++	 * Say which of the two it is going to be. Without this the two cases
++	 * are indistinguishable from outside: a failed lookup falls back to the
++	 * old WFI park, which fails an online exactly the way a working
++	 * collapse does until the release sequence is re-run as well.
++	 */
++	if (drv)
++		pr_info("CPU%u: going down by SPM power collapse\n", cpu);
++	else
++		pr_warn("CPU%u: no SPM found, parking in WFI instead\n", cpu);
++
 +	for (;;) {
 +		if (drv) {
 +			spm_set_low_power_mode(drv, PM_SLEEP_MODE_SPC);

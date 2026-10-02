@@ -1,0 +1,72 @@
+--- a/arch/arm/mach-qcom/platsmp.c
++++ b/arch/arm/mach-qcom/platsmp.c
+@@ -55,6 +55,13 @@
+  */
+ static DEFINE_PER_CPU(bool, qcom_cpu_parked);
+ 
++/*
++ * Set by qcom_boot_secondary() to tell a core that is cycling through collapse
++ * in qcom_cpu_die() that it has been asked back, so it should stop collapsing
++ * and let arch_cpu_idle_dead() resuscitate it.
++ */
++static DEFINE_PER_CPU(bool, qcom_cpu_wanted);
++
+ #ifdef CONFIG_HOTPLUG_CPU
+ static DEFINE_PER_CPU(struct spm_driver_data *, qcom_cpu_spm);
+ 
+@@ -136,6 +143,13 @@
+ 	else
+ 		pr_warn("CPU%u: no SPM found, parking in WFI instead\n", cpu);
+ 
++	/*
++	 * A core that came back in at the cold boot address never ran the loop
++	 * below and so never consumed its flag. Drop any stale one here, rather
++	 * than let it cut a later trip through this function short.
++	 */
++	WRITE_ONCE(per_cpu(qcom_cpu_wanted, cpu), false);
++
+ 	for (;;) {
+ 		if (drv) {
+ 			spm_set_low_power_mode(drv, PM_SLEEP_MODE_SPC);
+@@ -150,12 +164,27 @@
+ 			cpu_suspend(0, qcom_pm_collapse);
+ 			WRITE_ONCE(per_cpu(qcom_cpu_parked, cpu), false);
+ 			/*
+-			 * Still here, so an interrupt beat the collapse and the
+-			 * SPM brought us back through the warm boot address.
+-			 * Put the SPM back to standby - a mode left armed turns
+-			 * an unrelated WFI into a power collapse - and retry.
++			 * Still here, so we were brought back in through the
++			 * warm boot address the SPM cpuidle driver registered,
++			 * which lands inside cpu_suspend() rather than at the
++			 * cold entry point. Put the SPM back to standby - a
++			 * mode left armed turns an unrelated WFI into a power
++			 * collapse.
+ 			 */
+ 			spm_set_low_power_mode(drv, PM_SLEEP_MODE_STBY);
++			pr_info("CPU%u: back from collapse, wanted=%d\n", cpu,
++				READ_ONCE(per_cpu(qcom_cpu_wanted, cpu)));
++			/*
++			 * If an online brought us back, return: there is no
++			 * path from here to secondary_start_kernel() except
++			 * arch_cpu_idle_dead()'s fallthrough, which is exactly
++			 * what it is for. Otherwise collapse again.
++			 */
++			smp_rmb();
++			if (READ_ONCE(per_cpu(qcom_cpu_wanted, cpu))) {
++				WRITE_ONCE(per_cpu(qcom_cpu_wanted, cpu), false);
++				return;
++			}
+ 		} else {
+ 			wfi();
+ 		}
+@@ -466,6 +495,9 @@
+ 		 */
+ 		if (!qcom_cpu_wait_parked(cpu))
+ 			return -EBUSY;
++
++		WRITE_ONCE(per_cpu(qcom_cpu_wanted, cpu), true);
++		smp_wmb();
+ 	}
+ 
+ 	ret = func(cpu);

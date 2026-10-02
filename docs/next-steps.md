@@ -10,13 +10,15 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-01 end of day: r128 is flashed and installed**, so
-the boot image and `/lib/modules` agree and `uname -v` prints `#129`. r128 is
-r126's patch set again - `0072`-`0076`, no suspend ops, no `0078` - so `mem_sleep`
-is `[s2idle]` and all four cores are up. Images kept in `boot-images/`, newest
-first:
+**Device state as of 2026-10-02: r133 is flashed and installed**, so the boot image
+and `/lib/modules` agree and `uname -v` prints `#134`. r133 is `0072`-`0076` plus
+`0079`-`0081`, which means **CPU hotplug online works** and `mem_sleep` is still
+`[s2idle]` (no suspend ops yet). Images kept in `boot-images/`, newest first:
 
-        r128  (current)  7eed4cecf1a5c16c8da822bf7d21f722   0072-0076, as r126
+        r133  (current)  1517dfe0422ab4517e55dfa4f4bbc02c   + 0079-0081: hotplug WORKS
+        r132  fea23635de62cbe9cb9ee638277e49fa   + 0079,0080: survives, online fails
+        r131  c137394c9a2be27ba0f2a7fb369a5074   + 0079 only: safe, online fails EIO
+        r128  7eed4cecf1a5c16c8da822bf7d21f722   0072-0076, as r126
         r127  DO NOT BOOT  a0b235222e63d100a6f98371b169acc6  + 0078: resets the SoC
         r126  0072-0076, no suspend ops  (apk overwritten, see below)
         r125  cd88e313099ccfab02f18f69a451c614   + 0077, leaves the phone single-core
@@ -158,14 +160,10 @@ prerequisite.
    decimator muxes are not symmetric - `dec1_mux_text` is
    `{"ZERO", "DMIC1", "ADC6"}`, so DEC1 cannot take ADC1 at all; ADC1 is offered
    only to DEC6 and DEC7. Assuming DEC*n* pairs with ADC*n* would be wrong.
-2. **CPU hotplug online**, the gate on deep suspend, and now diagnosed rather than
-   merely identified (Phase 2). The core never wakes because `ipi_teardown()` masks
-   `IPI_WAKEUP` before it parks in `wfi()`. The cheap-looking fix was tried and is
-   harmful: re-running the ACC/SAW release on a core that is powered and parked
-   clamps and resets a live core and **hard-resets the SoC** (`0078`, parked). The
-   real fix needs the dying core power-collapsed through its SPM first, which means
-   exporting an entry point from `drivers/soc/qcom/spm.c`. That makes this power
-   work after all, not pure ARM SMP work - correcting what this list said before.
+2. ~~**CPU hotplug online**~~ **SOLVED 2026-10-02**, `0079`+`0080`+`0081` on r133.
+   Power-collapse the dying core through its SPM, re-run the release sequence on a
+   re-online, and let a recalled core leave the collapse loop so ARM's resuscitate
+   path can take it into `secondary_start_kernel`. See Phase 2. This unblocks (3).
 3. **Deep suspend**, blocked on (2). Everything else for it is built and verified:
    `0072`-`0076` give a programmed L2 SAW, a bound MPM that flushes itself, and the
    PMIC interrupt MPM-routed and armed, and TrustZone does the collapse through an
@@ -682,8 +680,42 @@ other cores are still running out of it. The SPM driver data comes from the CPU'
   there is nothing left to set it - and the reader waits a further 100 us to cover the
   `cpu_suspend()` window.
 
-Built as r129 (`0079`) and r130 (`0079`+`0080`); both are untested on hardware as of
-2026-10-02.
+**`0081` is the piece that actually made it work, and it was not predicted.** With
+`0079`+`0080` on hardware (r132) the release sequence ran against a collapsed core and
+the SoC **survived** - three cycles, `boot_id` unchanged, which is the direct
+confirmation that the core being genuinely off is what makes the sequence legal. But
+the core still never came online. The reason, and the diagnostic in `0079` is what
+showed it:
+
+        CPU1: back from collapse, wanted=1
+        CPU1: smp_ops.cpu_die() returned, trying to resuscitate
+
+The SPM cpuidle driver registers `cpu_resume_arm` as the **warm** boot address, so a
+collapsed core powered back up does not arrive at the cold entry point at all - it
+resumes *inside* `cpu_suspend()`, back in `qcom_cpu_die()`'s own loop, which set the
+SPM to standby and collapsed it again. The core was bouncing in our loop and never
+returned from `cpu_die`. `0081` adds a per-CPU `wanted` flag that
+`qcom_boot_secondary()` raises before the release, and the loop returns when it sees
+it - handing the core to `arch_cpu_idle_dead()`'s fallthrough, which is precisely what
+that path exists for.
+
+**SOLVED 2026-10-02 on r133 (`0079`+`0080`+`0081`).** Verified, with the reset check
+done by comparing `/proc/sys/kernel/random/boot_id` rather than by reading uptime:
+
+        cpu1/2/3 individually:  offline rc=0, online rc=0, online=0-3, state=238
+        execution check:        pinned busy loop moved cpu1 +240, cpu2 +248, cpu3 +238
+                                jiffies - the cores really run, not just show online
+        all three off and back, 4 rounds:  nproc 4 -> 1 -> 4, 12/12 onlines rc=0
+        boot_id identical throughout every test; 0 oops, 0 warnings
+
+The all-at-once pattern matters more than the single-core one, because
+`pm_sleep_disable_secondary_cpus()` parks every secondary and brings them all back -
+and that is the pattern that reset r132 while `0081` was missing.
+
+Superseded builds: r129/r130 were built before the `0079` diagnostic was added and were
+never flashed; r131 is `0079` alone (safe, online fails with `EIO`), r132 is
+`0079`+`0080` (survives, online still fails). Their apks may still be in the package
+dir - r133 is the one that works.
 
 **Two things that are *not* explained, recorded so they are not mistaken for
 settled.** First, there is **no watchdog driver bound at all** on this device -
