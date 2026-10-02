@@ -648,16 +648,42 @@ clocked in `wfi()`, so the sequence clamps and resets a live core with the L2 an
 the fabric up; the bus hangs and the secure side resets the SoC. Re-running the
 release is necessary but not sufficient - the core has to be off first.
 
-**So the real fix is bigger than ARM SMP code**, which is a correction to what this
-file said before. The dying core must be power-collapsed, not parked: `qcom_cpu_die()`
-needs to put its own SPM into collapse mode and then `wfi()`, letting the SPM and ACC
-sequence the core off the way downstream's `msm_cpu_die` does. Only then is the
-cold-boot release sequence operating on the state it expects. The pieces are mostly
-in the tree already - `0072` programmed the L2 SAW's PC sequences, the per-CPU SPM
-has `start_index[PM_SLEEP_MODE_SPC]`, and `qcom_scm_cpu_power_down()` is
-`EXPORT_SYMBOL_GPL` - but `spm_set_low_power_mode()` is private to
-`drivers/soc/qcom/spm.c` and its cpuidle driver, so it needs an exported entry
-point before `platsmp.c` can call it.
+**The fix is to power-collapse the dying core, not park it.** `qcom_cpu_die()` has to
+take the core properly off, so that the cold-boot release sequence is operating on the
+state it expects. That turns out to need **no new plumbing at all**, which corrects a
+claim made here first time round: `spm_set_low_power_mode()` is *not* private to
+`drivers/soc/qcom/spm.c`. It is declared in `include/soc/qcom/spm.h` and already
+called from `drivers/cpuidle/cpuidle-qcom-spm.c`, and `QCOM_SPM`, `ARM_QCOM_SPM_CPUIDLE`
+and `ARM_CPU_SUSPEND` are all `=y` here, so `platsmp.c` links straight against it with
+no `EXPORT_SYMBOL` and no edit to `spm.c`.
+
+So `qcom_cpu_die()` can reuse the exact sequence the idle path already runs thousands
+of times a second on this device:
+
+        spm_set_low_power_mode(drv, PM_SLEEP_MODE_SPC);
+        cpu_suspend(0, qcom_pm_collapse);   /* QCOM_SCM_CPU_PWR_DOWN_L2_ON */
+        spm_set_low_power_mode(drv, PM_SLEEP_MODE_STBY);
+
+**SPC, not PC**, is the right mode: standalone power collapse leaves the L2 up, and the
+other cores are still running out of it. The SPM driver data comes from the CPU's
+`qcom,saw` phandle exactly as the cpuidle driver gets it.
+
+**Split deliberately into two patches, because only the second one can reset the phone:**
+
+- `0079` powers the dying core off and nothing else. The online still fails, because
+  the release sequence is still gated by `cold_boot_done` - but it fails the old safe
+  way, with `EIO`. Independently testable, and the test that matters is the negative
+  one: offlining and then attempting an online must **not** reset the SoC.
+- `0080` re-runs the release sequence on a re-online, gated on a per-CPU `parked` flag
+  that `qcom_cpu_die()` raises just before the collapse. If the flag is not up within
+  10 ms the online is refused with `-EBUSY` rather than risking the reset, since a
+  refused online is a far better failure than a dead phone. The flag means "about to
+  collapse" rather than "collapsed" - after the collapse the core executes nothing, so
+  there is nothing left to set it - and the reader waits a further 100 us to cover the
+  `cpu_suspend()` window.
+
+Built as r129 (`0079`) and r130 (`0079`+`0080`); both are untested on hardware as of
+2026-10-02.
 
 **Two things that are *not* explained, recorded so they are not mistaken for
 settled.** First, there is **no watchdog driver bound at all** on this device -

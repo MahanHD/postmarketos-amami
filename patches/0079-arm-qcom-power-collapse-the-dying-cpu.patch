@@ -1,0 +1,110 @@
+--- a/arch/arm/mach-qcom/platsmp.c
++++ b/arch/arm/mach-qcom/platsmp.c
+@@ -12,11 +12,15 @@
+ #include <linux/device.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
++#include <linux/of_platform.h>
++#include <linux/platform_device.h>
+ #include <linux/smp.h>
+ #include <linux/io.h>
+ #include <linux/firmware/qcom/qcom_scm.h>
++#include <soc/qcom/spm.h>
+ 
+ #include <asm/smp_plat.h>
++#include <asm/suspend.h>
+ 
+ 
+ #define VDD_SC1_ARRAY_CLAMP_GFS_CTL	0x35a0
+@@ -45,9 +49,90 @@
+ extern void secondary_startup_arm(void);
+ 
+ #ifdef CONFIG_HOTPLUG_CPU
++static DEFINE_PER_CPU(struct spm_driver_data *, qcom_cpu_spm);
++
++/*
++ * The SPM that owns this CPU's power rail, found the same way the SPM cpuidle
++ * driver finds it. Cached because qcom_cpu_die() must not do anything that can
++ * sleep, and because the lookup cannot fail differently later.
++ */
++static struct spm_driver_data *qcom_cpu_spm_get(unsigned int cpu)
++{
++	struct device_node *cpu_node, *saw_node;
++	struct platform_device *pdev;
++	struct spm_driver_data *drv;
++
++	drv = per_cpu(qcom_cpu_spm, cpu);
++	if (drv)
++		return drv;
++
++	cpu_node = of_get_cpu_node(cpu, NULL);
++	if (!cpu_node)
++		return NULL;
++
++	saw_node = of_parse_phandle(cpu_node, "qcom,saw", 0);
++	of_node_put(cpu_node);
++	if (!saw_node)
++		return NULL;
++
++	pdev = of_find_device_by_node(saw_node);
++	of_node_put(saw_node);
++	if (!pdev)
++		return NULL;
++
++	drv = dev_get_drvdata(&pdev->dev);
++	per_cpu(qcom_cpu_spm, cpu) = drv;
++
++	return drv;
++}
++
++static int qcom_pm_collapse(unsigned long unused)
++{
++	qcom_scm_cpu_power_down(QCOM_SCM_CPU_PWR_DOWN_L2_ON);
++
++	/*
++	 * Only reached if an interrupt was pending and we did not power down
++	 * as a result.
++	 */
++	return -1;
++}
++
+ static void qcom_cpu_die(unsigned int cpu)
+ {
+-	wfi();
++	struct spm_driver_data *drv = qcom_cpu_spm_get(cpu);
++
++	/*
++	 * A plain WFI here can never be woken. __cpu_disable() has already run
++	 * ipi_teardown(), which disables every one of this CPU's per-CPU
++	 * interrupts - and IPI_WAKEUP is the first entry of ipi_msg_type - so
++	 * the wakeup IPI that qcom_boot_secondary() sends cannot be delivered
++	 * to us and arch_cpu_idle_dead()'s fallthrough is unreachable.
++	 *
++	 * Power the core off instead, with the same SPM mode and SCM call the
++	 * SPM cpuidle driver uses for an ordinary idle collapse. Standalone
++	 * power collapse leaves the L2 up, which is what we want: the other
++	 * cores are still running out of it.
++	 *
++	 * Going properly off is also what makes bringing the core back legal.
++	 * kpssv2_release_secondary() is a cold-boot power-up sequence and ends
++	 * by asserting CLAMP and COREPOR_RST; run against a core that is still
++	 * powered and clocked it hangs the fabric and the SoC is reset.
++	 */
++	for (;;) {
++		if (drv) {
++			spm_set_low_power_mode(drv, PM_SLEEP_MODE_SPC);
++			cpu_suspend(0, qcom_pm_collapse);
++			/*
++			 * Still here, so an interrupt beat the collapse and the
++			 * SPM brought us back through the warm boot address.
++			 * Put the SPM back to standby - a mode left armed turns
++			 * an unrelated WFI into a power collapse - and retry.
++			 */
++			spm_set_low_power_mode(drv, PM_SLEEP_MODE_STBY);
++		} else {
++			wfi();
++		}
++	}
+ }
+ #endif
+ 
