@@ -3022,7 +3022,10 @@ otherwise healthy system looks identical from here. That is exactly the shape of
 screen before bisecting further.
 
 Recovery each time was fastboot: Volume Up held while plugging in, then
-`fastboot flash boot boot-images/boot-r140.img`.
+`fastboot flash boot boot-images/boot-r140.img`. **And then `fastboot reboot`** - S1Boot
+stays in fastboot until told otherwise, so after the flash the phone sits there looking
+exactly like another failed boot. Only *entering* fastboot needs hands; everything after
+it is remote.
 
 ### Suggested order, each step observable
 
