@@ -10,6 +10,13 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
+**Careful on the next build: the recipe and the phone disagree on purpose.** The APKBUILD
+is left at `pkgrel=143` with `0085`, `0086` and `debug/9006` still in `source=`, so a plain
+`pmbootstrap build` produces r143 - **the build that does not boot**. The phone is on r140.
+Decide what is wanted before building: for the config-only test, drop all three and keep
+the config edits; to go back to a known-good recipe, drop the config edits too and set
+`pkgrel=140`.
+
 **Device state as of 2026-10-02 end of day: r140 is flashed and installed**, `uname -v`
 prints `#141`. This is the cleaned-up end state of the suspend work: `0072`-`0076` plus
 `0079`-`0081`, with `0077`, `0082`, `0083`, `0084` and `debug/9005` all out. So **CPU
