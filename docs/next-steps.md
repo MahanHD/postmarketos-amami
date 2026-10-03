@@ -10,10 +10,11 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-03: r155 is flashed and installed, and the recipe agrees.**
-`uname -v` prints `#156`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
+**Device state as of 2026-10-03: r156 is flashed and installed, and the recipe agrees.**
+`uname -v` prints `#157`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
 `debug/9006`-`9008` - with a **modular** media config. CAMSS probes; the rear camera powers up,
-answers on CCI, and its sensor and module have been identified (Camera, step 2). On the phone,
+and the front camera both answer on CCI, and both sensors and modules have been identified
+(Camera, step 2): rear Sony IMX200, front Sony IMX132. On the phone,
 `/etc/modprobe.d/camss-bringup.conf` blacklists `qcom_camss`, `i2c_qcom_cci` and `imx219` (each
 with `install ... /bin/false`), so nothing camera-related loads at boot. Load by hand with
 `modprobe --ignore-install <module>`; loading `imx219` powers the sensor, dumps its ID header
@@ -42,7 +43,8 @@ and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plu
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r155  (current)  873073854109d963aa45110d48846a36   + sensor ID / EEPROM read (9007/9008)
+        r156  (current)  9195531fb31c6af2b10f56b24421c461   + front camera in the ID read too
+        r155  873073854109d963aa45110d48846a36   + sensor ID / EEPROM read (9007/9008)
         r148  9d8ce1923c5d4b14fee46a67620b49c0   + camera bring-up, CAMSS probes
         r146  e4278675738079153632413baa2d1768   camss enabled, 465 MHz VFE bug still in
         r145  318a925f6ac5bfb44c6598e49111dde1   modular media config, camss node disabled
@@ -3170,11 +3172,30 @@ IMX300, not of this part. Mainline has no `imx200` driver either.
   `csi-lane-mask 0x1f`: data on CSIPHY lanes 0, 2, 3, 4 with the clock on 1. It is in the camss
   endpoint already; nothing has streamed yet, so it is unverified.
 
-The rear module also has a second variant, `SOI08BS2`, which this phone does not carry. The
-front camera (`camera@6c`, CCI master 1, modules `SEM02BN1`/`LGI02BN1`) has not been touched;
-the same borrow-a-driver method should identify it, at 7-bit `0x36`.
-3. **An IMX200 driver.** The long pole: no mainline driver, no public datasheet, and an INCK
-   of 19.2 MHz rather than the 24 MHz most Sony register tables assume. The downstream DT's
+The rear module also has a second variant, `SOI08BS2`, which this phone does not carry.
+
+**The front camera is a Sony IMX132**, identified the same way on r156 (`debug/9007` now
+describes both cameras). It sits on CCI master 1 (`cci_i2c1`) at 7-bit `0x36`, MCLK on GPIO 17
+(`cam_mclk2`, run at 19.2 MHz), reset on GPIO 18, the same three rails, 2 data lanes on
+CSIPHY 2 (clock lane 1, data 0 and 2), no focus actuator, 1976x1200 at 1.12 um.
+
+        sensor 0x0000: 01 32 02 0b 0a ff 01 00 00 40 ...   model 0x0132, rev 0x02,
+                                                           manufacturer 0x0b = Sony
+        EEPROM  000: |SEM02BN1|  020: |IMX132|             module = downstream's default
+
+The two sensors explain each other: the older IMX132 keeps its model ID at the classic SMIA
+location `0x0000`, with Sony's manufacturer code `0x0b` at `0x0003`, while the IMX200 uses
+`0x0016` and leaves `0x0000` empty - which is exactly why the rear first read 0. imx219 itself
+printed `chip id mismatch: 219!=132` for the front. Mainline has no `imx132` driver.
+
+**Both cameras, at a glance:**
+
+        rear   Sony IMX200  module SOI20BS0  cci_i2c0 0x10  CSIPHY0 4-lane  MCLK0  AF: BU64296G
+        front  Sony IMX132  module SEM02BN1  cci_i2c1 0x36  CSIPHY2 2-lane  MCLK2  no AF
+3. **Sensor drivers: IMX200 (rear) and IMX132 (front).** The long pole: neither has a
+   mainline driver or a public datasheet, and the INCK has to be 19.2 MHz rather than the
+   24 MHz most Sony register tables assume. IMX132 is the smaller, older part and the likelier
+   first target. The downstream DT's
    per-module `pll` tables and the Sony camera driver's strings are the starting points. The
    AF actuator (BU64296G) and the EEPROM's calibration data come after the sensor streams.
 

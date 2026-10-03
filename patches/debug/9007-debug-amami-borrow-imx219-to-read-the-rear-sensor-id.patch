@@ -1,6 +1,6 @@
 --- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
 +++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-@@ -376,3 +376,108 @@
+@@ -376,3 +376,168 @@
  
  	status = "okay";
  };
@@ -71,6 +71,39 @@
 +	};
 +};
 +
++&cci_i2c1 {
++	/*
++	 * Front camera, downstream camera@6c: CCI master 1, 7-bit 0x36, 2 lanes,
++	 * MCLK on GPIO 17 (cam_mclk2), reset on GPIO 18. Same three rails as the
++	 * rear. Modules SEM02BN1 / LGI02BN1, 1976x1200, no focus actuator.
++	 */
++	camera@36 {
++		compatible = "sony,imx219";
++		reg = <0x36>;
++
++		clocks = <&mmcc CAMSS_MCLK2_CLK>;
++		assigned-clocks = <&mmcc CAMSS_MCLK2_CLK>;
++		assigned-clock-rates = <19200000>;
++
++		VANA-supply = <&pm8941_l17>;
++		VDIG-supply = <&pm8941_lvs2>;
++		VDDL-supply = <&pm8941_l3>;
++
++		reset-gpios = <&tlmm 18 GPIO_ACTIVE_HIGH>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&cam_front_default>;
++
++		port {
++			front_cam_ep: endpoint {
++				data-lanes = <1 2>;
++				link-frequencies = /bits/ 64 <456000000>;
++				remote-endpoint = <&csiphy2_ep>;
++			};
++		};
++	};
++};
++
 +&camss {
 +	ports {
 +		#address-cells = <1>;
@@ -89,6 +122,17 @@
 +				remote-endpoint = <&rear_cam_ep>;
 +			};
 +		};
++
++		port@2 {
++			reg = <2>;
++
++			/* downstream: csi-lane-mask 0x7, data on lanes 0 and 2, clock on 1 */
++			csiphy2_ep: endpoint {
++				clock-lanes = <1>;
++				data-lanes = <0 2>;
++				remote-endpoint = <&front_cam_ep>;
++			};
++		};
 +	};
 +};
 +
@@ -103,6 +147,22 @@
 +
 +		reset-pins {
 +			pins = "gpio94";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-disable;
++		};
++	};
++
++	cam_front_default: cam-front-default-state {
++		mclk-pins {
++			pins = "gpio17";
++			function = "cam_mclk2";
++			drive-strength = <2>;
++			bias-disable;
++		};
++
++		reset-pins {
++			pins = "gpio18";
 +			function = "gpio";
 +			drive-strength = <2>;
 +			bias-disable;
