@@ -10,8 +10,8 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-04: r159 is flashed and installed, and the recipe agrees.**
-`uname -v` prints `#160`. `v4l-utils` is installed on the phone for `media-ctl`/`v4l2-ctl`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
+**Device state as of 2026-10-04: r161 is flashed and installed, and the recipe agrees.**
+`uname -v` prints `#162`. `v4l-utils` is installed on the phone for `media-ctl`/`v4l2-ctl`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
 `debug/9006`-`9008` - with a **modular** media config. CAMSS probes; the rear camera powers up,
 and the front camera both answer on CCI, and both sensors and modules have been identified
 (Camera, step 2): rear Sony IMX200, front Sony IMX132. On the phone,
@@ -43,7 +43,9 @@ and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plu
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r159  (current)  5fc1ac44acace45d83ce73aab5bf9d72   + 9010 full-size frames, 0089 GPU purge fix
+        r161  (current)  3293fbdc75da5cf10056140083181dec   + 0090 MCLK table, front back at 19.2 MHz
+        r160  2a2e62f2881e680aec0f3f21e540721c   0090 test: front asks 24 MHz, gets 48
+        r159  5fc1ac44acace45d83ce73aab5bf9d72   + 9010 full-size frames, 0089 GPU purge fix
         r157  81039a43b0dd14ee729b7c4c7f92c18c   + test-pattern capture works (9009)
         r156  9195531fb31c6af2b10f56b24421c461   + front camera in the ID read too
         r155  873073854109d963aa45110d48846a36   + sensor ID / EEPROM read (9007/9008)
@@ -3168,6 +3170,21 @@ IMX300, not of this part. Mainline has no `imx200` driver either.
   and plain dividers (48, 64, 66.67 MHz). The bring-up uses 19.2 MHz, which is enough for I2C;
   `debug/9008` lets imx219 accept it. A real IMX200 driver will need PLL settings for an INCK
   this SoC can actually make - the DT's per-module `pll` tables are where to look.
+
+  **Fixed by `0090` (r160, 2026-10-04):** msm8974's `ftbl_camss_mclk0_3_clk` now lists only
+  those six reachable rates; the five M/N entries are gone, and msm8226's own table is
+  untouched. Verified on hardware rather than from the code: a test build pointed the front
+  camera at 24 MHz, and MCLK2 came out at **48 MHz**, the next real rate up - with the clock
+  framework and the hardware agreeing (CFG `0x33c4` = `0x518`, GPLL0 / 12.5). Before the fix
+  the same request produced 120 MHz. imx219 refused the 48 MHz before powering anything, and
+  the rear at 19.2 MHz still read its ID and EEPROM. So a sensor driver asking for 24 MHz now
+  gets an honest answer it can check. The front went back to 19.2 MHz for r161.
+- **The VFE table has a sibling bug that is recorded, not patched.** Its 465 MHz entry sources
+  MMPLL3, which msm8974's `vfe0/1_clk_src` parent map does not include, so the rate fails with
+  `-ENOENT` (`0085` stops at 400 MHz for that reason). apq8084, which shares the table, makes
+  465 MHz from **MMPLL4** through a different map; msm8974 has no MMPLL4. Whether msm8974's VFE
+  mux can really reach MMPLL3 cannot be checked without measuring the clock, so neither the
+  table nor the parent map is changed. Unlike the MCLK bug, this one fails safely.
 - **msm8974's CCI caps a read at 12 bytes and a write at 10** (`cci_v1_5_data`), and the I2C
   core returns `-EOPNOTSUPP` for anything longer - a 64-byte EEPROM read fails outright.
 - **The CSIPHY lane mapping** from downstream's `csi-lane-assign 0x4320` and
