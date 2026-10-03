@@ -10,8 +10,8 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-03: r156 is flashed and installed, and the recipe agrees.**
-`uname -v` prints `#157`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
+**Device state as of 2026-10-04: r157 is flashed and installed, and the recipe agrees.**
+`uname -v` prints `#158`. `v4l-utils` is installed on the phone for `media-ctl`/`v4l2-ctl`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
 `debug/9006`-`9008` - with a **modular** media config. CAMSS probes; the rear camera powers up,
 and the front camera both answer on CCI, and both sensors and modules have been identified
 (Camera, step 2): rear Sony IMX200, front Sony IMX132. On the phone,
@@ -43,7 +43,8 @@ and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plu
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r156  (current)  9195531fb31c6af2b10f56b24421c461   + front camera in the ID read too
+        r157  (current)  81039a43b0dd14ee729b7c4c7f92c18c   + test-pattern capture works (9009)
+        r156  9195531fb31c6af2b10f56b24421c461   + front camera in the ID read too
         r155  873073854109d963aa45110d48846a36   + sensor ID / EEPROM read (9007/9008)
         r148  9d8ce1923c5d4b14fee46a67620b49c0   + camera bring-up, CAMSS probes
         r146  e4278675738079153632413baa2d1768   camss enabled, 465 MHz VFE bug still in
@@ -3188,10 +3189,51 @@ location `0x0000`, with Sony's manufacturer code `0x0b` at `0x0003`, while the I
 `0x0016` and leaves `0x0000` empty - which is exactly why the rear first read 0. imx219 itself
 printed `chip id mismatch: 219!=132` for the front. Mainline has no `imx132` driver.
 
+### Test-pattern capture, 2026-10-04: frames reach memory through the whole pipeline
+
+The CSID 4.1 block has a built-in test-pattern generator (`test_pattern` menu on the CSID
+subdev: incrementing, 0x55/0xAA, zeros, ones, pseudo-random, user). That makes it possible to
+prove CSID -> ISPIF -> VFE RDI -> DMA works before writing any sensor driver:
+
+        media-ctl -d /dev/media0 -l '"msm_csid0":1->"msm_ispif0":0[1],"msm_ispif0":1->"msm_vfe0_rdi0":0[1]'
+        v4l2-ctl -d /dev/v4l-subdev3 -c test_pattern=4          # set BEFORE the formats
+        media-ctl -d /dev/media0 -V '"msm_csid0":1[fmt:SBGGR8_1X8/64x32 field:none],"msm_ispif0":0[fmt:SBGGR8_1X8/64x32 field:none],"msm_vfe0_rdi0":0[fmt:SBGGR8_1X8/64x32 field:none]'
+        v4l2-ctl -d /dev/video0 --set-fmt-video=width=64,height=32,pixelformat=BA81
+        v4l2-ctl -d /dev/video0 --stream-mmap=4 --stream-count=6 --stream-to=out.raw
+
+Six frames per pattern, and each capture is exactly its pattern while the three differ from
+one another - so the bytes came off the generator, not out of stale buffers:
+
+        All Ones      12288 x ff
+        All Zeros     12288 x 00
+        Alternating   6144 x aa + 6144 x 55
+
+Two things had to change first. **camss waits forever on sensor endpoints no driver binds**:
+with the bring-up sensors linked into the camss graph it never registered `/dev/media0` or any
+`/dev/v4l-subdev*`, so `debug/9007` now describes the sensors on CCI without linking them. And
+**without an IOMMU the VFE can overrun a buffer**: `video_buf_init()` hands the VFE only
+`sg_dma_address(sgt->sgl)`, the first segment, and the VFE writes the whole plane from there.
+`debug/9009` refuses any plane that is not exactly one DMA segment. It has been seen to fire -
+a 640x480 frame came back as 4 segments, the kernel logged "plane 0 is 4 DMA segments, not 1:
+refusing it", and REQBUFS failed cleanly. 64x32 SBGGR8 is 2 KB, one page, so it passes.
+
+**So real frame sizes are not possible yet**, and that is the next piece of plumbing, before
+any sensor driver. There is CMA - 256 MB, `CONFIG_DMA_CMA=y` - so the quick route is to give
+camss contiguous buffers (`vb2_dma_contig`) when there is no IOMMU; the proper route is the
+CAMSS IOMMU (downstream: two `msm-smmu-v1` instances at 0xfda44000 and 0xfda64000).
+
+**An unexplained stall, recorded and not attributed:** r157's first boot stopped logging 13 s
+into userspace, while systemd was mounting `/boot`, with no panic, oops or watchdog message, and
+the next boot came three minutes later. No camera module was loaded - all three are
+blacklisted. Two further reboots of the same image were clean at ~72 s each. One occurrence, like
+the single r126 reset, and pstore cannot say more.
+
 **Both cameras, at a glance:**
 
         rear   Sony IMX200  module SOI20BS0  cci_i2c0 0x10  CSIPHY0 4-lane  MCLK0  AF: BU64296G
         front  Sony IMX132  module SEM02BN1  cci_i2c1 0x36  CSIPHY2 2-lane  MCLK2  no AF
+2b. **DONE 2026-10-04 on r157: the capture path works, proven with the CSID's own test
+   pattern - no sensor driver involved.** See "Test-pattern capture" below.
 3. **Sensor drivers: IMX200 (rear) and IMX132 (front).** The long pole: neither has a
    mainline driver or a public datasheet, and the INCK has to be 19.2 MHz rather than the
    24 MHz most Sony register tables assume. IMX132 is the smaller, older part and the likelier

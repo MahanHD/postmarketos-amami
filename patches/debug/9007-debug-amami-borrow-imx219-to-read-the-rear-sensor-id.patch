@@ -1,11 +1,15 @@
 --- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
 +++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-@@ -376,3 +376,168 @@
+@@ -376,3 +376,138 @@
  
  	status = "okay";
  };
 +
 +/*
++ * The sensors are deliberately NOT linked into the camss graph: with endpoints
++ * that no real driver ever binds, camss waits forever and never registers
++ * /dev/media0 or its subdev nodes. Link them once a real driver exists.
++ *
 + * BRING-UP ONLY - debug/9007. This borrows the imx219 driver purely to power the
 + * rear camera and read its 16-bit model ID at 0x0000: for anything that is not an
 + * IMX219, imx219 logs "chip id mismatch: 219!=<id>", and <id> is the number wanted.
@@ -65,7 +69,6 @@
 +			rear_cam_ep: endpoint {
 +				data-lanes = <1 2 3 4>;
 +				link-frequencies = /bits/ 64 <364000000>;
-+				remote-endpoint = <&csiphy0_ep>;
 +			};
 +		};
 +	};
@@ -98,39 +101,6 @@
 +			front_cam_ep: endpoint {
 +				data-lanes = <1 2>;
 +				link-frequencies = /bits/ 64 <456000000>;
-+				remote-endpoint = <&csiphy2_ep>;
-+			};
-+		};
-+	};
-+};
-+
-+&camss {
-+	ports {
-+		#address-cells = <1>;
-+		#size-cells = <0>;
-+
-+		port@0 {
-+			reg = <0>;
-+
-+			/*
-+			 * Downstream: csi-lane-mask 0x1f and csi-lane-assign 0x4320,
-+			 * i.e. data on CSIPHY lanes 0, 2, 3, 4 with the clock on 1.
-+			 */
-+			csiphy0_ep: endpoint {
-+				clock-lanes = <1>;
-+				data-lanes = <0 2 3 4>;
-+				remote-endpoint = <&rear_cam_ep>;
-+			};
-+		};
-+
-+		port@2 {
-+			reg = <2>;
-+
-+			/* downstream: csi-lane-mask 0x7, data on lanes 0 and 2, clock on 1 */
-+			csiphy2_ep: endpoint {
-+				clock-lanes = <1>;
-+				data-lanes = <0 2>;
-+				remote-endpoint = <&front_cam_ep>;
 +			};
 +		};
 +	};

@@ -1,0 +1,25 @@
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -159,6 +159,22 @@
+ 		if (!sgt)
+ 			return -EFAULT;
+ 
++		/*
++		 * BRING-UP ONLY, debug/9009. The VFE is handed one address per
++		 * plane - the first segment's - and writes the whole plane from
++		 * there. Behind an IOMMU the buffer is one IOVA range so that is
++		 * fine, but debug/9006 runs this with no IOMMU on msm8974, where a
++		 * buffer scattered across physical pages would have the VFE
++		 * writing straight past its first segment into unrelated memory.
++		 * Refuse those rather than let that happen.
++		 */
++		if (sgt->nents != 1) {
++			dev_err(video->camss->dev,
++				"plane %u is %u DMA segments, not 1: refusing it, there is no IOMMU\n",
++				i, sgt->nents);
++			return -EINVAL;
++		}
++
+ 		buffer->addr[i] = sg_dma_address(sgt->sgl);
+ 	}
+ 
