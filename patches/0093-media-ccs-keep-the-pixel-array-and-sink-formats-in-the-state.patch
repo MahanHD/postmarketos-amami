@@ -1,0 +1,71 @@
+--- a/drivers/media/i2c/ccs/ccs-core.c
++++ b/drivers/media/i2c/ccs/ccs-core.c
+@@ -2230,6 +2230,8 @@
+ 		      CCS_LIM(sensor, MIN_Y_OUTPUT_SIZE),
+ 		      CCS_LIM(sensor, MAX_Y_OUTPUT_SIZE));
+ 
++	*v4l2_subdev_state_get_format(sd_state, ssd->sink_pad) = fmt->format;
++
+ 	ccs_get_crop_compose(subdev, sd_state, crops, NULL);
+ 
+ 	crops[ssd->sink_pad]->left = 0;
+@@ -2515,6 +2517,14 @@
+ 	}
+ }
+ 
++static void ccs_get_native_size(struct ccs_subdev *ssd, struct v4l2_rect *r)
++{
++	r->top = 0;
++	r->left = 0;
++	r->width = CCS_LIM(ssd->sensor, X_ADDR_MAX) + 1;
++	r->height = CCS_LIM(ssd->sensor, Y_ADDR_MAX) + 1;
++}
++
+ static int ccs_set_crop(struct v4l2_subdev *subdev,
+ 			struct v4l2_subdev_state *sd_state,
+ 			struct v4l2_subdev_selection *sel)
+@@ -2525,7 +2535,9 @@
+ 
+ 	ccs_get_crop_compose(subdev, sd_state, crops, &comp);
+ 
+-	if (sel->pad == ssd->sink_pad) {
++	if (ssd == sensor->pixel_array) {
++		ccs_get_native_size(ssd, &src_size);
++	} else if (sel->pad == ssd->sink_pad) {
+ 		struct v4l2_mbus_framefmt *mfmt =
+ 			v4l2_subdev_state_get_format(sd_state, sel->pad);
+ 
+@@ -2548,21 +2560,21 @@
+ 
+ 	*crops[sel->pad] = sel->r;
+ 
+-	if (ssd != sensor->pixel_array && sel->pad == CCS_PAD_SINK)
++	if (ssd != sensor->pixel_array && sel->pad == CCS_PAD_SINK) {
+ 		ccs_propagate(subdev, sd_state, sel->which, V4L2_SEL_TGT_CROP);
+-	else if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
+-		 ssd == sensor->pixel_array)
+-		sensor->pa_src = sel->r;
++	} else if (ssd == sensor->pixel_array) {
++		struct v4l2_mbus_framefmt *mfmt =
++			v4l2_subdev_state_get_format(sd_state, CCS_PA_PAD_SRC);
+ 
+-	return 0;
+-}
++		/* The analogue crop is what the pixel array outputs. */
++		mfmt->width = sel->r.width;
++		mfmt->height = sel->r.height;
+ 
+-static void ccs_get_native_size(struct ccs_subdev *ssd, struct v4l2_rect *r)
+-{
+-	r->top = 0;
+-	r->left = 0;
+-	r->width = CCS_LIM(ssd->sensor, X_ADDR_MAX) + 1;
+-	r->height = CCS_LIM(ssd->sensor, Y_ADDR_MAX) + 1;
++		if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE)
++			sensor->pa_src = sel->r;
++	}
++
++	return 0;
+ }
+ 
+ static int ccs_get_selection(struct v4l2_subdev *subdev,

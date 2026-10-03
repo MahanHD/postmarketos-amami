@@ -1,0 +1,30 @@
+--- a/drivers/media/i2c/ccs/ccs-core.c
++++ b/drivers/media/i2c/ccs/ccs-core.c
+@@ -2957,6 +2957,8 @@
+ 	ccs_free_controls(sensor);
+ }
+ 
++static const struct v4l2_subdev_internal_ops ccs_internal_ops;
++
+ static int ccs_init_subdev(struct ccs_sensor *sensor,
+ 			   struct ccs_subdev *ssd, const char *name,
+ 			   unsigned short num_pads, u32 function,
+@@ -2988,6 +2990,7 @@
+ 	ssd->sd.entity.ops = &ccs_entity_ops;
+ 
+ 	if (ssd != sensor->src) {
++		ssd->sd.internal_ops = &ccs_internal_ops;
+ 		ssd->sd.owner = THIS_MODULE;
+ 		ssd->sd.dev = &client->dev;
+ 		v4l2_set_subdevdata(&ssd->sd, client);
+@@ -3085,6 +3088,10 @@
+ 	.unregistered = ccs_unregistered,
+ };
+ 
++static const struct v4l2_subdev_internal_ops ccs_internal_ops = {
++	.init_state = ccs_init_state,
++};
++
+ /* -----------------------------------------------------------------------------
+  * I2C Driver
+  */

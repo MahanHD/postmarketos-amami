@@ -1,0 +1,18 @@
+--- a/drivers/media/i2c/ccs/ccs-core.c
++++ b/drivers/media/i2c/ccs/ccs-core.c
+@@ -1925,6 +1925,15 @@
+ 	struct i2c_client *client = v4l2_get_subdevdata(&sensor->src->sd);
+ 	int rval;
+ 
++	/*
++	 * The binner and the pixel array share these ops, and a receiver that
++	 * walks the whole graph (camss does) calls them as well. Only the
++	 * source sub-device drives the sensor; a second start would rewrite the
++	 * PLL while the sensor streams.
++	 */
++	if (subdev != &sensor->src->sd)
++		return 0;
++
+ 	if (!enable) {
+ 		ccs_stop_streaming(sensor);
+ 		sensor->streaming = false;

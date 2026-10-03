@@ -1,0 +1,53 @@
+--- a/drivers/media/i2c/ccs/ccs-core.c
++++ b/drivers/media/i2c/ccs/ccs-core.c
+@@ -1534,6 +1534,18 @@
+ 	} else if (CCS_LIM(sensor, PHY_CTRL_CAPABILITY) &
+ 		   CCS_PHY_CTRL_CAPABILITY_UI_PHY_CTL) {
+ 		val = CCS_PHY_CTRL_UI;
++	} else if (!CCS_LIM(sensor, PHY_CTRL_CAPABILITY) &&
++		   ((const struct ccs_device *)
++		    device_get_match_data(&client->dev))->flags &
++		   CCS_DEVICE_FLAG_IS_SMIA) {
++		/*
++		 * PHY_CTRL_CAPABILITY (0x1600) and PHY_CTRL (0x0808) arrived
++		 * with CCS. A SMIA or SMIA++ sensor has neither, reads the
++		 * capability as zero, and runs its own D-PHY timing - there
++		 * is nothing to choose and no register to write. Sony's
++		 * IMX132 (SMIA 1.0) and IMX200 (SMIA++) both do this.
++		 */
++		return 0;
+ 	} else {
+ 		dev_err(&client->dev, "manual PHY control not supported\n");
+ 		return -EINVAL;
+@@ -3355,6 +3367,31 @@
+ 	if (rval)
+ 		goto out_release_mdata;
+ 
++	/*
++	 * These capability limits were added by CCS; SMIA and SMIA++ never
++	 * defined their addresses, so on an SMIA device whatever the sensor
++	 * keeps there is not a limit. Sony's IMX200 (SMIA++) holds 0x3f at
++	 * clock_calculation (0x1138) and 0x80 at num_of_vt_lanes (0x1139):
++	 * read as CCS, that switches on the lane-speed and link-decoupled
++	 * PLL models with 129 VT lanes, and no PLL configuration can then be
++	 * found at all. Treat them as absent.
++	 */
++	if (ccsdev->flags & CCS_DEVICE_FLAG_IS_SMIA) {
++		static const unsigned int ccs_only_limits[] = {
++			CCS_L_CLOCK_CALCULATION,
++			CCS_L_NUM_OF_VT_LANES,
++			CCS_L_NUM_OF_OP_LANES,
++			CCS_L_OP_BITS_PER_LANE,
++			CCS_L_CLOCK_TREE_PLL_CAPABILITY,
++			CCS_L_CLOCK_CAPA_TYPE_CAPABILITY,
++			CCS_L_FIFO_SUPPORT_CAPABILITY,
++			CCS_L_PHY_CTRL_CAPABILITY,
++		};
++
++		for (i = 0; i < ARRAY_SIZE(ccs_only_limits); i++)
++			ccs_replace_limit(sensor, ccs_only_limits[i], 0, 0);
++	}
++
+ 	rval = ccs_read_frame_fmt(sensor);
+ 	if (rval) {
+ 		rval = -ENODEV;

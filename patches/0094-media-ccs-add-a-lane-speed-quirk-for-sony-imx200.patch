@@ -1,0 +1,61 @@
+--- a/drivers/media/i2c/ccs/ccs-core.c
++++ b/drivers/media/i2c/ccs/ccs-core.c
+@@ -46,6 +46,8 @@
+  * ccs_module_idents - supported camera modules
+  */
+ static const struct ccs_module_ident ccs_module_idents[] = {
++	/* Sony IMX200 leaves the module and sensor manufacturer IDs zero */
++	CCS_IDENT_LQ(0x00, 0x0200, -1, "imx200", &smiapp_imx200_quirk),
+ 	CCS_IDENT_L(0x01, 0x022b, -1, "vs6555"),
+ 	CCS_IDENT_L(0x01, 0x022e, -1, "vw6558"),
+ 	CCS_IDENT_L(0x07, 0x7698, -1, "ovm7698"),
+@@ -2841,7 +2843,8 @@
+ 		 * rvalues have better stuff. The lvalues are module
+ 		 * parameters whereas the rvalues are sensor parameters.
+ 		 */
+-		if (minfo->sensor_smia_manufacturer_id &&
++		if ((minfo->sensor_smia_manufacturer_id ||
++		     minfo->sensor_model_id) &&
+ 		    !minfo->smia_manufacturer_id && !minfo->model_id) {
+ 			minfo->smia_manufacturer_id =
+ 				minfo->sensor_smia_manufacturer_id;
+--- a/drivers/media/i2c/ccs/ccs-quirk.c
++++ b/drivers/media/i2c/ccs/ccs-quirk.c
+@@ -215,3 +215,27 @@
+ const struct ccs_quirk smiapp_tcm8500md_quirk = {
+ 	.limits = tcm8500md_limits,
+ };
++
++/*
++ * IMX200 limits its op_sys_clk to 169-1100 MHz, which is the bit rate of one
++ * lane: four lanes at 1.1 Gbit/s are what a 20 Mpixel sensor needs. Without
++ * the lane speed model the PLL runs every lane at the total bus bit rate, four
++ * times the link frequency it reports. Its CCS-only clock_calculation register
++ * cannot say so, so set the limits here, before the link frequencies are
++ * checked against them.
++ */
++static int imx200_limits(struct ccs_sensor *sensor)
++{
++	ccs_replace_limit(sensor, CCS_L_CLOCK_CALCULATION, 0,
++			  CCS_CLOCK_CALCULATION_LANE_SPEED |
++			  CCS_CLOCK_CALCULATION_LINK_DECOUPLED);
++	ccs_replace_limit(sensor, CCS_L_NUM_OF_VT_LANES, 0, 0);
++	ccs_replace_limit(sensor, CCS_L_NUM_OF_OP_LANES, 0,
++			  sensor->hwcfg.lanes - 1);
++
++	return 0;
++}
++
++const struct ccs_quirk smiapp_imx200_quirk = {
++	.limits = imx200_limits,
++};
+--- a/drivers/media/i2c/ccs/ccs-quirk.h
++++ b/drivers/media/i2c/ccs/ccs-quirk.h
+@@ -73,6 +73,7 @@
+ 
+ extern const struct ccs_quirk smiapp_jt8ev1_quirk;
+ extern const struct ccs_quirk smiapp_imx125es_quirk;
++extern const struct ccs_quirk smiapp_imx200_quirk;
+ extern const struct ccs_quirk smiapp_jt8ew9_quirk;
+ extern const struct ccs_quirk smiapp_tcm8500md_quirk;
+ 

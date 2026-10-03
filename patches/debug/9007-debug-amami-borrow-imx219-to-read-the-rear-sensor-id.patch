@@ -1,16 +1,32 @@
 --- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
 +++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-@@ -376,3 +376,138 @@
+@@ -376,3 +376,178 @@
  
  	status = "okay";
  };
 +
 +/*
-+ * The sensors are deliberately NOT linked into the camss graph: with endpoints
-+ * that no real driver ever binds, camss waits forever and never registers
-+ * /dev/media0 or its subdev nodes. Link them once a real driver exists.
++ * Only the rear (IMX200) is linked into the camss graph. The front (IMX132)
++ * cannot bind yet - its own PLL limits are broken (max_pll_op_clk 76 MHz against
++ * a 384 MHz minimum, op/vt clock limits all zero) - and camss waits for every
++ * linked sensor, so linking it would hold back /dev/media0. Relink it once it
++ * has a quirk.
 + *
-+ * BRING-UP ONLY - debug/9007. This borrows the imx219 driver purely to power the
++ * A sensor has to be linked into the camss graph for CCS at all: its
++ * ccs_get_hwconfig() uses fwnode_graph_get_endpoint_by_id(), which skips an
++ * endpoint with no available remote - unlinked, CCS probes -ENODEV without a
++ * word. The cost: camss registers /dev/media0 and its subdev nodes only once
++ * every linked sensor has bound, so if CCS fails, the CSID test-pattern path
++ * disappears with it. Unlink the sensors again to get it back.
++ *
++ * BRING-UP ONLY - debug/9007. Both sensors are now bound to the generic CCS driver
++ * ("nokia,smia"): their ID headers are SMIA 1.0 (IMX132) and SMIA++ (IMX200) layout,
++ * so CCS can drive them from their own capability registers, no vendor tables.
++ * CCS's reset is asserted-high in software, so XCLR (physically active low) is
++ * GPIO_ACTIVE_LOW here - the opposite of the imx219 description it replaced.
++ * The link frequencies are a spread for CCS's PLL solver to choose from.
++ *
++ * History: this first borrowed the imx219 driver purely to power the
 + * rear camera and read its 16-bit model ID at 0x0000: for anything that is not an
 + * IMX219, imx219 logs "chip id mismatch: 219!=<id>", and <id> is the number wanted.
 + * The part is believed to be an IMX220 from its geometry alone - 5248x3936 at
@@ -30,7 +46,7 @@
 +
 +&cci_i2c0 {
 +	camera@10 {
-+		compatible = "sony,imx219";
++		compatible = "nokia,smia";
 +		reg = <0x10>;
 +
 +		/*
@@ -43,6 +59,7 @@
 +		clocks = <&mmcc CAMSS_MCLK0_CLK>;
 +		assigned-clocks = <&mmcc CAMSS_MCLK0_CLK>;
 +		assigned-clock-rates = <19200000>;
++		clock-frequency = <19200000>;
 +
 +		/*
 +		 * imx219's supply names mapped onto amami's camera rails. Each is
@@ -51,16 +68,16 @@
 +		 * (lvs2, 1.8V), VDDL = cam_vdig (l3, 1.2V). cam_vaf (l23) is the
 +		 * focus actuator and is not needed to read an ID.
 +		 */
-+		VANA-supply = <&pm8941_l17>;
-+		VDIG-supply = <&pm8941_lvs2>;
-+		VDDL-supply = <&pm8941_l3>;
++		vana-supply = <&pm8941_l17>;
++		vio-supply = <&pm8941_lvs2>;
++		vcore-supply = <&pm8941_l3>;
 +
 +		/*
 +		 * XCLR is active low - downstream drives GPIO 94 high to release
 +		 * it - and imx219 sets "reset" to 1 to run the sensor, so the line
 +		 * is described active high here.
 +		 */
-+		reset-gpios = <&tlmm 94 GPIO_ACTIVE_HIGH>;
++		reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
 +
 +		pinctrl-names = "default";
 +		pinctrl-0 = <&cam_rear_default>;
@@ -68,7 +85,8 @@
 +		port {
 +			rear_cam_ep: endpoint {
 +				data-lanes = <1 2 3 4>;
-+				link-frequencies = /bits/ 64 <364000000>;
++				link-frequencies = /bits/ 64 <96000000 104000000 192000000 208000000 288000000 312000000 384000000 416000000 456000000 480000000>;
++				remote-endpoint = <&csiphy0_ep>;
 +			};
 +		};
 +	};
@@ -81,18 +99,19 @@
 +	 * rear. Modules SEM02BN1 / LGI02BN1, 1976x1200, no focus actuator.
 +	 */
 +	camera@36 {
-+		compatible = "sony,imx219";
++		compatible = "nokia,smia";
 +		reg = <0x36>;
 +
 +		clocks = <&mmcc CAMSS_MCLK2_CLK>;
 +		assigned-clocks = <&mmcc CAMSS_MCLK2_CLK>;
 +		assigned-clock-rates = <19200000>;
++		clock-frequency = <19200000>;
 +
-+		VANA-supply = <&pm8941_l17>;
-+		VDIG-supply = <&pm8941_lvs2>;
-+		VDDL-supply = <&pm8941_l3>;
++		vana-supply = <&pm8941_l17>;
++		vio-supply = <&pm8941_lvs2>;
++		vcore-supply = <&pm8941_l3>;
 +
-+		reset-gpios = <&tlmm 18 GPIO_ACTIVE_HIGH>;
++		reset-gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
 +
 +		pinctrl-names = "default";
 +		pinctrl-0 = <&cam_front_default>;
@@ -100,7 +119,28 @@
 +		port {
 +			front_cam_ep: endpoint {
 +				data-lanes = <1 2>;
-+				link-frequencies = /bits/ 64 <456000000>;
++				link-frequencies = /bits/ 64 <96000000 104000000 192000000 208000000 288000000 312000000 384000000 416000000 456000000 480000000>;
++			};
++		};
++	};
++};
++
++&camss {
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		port@0 {
++			reg = <0>;
++
++			/*
++			 * Downstream: csi-lane-mask 0x1f and csi-lane-assign 0x4320,
++			 * i.e. data on CSIPHY lanes 0, 2, 3, 4 with the clock on 1.
++			 */
++			csiphy0_ep: endpoint {
++				clock-lanes = <1>;
++				data-lanes = <0 2 3 4>;
++				remote-endpoint = <&rear_cam_ep>;
 +			};
 +		};
 +	};

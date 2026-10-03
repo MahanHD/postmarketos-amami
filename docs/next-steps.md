@@ -10,16 +10,16 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-04: r161 is flashed and installed, and the recipe agrees.**
-`uname -v` prints `#162`. `v4l-utils` is installed on the phone for `media-ctl`/`v4l2-ctl`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
-`debug/9006`-`9008` - with a **modular** media config. CAMSS probes; the rear camera powers up,
-and the front camera both answer on CCI, and both sensors and modules have been identified
-(Camera, step 2): rear Sony IMX200, front Sony IMX132. On the phone,
-`/etc/modprobe.d/camss-bringup.conf` blacklists `qcom_camss`, `i2c_qcom_cci` and `imx219` (each
-with `install ... /bin/false`), so nothing camera-related loads at boot. Load by hand with
-`modprobe --ignore-install <module>`; loading `imx219` powers the sensor, dumps its ID header
-and EEPROM to dmesg, and powers it down again. Remove that file once a real sensor driver
-exists.
+**Device state as of 2026-10-04 (late): r171 is flashed and installed, and the recipe agrees.**
+`uname -v` prints `#172`. r171 is r161 plus the CCS work - `0091`-`0095` and `debug/9011` -
+with `CONFIG_VIDEO_CCS=m`, and `debug/9007` now binds both sensors to the generic CCS driver
+(`nokia,smia`). The rear IMX200 probes as "imx200", sits in the media graph linked to
+`msm_csiphy0`, and **streams without errors on the sensor side - but no frame completes yet**
+(Camera, "The rear sensor through CCS"). On the phone,
+`/etc/modprobe.d/camss-bringup.conf` blacklists `qcom_camss`, `i2c_qcom_cci`, `imx219` and `ccs`
+(each with `install ... /bin/false`), so nothing camera-related loads at boot. Load by hand
+with `modprobe --ignore-install <module>`. `dtc` is installed on the phone (the host has none),
+which is how the one-off lane-map DTBs below were made. Remove the blacklist once capture works.
 
 **Previous state, 2026-10-02 end of day: r140 was flashed and installed**, `uname -v`
 prints `#141`. This is the cleaned-up end state of the suspend work: `0072`-`0076` plus
@@ -43,7 +43,14 @@ and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plu
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r161  (current)  3293fbdc75da5cf10056140083181dec   + 0090 MCLK table, front back at 19.2 MHz
+        r171  (current)  e829711c11c0fc0eb098d9f6644d683c   + 0094 IMX200 quirk, 0095, debug/9011
+        r171-swap        b7bc347f6667864a66c928a8490e736a   test only: CSIPHY lanes 0 and 4 swapped
+        r170-1lane       cff4cf465a2ce8ed205eb43e15565c98   test only: sensor on one lane
+        r167             fe9aca311b7eb10ecafd461249704862   + 0092 binner/pixel-array init_state
+        r166             dd74363c4b64b7f35e60d34d86fbb42b   CCS binds the rear sensor, 0091
+        r163             563359e44491475d0d08accc54fb7449   9007 switched to nokia,smia
+        r162             e428c13cc495bea4acbae4d485bb8115   + CONFIG_VIDEO_CCS=m
+        r161             3293fbdc75da5cf10056140083181dec   + 0090 MCLK table, front back at 19.2 MHz
         r160  2a2e62f2881e680aec0f3f21e540721c   0090 test: front asks 24 MHz, gets 48
         r159  5fc1ac44acace45d83ce73aab5bf9d72   + 9010 full-size frames, 0089 GPU purge fix
         r157  81039a43b0dd14ee729b7c4c7f92c18c   + test-pattern capture works (9009)
@@ -281,6 +288,7 @@ records it and a new session would have to look:
         CONFIG_I2C_QCOM_CCI=m
         CONFIG_VIDEO_CAMERA_SENSOR=y
         CONFIG_VIDEO_IMX219=m          # bring-up only, borrowed by debug/9007-9008
+        CONFIG_VIDEO_CCS=m             # the generic SMIA/CCS driver both sensors bind to
         CONFIG_MEDIA_CAMERA_SUPPORT=y
         CONFIG_MEDIA_CONTROLLER=y
         CONFIG_MEDIA_PLATFORM_SUPPORT=y
@@ -3295,6 +3303,71 @@ the single r126 reset, and pstore cannot say more.
 
 Camera remains the largest area left, but step 1 is a weekend rather than a project, and
 steps 1 and 2 together answer whether step 3 is worth starting.
+
+### The rear sensor through CCS, 2026-10-04: it streams, and the CSI-2 data arrives corrupt
+
+Both sensors are SMIA-family parts (IMX200 is SMIA++, model 0x0200; IMX132 is SMIA 1.0), so
+`debug/9007` binds them to mainline's generic CCS driver (`compatible = "nokia,smia"`,
+`CONFIG_VIDEO_CCS=m`) instead of borrowing imx219. The rear endpoint is linked to
+`msm_csiphy0` - CCS needs a linked remote to read its endpoint at all. The front stays
+unlinked: its PLL limits are broken (max PLL op 76 MHz against a 384 MHz minimum, op/vt limits
+zero) and need their own quirk. Getting the rear one to stream took five driver fixes, each
+found on the device:
+
+- **`0091`** - the CCS-only limit registers (0x1138 clock_calculation, 0x1139/0x113a lane
+  counts, 0x113b, 0x11b8/0x11b9, 0x1502, 0x1600) read back junk on Sony SMIA++ parts
+  (`num_of_vt_lanes` = 129). Zero them for SMIA devices, and accept that a SMIA sensor has no
+  PHY control to set.
+- **`0092`** - in 6.16 only the source sub-device (the scaler) gets the driver's `init_state`
+  hook, so the binner and pixel array kept 0x0 formats and every stream failed link
+  validation with `-EPIPE` ("width does not match (source 0, sink 5248)").
+- **`0093`** - the sub-device-state conversion also stopped the pixel array's format
+  following its crop, and stopped a sink `set_format` storing the size, so no crop could
+  ever validate. Old smiapp reported both from its crop rectangles.
+- **`0094`** - IMX200 leaves the module ID block and the sensor manufacturer zero, so CCS's
+  fallback to the sensor IDs never fired and no quirk could match. And its `op_sys_clk`
+  limits (169-1100 MHz) are a per-lane bit rate, so it needs the lane-speed PLL model, as
+  mainline's jt8ev1 quirk does. Without it CCS programmed op_sys = 768 MHz for a "96 MHz"
+  link, four times what CSIPHY was told; the PHY threw ~480k error interrupts per stream.
+- **`0095`** - camss's `video_start_streaming()` calls `s_stream` on every sub-device
+  upstream of the video node, which includes the IMX200's binner. All CCS sub-devices share
+  `ccs_set_stream`, so the sensor was started twice and its PLL rewritten while streaming;
+  the sensor's I2C then wedged (CCI "master 0 queue 0 timeout" on 0x0308/0x0820). A kprobe
+  trace of `ccs_write_addr` showed the second sequence starting right after `MODE_SELECT`.
+
+Media-ctl recipe that validates (the sink formats now follow the crop):
+
+        media-ctl -l '"msm_csiphy0":1->"msm_csid0":0[1],"msm_csid0":1->"msm_ispif0":0[1],"msm_ispif0":1->"msm_vfe0_rdi0":0[1]'
+        media-ctl -V '"imx200 pixel_array 3-0010":0[crop:(0,0)/WxH]'
+        media-ctl -V '"imx200 binner 3-0010":0[fmt:SRGGB12_1X12/WxH]'
+        media-ctl -V '"imx200 scaler 3-0010":0[fmt:SRGGB12_1X12/WxH]'
+        then SRGGB8_1X8/WxH on scaler:1, msm_csiphy0:0, msm_csid0:0, msm_ispif0:0, msm_vfe0_rdi0:0
+
+Only a 96 MHz link is valid (8, 10 and 12 bit). **Where it stands on r171:** the sensor starts
+cleanly, but nothing reaches memory. Measured with Python reading `/dev/mem` mid-stream
+(no devmem applet on the phone) and `vfe_isr`'s dev_dbg:
+
+- every data lane (PHY 0, 2, 3, 4) reports status bit 0x01 on every burst, ~32k PHY
+  interrupts/s; the clock lane reports nothing;
+- a live settle sweep (CFG3, 100 MHz timer) gives packets at 0-14 and bit 0x10 with no
+  packets at 16 and above; the clock lane's settle makes no difference at all;
+- CSID counts ~72k packets/s, its ECC counter (0x094) saturates, the CRC counter stays 0;
+- the VFE sees RDI SOF a few hundred times a second at irregular spacing - far more than
+  ~2.7 frame starts/s - and never a write-master done; ISPIF reports rdi0 overflow;
+- one lane (`r170-1lane`), swapping PHY lanes 0 and 4 (`r171-swap`), a 200 MHz VFE clock
+  (poked live in mmcc 0x3604) and a per-lane REQUESTED_LINK_RATE (`debug/9011`) all leave
+  that picture unchanged. The CSID's captured-header registers latch once per stream at
+  start-up and are not a usable statistic.
+
+So headers are being corrupted at the PHY or CSID, even on a single lane. Not yet tried:
+higher link frequencies (only 96 MHz passes the PLL check with `vt_lanes` = 1; the stock module
+table's `pll` array lists per-mode lane rates of 293-825 Mbit/s, so the sensor may dislike
+running this slowly), CSIPHY CFG2/other lane registers, and the front sensor as a second
+data point.
+
+**One stream per boot.** After a stream that times out, the next start fails with "VFE sof
+timeout", and once reset the phone outright. Reboot between tests. The scripts used
+(`treg.sh` with `rd.py`, `sweep.py`, `sweep2.py`, `hdr.py`) sit in `/home/mahan` on the phone.
 
 ## Parked patches
 
