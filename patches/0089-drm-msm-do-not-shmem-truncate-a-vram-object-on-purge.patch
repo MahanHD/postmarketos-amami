@@ -1,0 +1,21 @@
+--- a/drivers/gpu/drm/msm/msm_gem.c
++++ b/drivers/gpu/drm/msm/msm_gem.c
+@@ -870,6 +870,18 @@
+ 
+ 	drm_gem_free_mmap_offset(obj);
+ 
++	/*
++	 * A VRAM carveout object - what every buffer is when the GPU runs
++	 * without an IOMMU - is made with drm_gem_private_object_init() and has
++	 * no shmem file: put_pages() above has already handed its range back
++	 * to the carveout, and there is nothing for shmem to drop. Without
++	 * this check file_inode(NULL) faults at offsetof(struct file, f_inode)
++	 * from inside the shrinker, i.e. in kswapd, the first time memory gets
++	 * tight while the GPU has a DONTNEED buffer cached.
++	 */
++	if (!obj->filp)
++		return;
++
+ 	/* Our goal here is to return as much of the memory as
+ 	 * is possible back to the system as we are called from OOM.
+ 	 * To do this we must instruct the shmfs to drop all of its

@@ -10,8 +10,8 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-04: r157 is flashed and installed, and the recipe agrees.**
-`uname -v` prints `#158`. `v4l-utils` is installed on the phone for `media-ctl`/`v4l2-ctl`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
+**Device state as of 2026-10-04: r159 is flashed and installed, and the recipe agrees.**
+`uname -v` prints `#160`. `v4l-utils` is installed on the phone for `media-ctl`/`v4l2-ctl`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
 `debug/9006`-`9008` - with a **modular** media config. CAMSS probes; the rear camera powers up,
 and the front camera both answer on CCI, and both sensors and modules have been identified
 (Camera, step 2): rear Sony IMX200, front Sony IMX132. On the phone,
@@ -43,7 +43,8 @@ and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plu
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r157  (current)  81039a43b0dd14ee729b7c4c7f92c18c   + test-pattern capture works (9009)
+        r159  (current)  5fc1ac44acace45d83ce73aab5bf9d72   + 9010 full-size frames, 0089 GPU purge fix
+        r157  81039a43b0dd14ee729b7c4c7f92c18c   + test-pattern capture works (9009)
         r156  9195531fb31c6af2b10f56b24421c461   + front camera in the ID read too
         r155  873073854109d963aa45110d48846a36   + sensor ID / EEPROM read (9007/9008)
         r148  9d8ce1923c5d4b14fee46a67620b49c0   + camera bring-up, CAMSS probes
@@ -3217,10 +3218,44 @@ with the bring-up sensors linked into the camss graph it never registered `/dev/
 a 640x480 frame came back as 4 segments, the kernel logged "plane 0 is 4 DMA segments, not 1:
 refusing it", and REQBUFS failed cleanly. 64x32 SBGGR8 is 2 KB, one page, so it passes.
 
-**So real frame sizes are not possible yet**, and that is the next piece of plumbing, before
-any sensor driver. There is CMA - 256 MB, `CONFIG_DMA_CMA=y` - so the quick route is to give
-camss contiguous buffers (`vb2_dma_contig`) when there is no IOMMU; the proper route is the
-CAMSS IOMMU (downstream: two `msm-smmu-v1` instances at 0xfda44000 and 0xfda64000).
+**Full sensor resolutions work since r159 (2026-10-04).** `debug/9010` gives camss contiguous
+CMA buffers (`vb2_dma_contig`) whenever the device has no IOMMU, and leaves the dma-sg path -
+with `9009`'s guard - for when one exists. CMA is 256 MB (`CONFIG_DMA_CMA=y`). Every size came
+back exact with the alternating pattern, the 64x32 regression included:
+
+        640x480     921600 bytes      half aa, half 55     (refused by 9009 before)
+        1976x1200   7113600 bytes     half aa, half 55     the front sensor's size
+        5248x3936   61968384 bytes    30984192 aa + 30984192 55, and all-ff for pattern 4
+                                      the rear sensor's size, ~20 MB per frame, no stray byte
+
+Use `--stream-mmap=2` at the rear size; three or four 20 MB buffers is a lot of CMA. And do not
+verify 62 MB files with `od | sort` on the phone - it takes over ten minutes; Python's
+`collections.Counter` does it in seconds. The proper long-term route is still the CAMSS IOMMU
+(downstream: two `msm-smmu-v1` instances at 0xfda44000 and 0xfda64000).
+
+**Those captures exposed a real GPU bug - fixed by `0089`, and it has nothing to do with the
+camera.** The first full-size run oopsed `kswapd0`:
+
+        Unable to handle kernel NULL pointer dereference at virtual address 00000014
+        PC is at msm_gem_purge+0x100/0x15c     Comm: kswapd0
+
+`msm_gem_purge()` ends with `shmem_truncate_range(file_inode(obj->filp), ...)` unconditionally,
+and `is_purgeable()` never asks whether the object has a shmem file. This port runs the GPU
+from the VRAM carveout - no GPU IOMMU in the build - and carveout objects are made with
+`drm_gem_private_object_init()`, so `obj->filp` is NULL. In 6.16 `struct file` opens with
+`f_lock, f_mode, f_op, f_mapping, private_data, f_inode`, which puts `f_inode` at exactly `0x14`
+on 32-bit ARM - the faulting address. So the first time memory got tight while Mesa had a
+`DONTNEED` buffer cached, the shrinker crashed inside kswapd, **killing background memory
+reclaim for the rest of the boot** (`kswapd0` was gone afterwards). The 62 MB of capture
+buffers only supplied the pressure; any heavy workload could do the same. `0089` returns early
+when there is no `filp` - `put_pages()` has already handed the range back to the carveout.
+
+Verified on r159: in one boot, **73 carveout objects (14 MB) went through the purge path with no
+oops** - every GPU object here is a carveout one (`aspace=00000000` in
+`/sys/kernel/debug/dri/0/gem`), and an object only counts as Purged once it has passed the point
+where the old code dereferenced `filp`. The full-size captures were then repeated, exact, with
+`kswapd0` still alive. A forced shrink through `/sys/kernel/debug/dri/0/shrink` was tried first
+and is **not** evidence: it reported 0 purgeable objects, so it never reached the purge path.
 
 **An unexplained stall, recorded and not attributed:** r157's first boot stopped logging 13 s
 into userspace, while systemd was mounting `/boot`, with no panic, oops or watchdog message, and
