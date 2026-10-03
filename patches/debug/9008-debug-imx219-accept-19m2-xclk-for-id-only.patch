@@ -1,0 +1,103 @@
+--- a/drivers/media/i2c/imx219.c
++++ b/drivers/media/i2c/imx219.c
+@@ -1088,6 +1088,85 @@
+ 				     "failed to read chip id %x\n",
+ 				     IMX219_CHIP_ID);
+ 
++	/*
++	 * BRING-UP ONLY, debug/9008: while the sensor is powered, dump the SMIA
++	 * identification header. IMX219 keeps its model ID at 0x0000, but Sony's
++	 * IMX135/214/258/319/355 generation keep it at 0x0016, and amami's rear
++	 * part reads 0 at 0x0000.
++	 */
++	{
++		u64 b;
++		int i;
++		char line[3 * 16 + 1];
++
++		for (i = 0; i < 0x20; i++) {
++			if (cci_read(imx219->regmap, CCI_REG8(i), &b, NULL))
++				b = 0xee;
++			snprintf(line + 3 * (i % 16), 4, " %02llx", b);
++			if (i % 16 == 15)
++				dev_info(&client->dev, "id dump 0x%04x:%s\n",
++					 i - 15, line);
++		}
++
++		/* is it stable, and do 8- and 16-bit reads agree? */
++		for (i = 0; i < 3; i++) {
++			u64 w16 = 0, w24 = 0, b16 = 0, b17 = 0;
++
++			cci_read(imx219->regmap, CCI_REG16(0x0016), &w16, NULL);
++			cci_read(imx219->regmap, CCI_REG24(0x0016), &w24, NULL);
++			cci_read(imx219->regmap, CCI_REG8(0x0016), &b16, NULL);
++			cci_read(imx219->regmap, CCI_REG8(0x0017), &b17, NULL);
++			dev_info(&client->dev,
++				 "id try %d: REG16(0x16)=%04llx REG24(0x16)=%06llx 0x16=%02llx 0x17=%02llx\n",
++				 i, w16, w24, b16, b17);
++			usleep_range(5000, 6000);
++		}
++
++		/*
++		 * The module EEPROM, downstream's sony,eeprom_addr 0xa0 (7-bit
++		 * 0x50), 0x800 bytes. Sony identifies modules from it - e.g.
++		 * "SOI20BS0" - so it is a known string to check the I2C path
++		 * against. msm8974's CCI caps a read at 12 bytes, so go 8 at a
++		 * time; the addressing width is unknown, so try 1 and 2 bytes.
++		 */
++		{
++			int aw, off, j, r = 0;
++			u8 addr[2], buf[64];
++			struct i2c_msg msg[2] = {
++				{ .addr = 0x50, .flags = 0, .buf = addr },
++				{ .addr = 0x50, .flags = I2C_M_RD, .len = 8 },
++			};
++			char hex[3 * 16 + 1], asc[17];
++
++			for (aw = 1; aw <= 2; aw++) {
++				msg[0].len = aw;
++				memset(buf, 0xee, sizeof(buf));
++				for (off = 0; off < (int)sizeof(buf); off += 8) {
++					if (aw == 1) {
++						addr[0] = off;
++					} else {
++						addr[0] = off >> 8;
++						addr[1] = off & 0xff;
++					}
++					msg[1].buf = buf + off;
++					r = i2c_transfer(client->adapter, msg, 2);
++					if (r != 2)
++						break;
++				}
++				dev_info(&client->dev, "eeprom %d-byte addr: last i2c_transfer=%d at 0x%02x\n",
++					 aw, r, off);
++				for (i = 0; i < (int)sizeof(buf); i += 16) {
++					for (j = 0; j < 16; j++) {
++						snprintf(hex + 3 * j, 4, " %02x", buf[i + j]);
++						asc[j] = (buf[i + j] >= 0x20 && buf[i + j] < 0x7f) ? buf[i + j] : '.';
++					}
++					asc[16] = 0;
++					dev_info(&client->dev, "eeprom%d %03x:%s  |%s|\n", aw, i, hex, asc);
++				}
++			}
++		}
++	}
++
+ 	if (val != IMX219_CHIP_ID)
+ 		return dev_err_probe(&client->dev, -EIO,
+ 				     "chip id mismatch: %x!=%llx\n",
+@@ -1194,7 +1273,13 @@
+ 				     "failed to get xclk\n");
+ 
+ 	imx219->xclk_freq = clk_get_rate(imx219->xclk);
+-	if (imx219->xclk_freq != IMX219_XCLK_FREQ)
++	/*
++	 * BRING-UP ONLY, debug/9008: amami borrows this driver just to read the
++	 * rear sensor's model ID, and its MCLK cannot make 24 MHz. The ID read
++	 * does not depend on INCK; streaming would, and is never attempted.
++	 */
++	if (imx219->xclk_freq != IMX219_XCLK_FREQ &&
++	    imx219->xclk_freq != 19200000)
+ 		return dev_err_probe(dev, -EINVAL,
+ 				     "xclk frequency not supported: %d Hz\n",
+ 				     imx219->xclk_freq);

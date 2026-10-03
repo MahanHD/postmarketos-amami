@@ -10,13 +10,15 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-03: r148 is flashed and installed, and the recipe agrees.**
-`uname -v` prints `#149`. r148 is r140 plus the camera bring-up - `0085`, `0086`, `0087`,
-`debug/9006` - and a **modular** media config. The CAMSS driver probes, `/dev/media0` and
-`/dev/video0-5` appear, and every pipeline powers up cleanly; no sensor is wired yet. On the
-phone, `/etc/modprobe.d/camss-bringup.conf` blacklists `qcom_camss` (with
-`install ... /bin/false`), so it does not auto-load at boot - load it with
-`modprobe --ignore-install qcom_camss`. Remove that file once a sensor is attached.
+**Device state as of 2026-10-03: r155 is flashed and installed, and the recipe agrees.**
+`uname -v` prints `#156`. r155 is r140 plus the camera bring-up - `0085`-`0087` and
+`debug/9006`-`9008` - with a **modular** media config. CAMSS probes; the rear camera powers up,
+answers on CCI, and its sensor and module have been identified (Camera, step 2). On the phone,
+`/etc/modprobe.d/camss-bringup.conf` blacklists `qcom_camss`, `i2c_qcom_cci` and `imx219` (each
+with `install ... /bin/false`), so nothing camera-related loads at boot. Load by hand with
+`modprobe --ignore-install <module>`; loading `imx219` powers the sensor, dumps its ID header
+and EEPROM to dmesg, and powers it down again. Remove that file once a real sensor driver
+exists.
 
 **Previous state, 2026-10-02 end of day: r140 was flashed and installed**, `uname -v`
 prints `#141`. This is the cleaned-up end state of the suspend work: `0072`-`0076` plus
@@ -40,7 +42,8 @@ and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plu
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r148  (current)  9d8ce1923c5d4b14fee46a67620b49c0   + camera bring-up, CAMSS probes
+        r155  (current)  873073854109d963aa45110d48846a36   + sensor ID / EEPROM read (9007/9008)
+        r148  9d8ce1923c5d4b14fee46a67620b49c0   + camera bring-up, CAMSS probes
         r146  e4278675738079153632413baa2d1768   camss enabled, 465 MHz VFE bug still in
         r145  318a925f6ac5bfb44c6598e49111dde1   modular media config, camss node disabled
         r144  DO NOT BOOT  a23226c83a0d2a2d15b9b0a6c1a5b66d  built-in media config only
@@ -270,6 +273,8 @@ records it and a new session would have to look:
         CONFIG_VIDEO_DEV=m
         CONFIG_VIDEO_QCOM_CAMSS=m
         CONFIG_I2C_QCOM_CCI=m
+        CONFIG_VIDEO_CAMERA_SENSOR=y
+        CONFIG_VIDEO_IMX219=m          # bring-up only, borrowed by debug/9007-9008
         CONFIG_MEDIA_CAMERA_SUPPORT=y
         CONFIG_MEDIA_CONTROLLER=y
         CONFIG_MEDIA_PLATFORM_SUPPORT=y
@@ -3106,11 +3111,72 @@ it is remote.
    node), `0087` (enable on amami), `debug/9006` (arm32 bring-up), with the media config
    modular. Driver probes, six video nodes, pipelines power up clean. Still bring-up grade:
    `9006` drops the `IOMMU_DMA` dependency, and real capture will want the CAMSS IOMMU.
-2. **CCI and sensor identity**: get an ACK on CCI master 0 and read the rear sensor's ID
-   register. Milestone: a number that either confirms IMX220 or says what it really is.
-   Mainline's `cci` node already exists, so this is mostly enabling it.
-3. **A sensor driver** for whatever step 2 names. The long pole, and the only part that is
-   genuinely open-ended.
+2. ~~**CCI and sensor identity**~~ **DONE 2026-10-03 on r155: the rear sensor is a Sony
+   IMX200, not an IMX220.** See "Step 2" below.
+
+### Step 2, 2026-10-03: the rear camera is an IMX200, read off the hardware twice over
+
+**Method: borrow a driver rather than write one.** `debug/9007` describes the rear camera on
+`cci_i2c0` at `0x10` as `sony,imx219` - wrong part on purpose - because imx219's probe powers
+the supplies, starts the clock, releases reset and reads a 16-bit model ID, logging what it
+found on a mismatch. `debug/9008` makes it also dump the SMIA ID header and the module EEPROM
+while powered. Rails: VANA = `pm8941_l17` (2.7V), VDIG = `pm8941_lvs2`, VDDL = `pm8941_l3`
+(1.2V), all pinned min=max by RPM at downstream's voltages, so the supply names cannot
+mis-volt anything. `lvs2` had to be added to the RPM regulator block; rhine.dtsi never
+declared it. Reset is GPIO 94, physically active low. Downstream's power-up order is VDIG,
+VIO, VANA, VAF, release reset, then MCLK.
+
+**The sensor ID register**, stable across two power cycles and identical through 8-, 16- and
+24-bit reads:
+
+        0x0000: 00 00 00 00 00 ff 01 00 00 40 00 00 0a 00 00 00
+        0x0010: 00 00 00 00 00 00 02 00 01 00 00 00 00 00 00 00
+                                  ^^^^^ ^^ model 0x0200, revision 0x01
+
+**The module EEPROM** at 7-bit `0x50` (downstream's `sony,eeprom_addr 0xa0`), 1-byte
+addressing, plain text:
+
+        000: 53 4f 49 32 30 42 53 30 ...  |SOI20BS0|   module code = downstream's default
+        020: 49 4d 58 32 30 30 30 41 ...  |IMX2000A|   the sensor
+        030: 42 55 36 34 32 39 36 47 ...  |BU64296G|   ROHM BU64296G, the AF/VCM driver
+
+The module code matching downstream's `default_module_name` exactly is the positive control:
+it proves the whole path - CCI, the power sequence, the addressing - against a known string.
+And the two readings agree: Sony's model IDs encode the part number (IMX135 -> 0x0135,
+IMX214 -> 0x0214), so `0x0200` *is* IMX200. **The earlier IMX220 identification in this file
+was an inference from geometry and repeated lore, and it was wrong.** For a while it looked as
+though the register might be meaningless - the mainline IMX300 driver's author found that
+Sony's custom Xperia sensor carries no part number at `0x0016` - but that is true of the
+IMX300, not of this part. Mainline has no `imx200` driver either.
+
+**Three hardware facts found on the way, each worth keeping:**
+
+- **msm8974's camera MCLK RCGs have no M/N counter, so 24 MHz is unreachable**, and asking for
+  it silently produces **120 MHz** - which would go straight into a sensor's INCK. mmcc-msm8974
+  shares its `ftbl_camss_mclk0_3_clk` with apq8084, whose MCLK RCGs at the *same* `cmd_rcgr`
+  do have M/N, so the 6/8/16/24/32 MHz entries (`F(24000000, P_GPLL0, 5, 1, 5)` etc.) cannot
+  be produced here; the RCG picks GPLL0/5 and skips the M/N stage. This was nearly "fixed"
+  the wrong way: adding `.mnd_width = 8` (the parked-then-deleted `0088`) changed nothing,
+  and hand-written M values do not latch. The proof that this is missing hardware and not a
+  root-off effect is a control in the same off state: `camss_gp0`'s M register at `0x3428`
+  *does* latch a written 1, while `mclk0` (`0x3368`) and `mclk1` (`0x3398`) read back 0, and
+  CFG writes latch fine on both. Reachable MCLK rates are the XO ones (4.8, 9.6, **19.2 MHz**)
+  and plain dividers (48, 64, 66.67 MHz). The bring-up uses 19.2 MHz, which is enough for I2C;
+  `debug/9008` lets imx219 accept it. A real IMX200 driver will need PLL settings for an INCK
+  this SoC can actually make - the DT's per-module `pll` tables are where to look.
+- **msm8974's CCI caps a read at 12 bytes and a write at 10** (`cci_v1_5_data`), and the I2C
+  core returns `-EOPNOTSUPP` for anything longer - a 64-byte EEPROM read fails outright.
+- **The CSIPHY lane mapping** from downstream's `csi-lane-assign 0x4320` and
+  `csi-lane-mask 0x1f`: data on CSIPHY lanes 0, 2, 3, 4 with the clock on 1. It is in the camss
+  endpoint already; nothing has streamed yet, so it is unverified.
+
+The rear module also has a second variant, `SOI08BS2`, which this phone does not carry. The
+front camera (`camera@6c`, CCI master 1, modules `SEM02BN1`/`LGI02BN1`) has not been touched;
+the same borrow-a-driver method should identify it, at 7-bit `0x36`.
+3. **An IMX200 driver.** The long pole: no mainline driver, no public datasheet, and an INCK
+   of 19.2 MHz rather than the 24 MHz most Sony register tables assume. The downstream DT's
+   per-module `pll` tables and the Sony camera driver's strings are the starting points. The
+   AF actuator (BU64296G) and the EEPROM's calibration data come after the sensor streams.
 
 Camera remains the largest area left, but step 1 is a weekend rather than a project, and
 steps 1 and 2 together answer whether step 3 is worth starting.

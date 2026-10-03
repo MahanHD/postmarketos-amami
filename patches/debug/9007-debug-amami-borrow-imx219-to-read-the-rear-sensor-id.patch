@@ -1,0 +1,111 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -376,3 +376,108 @@
+ 
+ 	status = "okay";
+ };
++
++/*
++ * BRING-UP ONLY - debug/9007. This borrows the imx219 driver purely to power the
++ * rear camera and read its 16-bit model ID at 0x0000: for anything that is not an
++ * IMX219, imx219 logs "chip id mismatch: 219!=<id>", and <id> is the number wanted.
++ * The part is believed to be an IMX220 from its geometry alone - 5248x3936 at
++ * 1/2.3" - but that has never been read off the chip. Replace all of this with the
++ * real sensor's binding once it is known.
++ */
++&rpm_requests {
++	regulators-1 {
++		/* downstream's cam_vio: 8941_lvs2, a switch off s3 at 1.8V */
++		pm8941_lvs2: lvs2 {};
++	};
++};
++
++&cci {
++	status = "okay";
++};
++
++&cci_i2c0 {
++	camera@10 {
++		compatible = "sony,imx219";
++		reg = <0x10>;
++
++		/*
++		 * 19.2 MHz, straight off XO. msm8974's MCLK RCGs have no M/N
++		 * counter - unlike apq8084's, whose table mmcc-msm8974 shares - so
++		 * the table's 24 MHz entry (GPLL0 / 5 * 1/5) silently comes out at
++		 * 120 MHz. The I2C side of the sensor does not care about INCK, so
++		 * this is enough to read the ID; debug/9008 lets imx219 accept it.
++		 */
++		clocks = <&mmcc CAMSS_MCLK0_CLK>;
++		assigned-clocks = <&mmcc CAMSS_MCLK0_CLK>;
++		assigned-clock-rates = <19200000>;
++
++		/*
++		 * imx219's supply names mapped onto amami's camera rails. Each is
++		 * pinned min=max by RPM at downstream's voltage, so the names cannot
++		 * mis-volt anything: VANA = cam_vana (l17, 2.7V), VDIG = cam_vio
++		 * (lvs2, 1.8V), VDDL = cam_vdig (l3, 1.2V). cam_vaf (l23) is the
++		 * focus actuator and is not needed to read an ID.
++		 */
++		VANA-supply = <&pm8941_l17>;
++		VDIG-supply = <&pm8941_lvs2>;
++		VDDL-supply = <&pm8941_l3>;
++
++		/*
++		 * XCLR is active low - downstream drives GPIO 94 high to release
++		 * it - and imx219 sets "reset" to 1 to run the sensor, so the line
++		 * is described active high here.
++		 */
++		reset-gpios = <&tlmm 94 GPIO_ACTIVE_HIGH>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&cam_rear_default>;
++
++		port {
++			rear_cam_ep: endpoint {
++				data-lanes = <1 2 3 4>;
++				link-frequencies = /bits/ 64 <364000000>;
++				remote-endpoint = <&csiphy0_ep>;
++			};
++		};
++	};
++};
++
++&camss {
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		port@0 {
++			reg = <0>;
++
++			/*
++			 * Downstream: csi-lane-mask 0x1f and csi-lane-assign 0x4320,
++			 * i.e. data on CSIPHY lanes 0, 2, 3, 4 with the clock on 1.
++			 */
++			csiphy0_ep: endpoint {
++				clock-lanes = <1>;
++				data-lanes = <0 2 3 4>;
++				remote-endpoint = <&rear_cam_ep>;
++			};
++		};
++	};
++};
++
++&tlmm {
++	cam_rear_default: cam-rear-default-state {
++		mclk-pins {
++			pins = "gpio15";
++			function = "cam_mclk0";
++			drive-strength = <2>;
++			bias-disable;
++		};
++
++		reset-pins {
++			pins = "gpio94";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-disable;
++		};
++	};
++};
