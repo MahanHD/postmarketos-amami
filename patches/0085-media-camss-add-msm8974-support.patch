@@ -10,7 +10,7 @@
  	CAMSS_8280XP,
 --- a/drivers/media/platform/qcom/camss/camss.c
 +++ b/drivers/media/platform/qcom/camss/camss.c
-@@ -308,6 +308,215 @@
+@@ -308,6 +308,237 @@
  	},
  };
  
@@ -182,10 +182,21 @@
 +		.clock = { "top_ahb", "vfe0", "csi_vfe0",
 +			   "vfe_ahb", "vfe_axi" },
 +		.clock_rate = { { 0 },
++				/*
++				 * mmcc-msm8974's VFE table also lists 465 MHz
++				 * sourced from MMPLL3, but MMPLL3 is not in
++				 * vfe0/1_clk_src's parent map
++				 * (mmcc_xo_mmpll0_mmpll1_gpll0_map), so asking
++				 * for that rate makes qcom_find_src_index()
++				 * return -ENOENT and clk_round_rate() fail.
++				 * Stop at 400 MHz, which comes off MMPLL0. That
++				 * mismatch looks like a latent bug in the clock
++				 * driver rather than anything here.
++				 */
 +				{ 37500000, 50000000, 60000000, 80000000,
 +				  100000000, 109090000, 133330000, 200000000,
-+				  228570000, 266670000, 320000000, 400000000,
-+				  465000000 },
++				  228570000, 266670000, 320000000,
++				  400000000 },
 +				{ 0 },
 +				{ 0 },
 +				{ 0 } },
@@ -205,10 +216,21 @@
 +		.clock = { "top_ahb", "vfe1", "csi_vfe1",
 +			   "vfe_ahb", "vfe_axi" },
 +		.clock_rate = { { 0 },
++				/*
++				 * mmcc-msm8974's VFE table also lists 465 MHz
++				 * sourced from MMPLL3, but MMPLL3 is not in
++				 * vfe0/1_clk_src's parent map
++				 * (mmcc_xo_mmpll0_mmpll1_gpll0_map), so asking
++				 * for that rate makes qcom_find_src_index()
++				 * return -ENOENT and clk_round_rate() fail.
++				 * Stop at 400 MHz, which comes off MMPLL0. That
++				 * mismatch looks like a latent bug in the clock
++				 * driver rather than anything here.
++				 */
 +				{ 37500000, 50000000, 60000000, 80000000,
 +				  100000000, 109090000, 133330000, 200000000,
-+				  228570000, 266670000, 320000000, 400000000,
-+				  465000000 },
++				  228570000, 266670000, 320000000,
++				  400000000 },
 +				{ 0 },
 +				{ 0 },
 +				{ 0 } },
@@ -226,7 +248,7 @@
  static const struct camss_subdev_resources csiphy_res_8x96[] = {
  	/* CSIPHY0 */
  	{
-@@ -3586,6 +3795,7 @@
+@@ -3586,6 +3817,7 @@
  
  	if (camss->res->version == CAMSS_8x16 ||
  	    camss->res->version == CAMSS_8x53 ||
@@ -234,7 +256,7 @@
  	    camss->res->version == CAMSS_8x96) {
  		camss->ispif = devm_kcalloc(dev, 1, sizeof(*camss->ispif), GFP_KERNEL);
  		if (!camss->ispif)
-@@ -3743,6 +3953,18 @@
+@@ -3743,6 +3975,18 @@
  	.link_entities = camss_link_entities
  };
  
@@ -253,7 +275,7 @@
  static const struct camss_resources msm8996_resources = {
  	.version = CAMSS_8x96,
  	.csiphy_res = csiphy_res_8x96,
-@@ -3866,6 +4088,7 @@
+@@ -3866,6 +4110,7 @@
  static const struct of_device_id camss_dt_match[] = {
  	{ .compatible = "qcom,msm8916-camss", .data = &msm8916_resources },
  	{ .compatible = "qcom,msm8953-camss", .data = &msm8953_resources },

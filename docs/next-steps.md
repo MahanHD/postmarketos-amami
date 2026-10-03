@@ -10,14 +10,15 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Careful on the next build: the recipe and the phone disagree on purpose.** The APKBUILD
-is left at `pkgrel=143` with `0085`, `0086` and `debug/9006` still in `source=`, so a plain
-`pmbootstrap build` produces r143 - **the build that does not boot**. The phone is on r140.
-Decide what is wanted before building: for the config-only test, drop all three and keep
-the config edits; to go back to a known-good recipe, drop the config edits too and set
-`pkgrel=140`.
+**Device state as of 2026-10-03: r148 is flashed and installed, and the recipe agrees.**
+`uname -v` prints `#149`. r148 is r140 plus the camera bring-up - `0085`, `0086`, `0087`,
+`debug/9006` - and a **modular** media config. The CAMSS driver probes, `/dev/media0` and
+`/dev/video0-5` appear, and every pipeline powers up cleanly; no sensor is wired yet. On the
+phone, `/etc/modprobe.d/camss-bringup.conf` blacklists `qcom_camss` (with
+`install ... /bin/false`), so it does not auto-load at boot - load it with
+`modprobe --ignore-install qcom_camss`. Remove that file once a sensor is attached.
 
-**Device state as of 2026-10-02 end of day: r140 is flashed and installed**, `uname -v`
+**Previous state, 2026-10-02 end of day: r140 was flashed and installed**, `uname -v`
 prints `#141`. This is the cleaned-up end state of the suspend work: `0072`-`0076` plus
 `0079`-`0081`, with `0077`, `0082`, `0083`, `0084` and `debug/9005` all out. So **CPU
 hotplug online works** and `mem_sleep` is back to `[s2idle]` alone. Verified after the
@@ -39,7 +40,13 @@ and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plu
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r140  (current)  b6307908b71a609b4b40a5d236c7feea   0072-0076 + 0079-0081, clean
+        r148  (current)  9d8ce1923c5d4b14fee46a67620b49c0   + camera bring-up, CAMSS probes
+        r146  e4278675738079153632413baa2d1768   camss enabled, 465 MHz VFE bug still in
+        r145  318a925f6ac5bfb44c6598e49111dde1   modular media config, camss node disabled
+        r144  DO NOT BOOT  a23226c83a0d2a2d15b9b0a6c1a5b66d  built-in media config only
+        r143  DO NOT BOOT  1f6c13c7e6c5fdb84d79a93f9f241b62  built-in media + camss, node off
+        r142  DO NOT BOOT  13bc1982075978e9293d720c5f2f5f7d  built-in media + camss, node on
+        r140  b6307908b71a609b4b40a5d236c7feea   0072-0076 + 0079-0081, clean
         r138  1d3b75ff257eac44cd23e5f1f3fc13a1   + 0083: CPU collapse WORKS, saves nothing
         r139  DO NOT SUSPEND DEEP  5fa270a0901a51136aa7f45213653b5a  + 0084: L2_OFF, hangs
         r137  176b6e2f1d90a1b2c2d19cba87068b49   0083 without the collapse probe
@@ -255,8 +262,32 @@ carveout but blanks the panel, and all of it is out of the build.
 Worth stating because it lives on disk in pmaports, not in this repo, so nothing here
 records it and a new session would have to look:
 
-- **Flashed on the phone: r90**, and the pmaports recipe is also r90, so they
-  agree. It is `0001`-`0029` as usual plus `0039` (APR), `0040` (vibrator),
+- **Current, 2026-10-03: the phone and the pmaports recipe are both r148.** The camera
+  needs these in `config-postmarketos-qcom-msm8974.armv7`, and **they must stay modular** -
+  built in, the same symbols stop the kernel booting (see Camera):
+
+        CONFIG_MEDIA_SUPPORT=m
+        CONFIG_VIDEO_DEV=m
+        CONFIG_VIDEO_QCOM_CAMSS=m
+        CONFIG_I2C_QCOM_CCI=m
+        CONFIG_MEDIA_CAMERA_SUPPORT=y
+        CONFIG_MEDIA_CONTROLLER=y
+        CONFIG_MEDIA_PLATFORM_SUPPORT=y
+        CONFIG_MEDIA_PLATFORM_DRIVERS=y
+        CONFIG_V4L_PLATFORM_DRIVERS=y
+        # CONFIG_MEDIA_SUPPORT_FILTER is not set
+        # CONFIG_MEDIA_ANALOG_TV_SUPPORT is not set
+        # CONFIG_MEDIA_DIGITAL_TV_SUPPORT is not set
+        # CONFIG_MEDIA_RADIO_SUPPORT is not set
+        # CONFIG_MEDIA_SDR_SUPPORT is not set
+        # CONFIG_MEDIA_TEST_SUPPORT is not set
+        # CONFIG_MEDIA_SUBDRV_AUTOSELECT is not set
+
+  The bool menus have to be switched off explicitly. The recipe copies the config and runs
+  `make` with no `olddefconfig`, so `syncconfig` fills every newly-visible symbol with its
+  default - and the defaults for those menus are on.
+- **Historical: flashed on the phone at r90**, and the pmaports recipe was also r90, so they
+  agreed. It is `0001`-`0029` as usual plus `0039` (APR), `0040` (vibrator),
   `0041` (q6asm DAIs), `0042`-`0044` (SLIMbus), `0045`, `0047` and `0048`, with `CONFIG_QCOM_APR`, the
   `SND_SOC_QDSP6_*` symbols and `CONFIG_SLIMBUS` on. No IOMMU patches,
   `# CONFIG_ARM_SMMU is not set`.
@@ -3022,11 +3053,46 @@ Ruled out and worth not re-checking: the boot partition is 20 MiB against an 18.
 image; the kernel grew only 116 KB and the ramdisk loads 33 MB above it; the compiled DTB
 is well-formed, 31 clock pairs all resolving to mmcc with matching `clock-names`.
 
-**The open question is whether "does not boot" is even the right description** - it has
-only been inferred from the phone not appearing on USB, and a dead USB gadget with an
-otherwise healthy system looks identical from here. That is exactly the shape of the
-`io-channels on &smbb` trap recorded elsewhere in this file. Settle it by looking at the
-screen before bisecting further.
+**Resolved 2026-10-03: it was the media config, and the camera patches were innocent.**
+
+        build  media config      camss patches  camss node  boots
+        r140   off               no             absent      YES
+        r142   built in (=y)     yes            enabled     no
+        r143   built in (=y)     yes            disabled    no
+        r144   built in (=y)     no             absent      no
+        r145   modular (=m)      yes            disabled    YES
+        r146   modular (=m)      yes            enabled     YES
+
+r144 is the decisive row: no camss code, no node, and a `vmlinuz` byte-for-byte the same
+size as r143's - it still failed. So turning the media subsystem on *built in* is what stops
+the boot. r145's kernel is one page larger than r140's, against r144's 116 KB, which is the
+whole point: nothing media-related is in the kernel proper any more.
+
+**"Does not boot" was confirmed for free, without looking at the screen.**
+`journalctl --list-boots` on the recovered system shows no boot at all for r142, r143 or
+r144 - the gaps between recorded boots line up exactly with each failed attempt. So none of
+them reached userspace, and since the phone never appeared even as the initramfs' USB debug
+shell, the failure is before that too. It was not a dead USB gadget.
+
+**Which built-in symbol does it is not known**, and it was not worth finding out: 24 new
+built-ins, all media core (`DVB_CORE`, `MEDIA_TUNER`, `RADIO_ADAPTERS`, `V4L2_FWNODE`,
+`VIDEO_DEV`...), none of which obviously probes anything at boot. They came in because
+`syncconfig` defaulted the TV, radio, SDR and test menus on. The camera needs none of it.
+
+**Then the first probe found a latent clock bug.** With the node enabled the driver bound,
+created `/dev/media0` and `/dev/video0-5`, and logged `clk round rate failed: -2` /
+`Failed to power up pipeline: -22` twelve times. `-ENOENT` from `clk_round_rate()` on a qcom
+RCG comes from `qcom_find_src_index()`: a freq-table entry whose source is not in that
+clock's parent map. `ftbl_camss_vfe_vfe0_1_clk` lists `F(465000000, P_MMPLL3, 2, 0, 0)`, but
+`vfe0/1_clk_src` use `mmcc_xo_mmpll0_mmpll1_gpll0_map`, which has no `P_MMPLL3`. So 465 MHz
+can never be resolved - a bug in mmcc-msm8974, exposed because the VFE rate list was copied
+straight from that table. `0085` now stops at 400 MHz (MMPLL0).
+
+**Verified with a positive control**, since zero errors on a reload proved nothing - nothing
+had opened the nodes. Opening a video node is what powers its pipeline up (it is the path
+the twelve errors came from), so every node was opened and `VIDIOC_QUERYCAP` issued: all six
+report `qcom-camss` / "Qualcomm Camera Subsystem", zero errors. Repeated from a fresh boot of
+r148. **Step 1's milestone is met.**
 
 Recovery each time was fastboot: Volume Up held while plugging in, then
 `fastboot flash boot boot-images/boot-r140.img`. **And then `fastboot reboot`** - S1Boot
@@ -3036,12 +3102,10 @@ it is remote.
 
 ### Suggested order, each step observable
 
-1. **CAMSS plumbing** - `0085` (resources), `0086` (DT node), `0087` (enable on amami),
-   `debug/9006` (arm32 bring-up). Written and building; **blocked on the boot failure
-   above**. Next step is to flash *config-only*, with all four camera patches dropped: if
-   that fails the config is confirmed and the camera work is innocent, and if it boots the
-   problem is inside the camss patches despite the node being disabled, which would be
-   surprising and worth understanding before continuing.
+1. ~~**CAMSS plumbing**~~ **DONE 2026-10-03 on r148** - `0085` (resources), `0086` (DT
+   node), `0087` (enable on amami), `debug/9006` (arm32 bring-up), with the media config
+   modular. Driver probes, six video nodes, pipelines power up clean. Still bring-up grade:
+   `9006` drops the `IOMMU_DMA` dependency, and real capture will want the CAMSS IOMMU.
 2. **CCI and sensor identity**: get an ACK on CCI master 0 and read the rear sensor's ID
    register. Milestone: a number that either confirms IMX220 or says what it really is.
    Mainline's `cci` node already exists, so this is mostly enabling it.
