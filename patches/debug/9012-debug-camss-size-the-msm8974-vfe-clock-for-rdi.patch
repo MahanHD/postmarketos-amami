@@ -1,0 +1,48 @@
+--- a/drivers/media/platform/qcom/camss/camss-csid.c
++++ b/drivers/media/platform/qcom/camss/camss-csid.c
+@@ -576,6 +576,13 @@
+ 			if (min_rate == 0)
+ 				j = clock->nfreqs - 1;
+ 
++			/*
++			 * debug: at 100 MHz msm8974's CSID/ISPIF keep only
++			 * ~58% of a 4-lane 576 Mbit/s RAW10 line
++			 */
++			if (csid->camss->res->version == CAMSS_8x74)
++				j = clock->nfreqs - 1;
++
+ 			rate = clk_round_rate(clock->clk, clock->freq[j]);
+ 			if (rate < 0) {
+ 				dev_err(dev, "clk round rate failed: %ld\n",
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -954,6 +954,14 @@
+ 								   l->nformats,
+ 								   l->fmt[MSM_VFE_PAD_SINK].code);
+ 					tmp = pixel_clock[j] * bpp / 64;
++					/*
++					 * debug: msm8974's VFE drops ~42% of a
++					 * 4-lane RAW10 line at the rate the
++					 * 64-bit assumption gives; size it as
++					 * if the RDI path moved 16 bits a cycle
++					 */
++					if (vfe->camss->res->version == CAMSS_8x74)
++						tmp = pixel_clock[j] * bpp / 16;
+ 				}
+ 
+ 				if (min_rate < tmp)
+@@ -1035,6 +1043,14 @@
+ 								   l->nformats,
+ 								   l->fmt[MSM_VFE_PAD_SINK].code);
+ 					tmp = pixel_clock[j] * bpp / 64;
++					/*
++					 * debug: msm8974's VFE drops ~42% of a
++					 * 4-lane RAW10 line at the rate the
++					 * 64-bit assumption gives; size it as
++					 * if the RDI path moved 16 bits a cycle
++					 */
++					if (vfe->camss->res->version == CAMSS_8x74)
++						tmp = pixel_clock[j] * bpp / 16;
+ 				}
+ 
+ 				if (min_rate < tmp)

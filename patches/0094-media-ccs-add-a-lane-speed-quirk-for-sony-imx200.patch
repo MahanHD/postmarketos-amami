@@ -21,7 +21,7 @@
  				minfo->sensor_smia_manufacturer_id;
 --- a/drivers/media/i2c/ccs/ccs-quirk.c
 +++ b/drivers/media/i2c/ccs/ccs-quirk.c
-@@ -215,3 +215,27 @@
+@@ -215,3 +215,28 @@
  const struct ccs_quirk smiapp_tcm8500md_quirk = {
  	.limits = tcm8500md_limits,
  };
@@ -39,7 +39,8 @@
 +	ccs_replace_limit(sensor, CCS_L_CLOCK_CALCULATION, 0,
 +			  CCS_CLOCK_CALCULATION_LANE_SPEED |
 +			  CCS_CLOCK_CALCULATION_LINK_DECOUPLED);
-+	ccs_replace_limit(sensor, CCS_L_NUM_OF_VT_LANES, 0, 0);
++	ccs_replace_limit(sensor, CCS_L_NUM_OF_VT_LANES, 0,
++			  sensor->hwcfg.lanes - 1);
 +	ccs_replace_limit(sensor, CCS_L_NUM_OF_OP_LANES, 0,
 +			  sensor->hwcfg.lanes - 1);
 +

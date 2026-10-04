@@ -10,12 +10,13 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-04 (late): r171 is flashed and installed, and the recipe agrees.**
-`uname -v` prints `#172`. r171 is r161 plus the CCS work - `0091`-`0095` and `debug/9011` -
-with `CONFIG_VIDEO_CCS=m`, and `debug/9007` now binds both sensors to the generic CCS driver
-(`nokia,smia`). The rear IMX200 probes as "imx200", sits in the media graph linked to
-`msm_csiphy0`, and **streams without errors on the sensor side - but no frame completes yet**
-(Camera, "The rear sensor through CCS"). On the phone,
+**Device state as of 2026-10-04 (morning): r178 is flashed and installed, and the recipe agrees.**
+`uname -v` prints `#179`. r178 is r161 plus the CCS work - `0091`-`0095` and `debug/9012` -
+with `CONFIG_VIDEO_CCS=m`, and `debug/9007` binds both sensors to the generic CCS driver
+(`nokia,smia`). The rear IMX200 probes as "imx200", streams RAW10 at a 288 MHz link with a
+clean PHY once the settle count is 9, and **the pixel data is real** (test-pattern bars decode
+correctly) - but frames only reach memory when the link is *noisy*; on a clean link the VFE
+never sees a start of frame (Camera, "The rear sensor through CCS"). On the phone,
 `/etc/modprobe.d/camss-bringup.conf` blacklists `qcom_camss`, `i2c_qcom_cci`, `imx219` and `ccs`
 (each with `install ... /bin/false`), so nothing camera-related loads at boot. Load by hand
 with `modprobe --ignore-install <module>`. `dtc` is installed on the phone (the host has none),
@@ -43,7 +44,8 @@ and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plu
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r171  (current)  e829711c11c0fc0eb098d9f6644d683c   + 0094 IMX200 quirk, 0095, debug/9011
+        r178  (current)  c93cd24b55bb9ef4074f911c1147371f   0094 with vt lanes = 4, 9011 out, + debug/9012
+        r171             e829711c11c0fc0eb098d9f6644d683c   + 0094 IMX200 quirk, 0095, debug/9011
         r171-swap        b7bc347f6667864a66c928a8490e736a   test only: CSIPHY lanes 0 and 4 swapped
         r170-1lane       cff4cf465a2ce8ed205eb43e15565c98   test only: sensor on one lane
         r167             fe9aca311b7eb10ecafd461249704862   + 0092 binner/pixel-array init_state
@@ -3343,31 +3345,58 @@ Media-ctl recipe that validates (the sink formats now follow the crop):
         media-ctl -V '"imx200 scaler 3-0010":0[fmt:SRGGB12_1X12/WxH]'
         then SRGGB8_1X8/WxH on scaler:1, msm_csiphy0:0, msm_csid0:0, msm_ispif0:0, msm_vfe0_rdi0:0
 
-Only a 96 MHz link is valid (8, 10 and 12 bit). **Where it stands on r171:** the sensor starts
-cleanly, but nothing reaches memory. Measured with Python reading `/dev/mem` mid-stream
-(no devmem applet on the phone) and `vfe_isr`'s dev_dbg:
+**`0094` now counts all four lanes on the VT side too.** With `vt_lanes` = 1 only a 96 MHz link
+passed the PLL check; with 4, links of 288-480 MHz pass at 8, 10 and 12 bit (576-960 Mbit/s per
+lane), which is where the stock module table's per-mode lane rates sit (293-825 Mbit/s). CCS
+picks the lowest, 288 MHz. 0x0820 (REQUESTED_LINK_RATE) stays as CCS writes it, the total over
+all lanes - mainline's imx214 tables confirm Sony wants the total. `debug/9011` tried a per-lane
+value and made things worse; it is out of the build and deleted.
 
-- every data lane (PHY 0, 2, 3, 4) reports status bit 0x01 on every burst, ~32k PHY
-  interrupts/s; the clock lane reports nothing;
-- a live settle sweep (CFG3, 100 MHz timer) gives packets at 0-14 and bit 0x10 with no
-  packets at 16 and above; the clock lane's settle makes no difference at all;
-- CSID counts ~72k packets/s, its ECC counter (0x094) saturates, the CRC counter stays 0;
-- the VFE sees RDI SOF a few hundred times a second at irregular spacing - far more than
-  ~2.7 frame starts/s - and never a write-master done; ISPIF reports rdi0 overflow;
-- one lane (`r170-1lane`), swapping PHY lanes 0 and 4 (`r171-swap`), a 200 MHz VFE clock
-  (poked live in mmcc 0x3604) and a per-lane REQUESTED_LINK_RATE (`debug/9011`) all leave
-  that picture unchanged. The CSID's captured-header registers latch once per stream at
-  start-up and are not a usable statistic.
+What was measured on r171-r178, with Python reading `/dev/mem` mid-stream (no devmem applet on
+the phone), live register writes, a kprobe on `ccs_write_addr` and `vfe_isr`'s dev_dbg:
 
-So headers are being corrupted at the PHY or CSID, even on a single lane. Not yet tried:
-higher link frequencies (only 96 MHz passes the PLL check with `vt_lanes` = 1; the stock module
-table's `pll` array lists per-mode lane rates of 293-825 Mbit/s, so the sensor may dislike
-running this slowly), CSIPHY CFG2/other lane registers, and the front sensor as a second
-data point.
+- **RAW8 cannot work here.** In "RAW8" the sensor sends its lines as data type **0x30**
+  (user-defined) with WC 5248 - read off the CSID's captured-header register 0x06c, whose
+  layout is `DI[31:24] WC[23:8] ECC[7:0]` (it took a while to get that order right; ECC
+  confirms it). CSID maps 0x2a, so every line was dropped. Use **RAW10** (`SRGGB10_1X10`,
+  `pRAA`).
+- **RAW10 delivers real pixels.** The first RAW10 capture came back the right size,
+  5248 x 3936 x 10/8 per frame, and the bytes decode as RAW10 groups with the test pattern's
+  exact bar values (green bar `00 ff 00 ff cc`). But each stored line held only ~58% of its
+  bytes (an autocorrelation period of 3776 instead of 6560), spread evenly.
+- **Settle 9 gives a clean link at 288 MHz; camss computes 11, which is marginal.** At 11
+  the PHY raises ~12-40k error interrupts/s with bit 0x01/0x11 per lane, and on some boots
+  0x10 (no sync); 13 and above never sync. At 9 the PHY goes nearly silent (~6/s), the CSID
+  ECC counter (0x094, two 16-bit halves) stops moving, CRC errors stay at a fixed count,
+  and ~100k packets/s arrive. The cliff wanders by a count or two between boots.
+- **On the clean link nothing reaches the ISPIF or VFE**: no RDI SOF, no write-master done,
+  only reset/halt acks, at every clock-lane settle from 0 to 255. Scanning the CSID's data
+  type LUT through every long-packet type 0x10-0x3f live changed nothing either. The only
+  runs that produced frames had a noisy link - the working theory is that the VFE starts a
+  frame on a frame-start short packet that a clean link never delivers (or delivers on a
+  channel CSID does not map), and that corrupted headers occasionally forged one. That would
+  also explain the 58% lines. The embedded-data line that *is* captured is VC0 DT 0x12, so
+  the sensor does use VC0. A write of 0 to SMIA's `csi_channel_identifier` (0x0110) changed
+  nothing.
+- `debug/9012` raises the msm8974 VFE clock (RDI sized at 16 bits a cycle) and the CSID
+  clock (always 200 MHz). The 64-bit RDI assumption gave 37.5-50 MHz; neither change
+  restored the missing 42% while frames were still coming only from noise, so both stay
+  debug until a clean link delivers frames.
+- Lane order and lane count are not the problem: one lane (`r170-1lane`) and PHY lanes 0
+  and 4 swapped (`r171-swap`) were both tried. The CSID captured-header registers latch once
+  per stream; `CORE_CTRL_1` bits did not make the others capture.
+
+Next: find where frame starts go on a clean link - CSID short-packet handling (maybe the
+sensor sends line start/end packets too: ~100k packets/s is ~3.6 per line), the ISPIF CID
+mask and the VFE's RDI SOF source - and compare against the TPG, which streams at 20 fps
+through the same CSID/ISPIF/VFE with the CSID status register reading 0 throughout.
 
 **One stream per boot.** After a stream that times out, the next start fails with "VFE sof
 timeout", and once reset the phone outright. Reboot between tests. The scripts used
-(`treg.sh` with `rd.py`, `sweep.py`, `sweep2.py`, `hdr.py`) sit in `/home/mahan` on the phone.
+(`treg.sh` with `rd.py`, `sweep*.py`, `hdr.py`, `cap2.py`, `dtscan.py`, `setsettle.py`, `an10.py`,
+and `ttpg.sh` for the TPG) sit in `/home/mahan` on the phone. **Never read CSIPHY/CSID
+registers through `/dev/mem` while their clocks are off** - `setsettle.py` waits for
+`camss_csi0phy_clk` to be enabled first; `rd.py` once read 0xff from a powered-down PHY.
 
 ## Parked patches
 
