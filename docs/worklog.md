@@ -320,7 +320,7 @@ records it and a new session would have to look:
   (`d4550bf58700118ce0b3ee31aee67999`) is the last build before SLIMbus, and
   r56-rebuilt (`69b89a70e0a216cc128579bea40f5561`) reproduces what was flashed for
   most of this port's life.
-- Apks r57-r86 in `~/.local/var/pmbootstrap/packages/` are a mix of experiments;
+- Apks r57-r86 in pmbootstrap's `packages/` directory are a mix of experiments;
   several are IOMMU builds. Numbering is monotonic but the contents are not a
   progression - check the config inside one before trusting it.
 
@@ -3402,7 +3402,7 @@ registers through `/dev/mem` while their clocks are off** - `setsettle.py` waits
 
 ### First image, 2026-10-04 evening: the stock firmware's init table was the missing piece
 
-The stock FTF (`Android 5 (Stock Firmware)/D5503_14.6.A.1.236_*.zip`) holds the camera
+The stock FTF (`D5503_14.6.A.1.236_*.zip`) holds the camera
 configuration in `/system/vendor/camera/SOI20BS0_IMX200.dat` (and `SEM02BN1_IMX132.dat` for
 the front). `tools/unsin.py` unpacks `system.sin` (SIN v3: an MMCF map of ADDR records) to an
 ext4 image that `debugfs -R "rdump / dir"` reads without mounting; `tools/semcdat.py` dumps the

@@ -16,7 +16,7 @@ The exact recipe is in `recipe/`: the kernel APKBUILD and config as this port bu
 them. Copy both, plus every patch the APKBUILD's `source=` list names, into the kernel
 aport, then refresh the checksums and build:
 
-    P=~/.local/var/pmbootstrap/cache_git/pmaports/device/testing/linux-postmarketos-qcom-msm8974
+    P=$(pmbootstrap config aports)/device/testing/linux-postmarketos-qcom-msm8974
     cp recipe/APKBUILD recipe/config-postmarketos-qcom-msm8974.armv7 "$P/"
     cp patches/*.patch patches/debug/*.patch "$P/"
     pmbootstrap checksum linux-postmarketos-qcom-msm8974
