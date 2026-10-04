@@ -1,0 +1,243 @@
+maintainer="Luca Weiss <luca@lucaweiss.eu>"
+_flavor="postmarketos-qcom-msm8974"
+pkgname=linux-$_flavor
+pkgver=6.16.12
+pkgrel=183
+pkgdesc="Mainline Kernel fork for MSM8974 devices"
+arch="armv7"
+_carch="arm"
+url="https://github.com/msm8974-mainline/linux"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps
+	pmb:cross-native
+	pmb:kconfigcheck-community
+	"
+makedepends="
+	bison
+	clang
+	findutils
+	flex
+	lld
+	llvm
+	openssl-dev
+	perl
+	postmarketos-installkernel
+	python3
+	xz
+	zstd
+"
+
+_config="config-$_flavor.$arch"
+_tag="v${pkgver/_/-}-msm8974"
+
+# Source
+source="
+	https://github.com/msm8974-mainline/linux/archive/$_tag/linux-$_tag.tar.gz
+	$_config
+	0001-arm-dts-rhine-enable-wcnss-wifi-bt.patch
+	0002-wcn36xx-add-scan_offload-module-param.patch
+	0003-drm-panel-add-sony-amami-novatek.patch
+	0004-arm-dts-amami-enable-display.patch
+	0005-power-smbb-report-battery-voltage-and-capacity.patch
+	0006-wcn36xx-gate-update-channel-list-on-fw-cap.patch
+	0007-soc-qcom-sns-reg-map-group-2691.patch
+	0008-arm-dts-msm8974-fix-wcnss-wifi-irq-type.patch
+	0009-wcn36xx-fix-active-scan-type-value.patch
+	0010-wcn36xx-require-wlan-scan-offload-cap.patch
+	0011-drm-msm-mdp5-drop-stale-hwpipe-on-plane-enable.patch
+	0012-arm-dts-msm8974-let-the-gpu-throttle.patch
+	0013-backlight-qcom-wled-fix-wled3-brightness-register-stride.patch
+	0014-clk-qcom-hfpll-add-msm8974-data.patch
+	0015-arm-dts-msm8974-wire-up-krait-cpufreq.patch
+	0016-arm-dts-msm8974-let-the-cpu-throttle.patch
+	0017-iommu-qcom-make-the-secure-id-optional.patch
+	0019-iommu-qcom-add-an-optional-alt-clock.patch
+	0022-arm-dts-msm8974-give-each-krait-its-own-cpufreq-policy.patch
+	0023-iio-adc-spmi-iadc-fix-current-scaling-and-sign.patch
+	0024-arm-dts-amami-widen-the-battery-temperature-band.patch
+	0026-drm-msm-detach-the-arm-dma-iommu-mapping-first.patch
+	0028-iio-qcom-smgr-skip-duplicate-sensor-ids.patch
+	0029-soc-qcom-ocmem-use-a-bit-number-not-a-mask.patch
+	0039-arm-dts-msm8974-add-the-adsp-audio-services.patch
+	0040-arm-dts-amami-enable-the-vibrator.patch
+	0041-arm-dts-amami-add-the-q6asm-frontend-dais.patch
+	0042-slimbus-qcom-ngd-add-msm8974.patch
+	0043-arm-dts-msm8974-add-slimbus.patch
+	0044-arm-dts-amami-add-the-taiko-on-slimbus.patch
+	0045-iio-qcom-smgr-init-every-data-type-sample-rate.patch
+	0047-iio-qcom-smgr-keep-a-second-subscription-for-proximity.patch
+	0048-iio-qcom-smgr-expose-ambient-light-as-its-own-device.patch
+	0049-asoc-wcd9320-add-the-taiko-codec-driver.patch
+	0050-arm-dts-amami-wire-up-the-taiko-codec.patch
+	0051-asoc-qcom-accept-an-msm8974-sndcard.patch
+	0052-asoc-wcd9320-populate-every-slim-rx-mux-control.patch
+	0053-asoc-wcd9320-address-the-interface-device-after-bring-up.patch
+	0055-asoc-wcd9320-give-the-interface-regmap-a-max-register.patch
+	0056-asoc-wcd9320-set-up-interrupts-like-downstream.patch
+	0058-asoc-wcd9320-acknowledge-every-interrupt-status-register.patch
+	0059-asoc-wcd9320-address-registers-from-the-0x800-base.patch
+	0060-asoc-wcd9320-deliver-the-port-interrupt-to-the-codec.patch
+	0061-asoc-wcd9320-set-the-slim-rx-port-sample-width-per-port.patch
+	0062-asoc-wcd9320-start-the-slim-channel-after-the-rx-chain-is-up.patch
+	0063-asoc-wcd9320-number-the-rx-ports-from-one-like-downstream.patch
+	0064-asoc-wcd9320-port-class-h-to-the-taiko.patch
+	0065-asoc-wcd9320-stop-the-remove-path-oopsing.patch
+	0066-asoc-wcd9320-defer-the-codec-probe-until-slim-is-up.patch
+	0067-asoc-wcd9320-add-a-slimbus-capture-path.patch
+	0068-arm-dts-amami-add-the-slimbus-capture-dai-links.patch
+	0069-iio-qcom-spmi-vadc-scale-the-battery-thermistor.patch
+	0070-power-smbb-report-battery-temperature.patch
+	0071-arm-dts-amami-give-the-charger-the-battery-thermistor.patch
+	0072-soc-qcom-spm-add-the-msm8974-l2-saw-and-pc-sequences.patch
+	0073-arm-dts-msm8974-add-the-mpm-wakeup-controller.patch
+	0074-arm-dts-msm8974-route-tsens-through-the-mpm.patch
+	0075-arm-dts-msm8974-route-the-spmi-arbiter-through-the-mpm.patch
+	0076-irqchip-qcom-mpm-flush-vmpm-at-system-suspend.patch
+	0079-arm-qcom-power-collapse-the-dying-cpu.patch
+	0080-arm-qcom-re-release-a-cpu-that-was-powered-down.patch
+	0081-arm-qcom-let-a-recalled-cpu-leave-the-collapse-loop.patch
+	0085-media-camss-add-msm8974-support.patch
+	0086-arm-dts-msm8974-add-the-camss-node.patch
+	0087-arm-dts-amami-enable-the-camss.patch
+	0089-drm-msm-do-not-shmem-truncate-a-vram-object-on-purge.patch
+	0090-clk-qcom-mmcc-msm8974-list-only-mclk-rates-without-mn.patch
+	0091-media-ccs-ignore-ccs-only-limits-on-smia-sensors.patch
+	0092-media-ccs-initialise-the-binner-and-pixel-array-state.patch
+	0093-media-ccs-keep-the-pixel-array-and-sink-formats-in-the-state.patch
+	0094-media-ccs-add-a-lane-speed-quirk-for-sony-imx200.patch
+	0095-media-ccs-start-the-sensor-only-from-the-source-subdev.patch
+	0096-media-ccs-give-quirk-register-tables-their-width.patch
+	9006-debug-camss-allow-arm32-bringup.patch
+	9007-debug-amami-describe-both-cameras.patch
+	9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
+	9009-debug-camss-refuse-non-contiguous-buffers-without-iommu.patch
+	9010-debug-camss-use-contiguous-buffers-without-iommu.patch
+	9012-debug-camss-size-the-msm8974-vfe-clock-for-rdi.patch
+	9013-debug-ccs-imx200-stock-register-tables.patch
+	9000-debug-regmap-allow-write-debugfs.patch
+	9001-debug-sns-reg-extra-group.patch
+	9002-debug-scan-offload-ie-trim.patch
+	a330_pm4.fw
+	a330_pfp.fw
+"
+builddir="$srcdir/linux-${_tag#v}"
+
+prepare() {
+	default_prepare
+	# Adreno 330 firmware is built into the image: the GPU probes from the
+	# initramfs, before the rootfs (which holds /lib/firmware) is mounted.
+	mkdir -p firmware/qcom
+	cp "$srcdir"/a330_pm4.fw "$srcdir"/a330_pfp.fw firmware/qcom/
+	cp "$srcdir/config-$_flavor.$arch" .config
+}
+
+build() {
+	unset LDFLAGS
+	make ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-$_flavor"
+}
+
+package() {
+	mkdir -p "$pkgdir"/boot
+	make zinstall modules_install dtbs_install \
+		ARCH="$_carch" \
+		LLVM=1 \
+		INSTALL_PATH="$pkgdir"/boot/ \
+		INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 \
+		INSTALL_DTBS_PATH="$pkgdir"/boot/dtbs
+	rm -f "$pkgdir"/lib/modules/*/build "$pkgdir"/lib/modules/*/source
+
+	install -D "$builddir"/include/config/kernel.release \
+		"$pkgdir"/usr/share/kernel/$_flavor/kernel.release
+}
+
+sha512sums="
+6e67e6c86e36e235bad086ea2984c0885eb2e47264e667aa177df8ed7c29edbb23a866407dc59bdd39cfb95f6677e755a426eff485a93898c01997a6a6fcdd9c  linux-v6.16.12-msm8974.tar.gz
+512bfa9f66801c223a27e59dbe88e6c573f6f2ba193ace849ca60b063ff145460d0519cfb553000450568b12bc61c9bf1079bb8581e889dd4f2be29b744fc572  config-postmarketos-qcom-msm8974.armv7
+4527280bea3966a4d59d27336f6fb6ad4149ac8be94fa5f2dd238172ae4fac2c7a36dcc5c145aac0f7d979291475f4721bf7da0058545533f7df4e21d9cb6490  0001-arm-dts-rhine-enable-wcnss-wifi-bt.patch
+ea4aa2b9216a367acc8c97480c3f8e659d4a522d0301de3f397cd2515a3fffe10c6c77efba6751c0452f8c808b3395282e2d32caa4882ddfe5391c813f862c61  0002-wcn36xx-add-scan_offload-module-param.patch
+5b0f7ed258736bfb207bfe11c9dd50a0dcc7f4ce835ef2d10dfd840cb3f9b8aee28418642dc64e4705c24f33391b4ee6351f0489d730767c6cbb4d4ff7fb9a5a  0003-drm-panel-add-sony-amami-novatek.patch
+03c3b85e06ea4c130522f025a4e5113b0163d2e27964daed0eb7e818510dd66edb9107a03ef5b3b8cd9ba39ee5d6da224887afbad8df8926213bc18de559932c  0004-arm-dts-amami-enable-display.patch
+4342dd57191ab893aecb064c19ccbc5fc7573039ab876b812450cc7e26b1bed81c45045d3f14ebc1418e3fd873c69b8244f7f29db4da8e6256e0eb48db6e6c02  0005-power-smbb-report-battery-voltage-and-capacity.patch
+076fb8909cf39384d749732ff63dc56afd0a0e2bd3fcaa30db1f544c86b7864eeb45d8259144d82fe3d144afaffbe9b7ad38861efeb05e265813a1dfdefa43cf  0006-wcn36xx-gate-update-channel-list-on-fw-cap.patch
+231823334cb849d0477c689d6b5ba24a02f7b7ace24b1e8ce418d64f7fe5b340634bdcaf2eda532d377b517891d8776cf12f03e43d25e037152218ae3e8a9e58  0007-soc-qcom-sns-reg-map-group-2691.patch
+242cdf8fbb98f1475d9aed7170960334dbda686de2a935184dc4ce0ce0bf79dc07c89646dc5e7679cff0ee0350415a88a6eaa812c741644fe986051262cc2da3  0008-arm-dts-msm8974-fix-wcnss-wifi-irq-type.patch
+c85a05c0d7ff3055e069601d06f552d412422cfd69d8f394827cfe28880d457b50ee582663a03cd6322dffaa2b81424fad2ed12e7baaaadb97488101d8554272  0009-wcn36xx-fix-active-scan-type-value.patch
+8913a965f310a50f1eba420560adf03c36a5282d3a2345be88c7271ae58c34d86db0c90bfd3499cecad50f2d9bef42cfc4125e2b98194be759e878381c9a9e0f  0010-wcn36xx-require-wlan-scan-offload-cap.patch
+063c8119f0485102b501f76aec52660c6535fe37a921d9c03172b95629cb3e2ed55aecc450fd7d83a69fcf5367974bbafbc1ef3452db50037f86046493d5af41  0011-drm-msm-mdp5-drop-stale-hwpipe-on-plane-enable.patch
+7a3c8938ad1426b56f7d959e821a7d5a34f928ebdb192611c0fd69f9aaed233bf69d840903325dc859b8e3d0d5cfc8254493c531d0ad93892ee85e88171ee0f3  0012-arm-dts-msm8974-let-the-gpu-throttle.patch
+9797c5efa4b31c5829599cac978787c8c43d4efb119c2a9f5c01f3e69ec87b92adaef8af4235d2288227fe5c2e03899db2a6a66177a15286b6833f5d5c7cf84f  0013-backlight-qcom-wled-fix-wled3-brightness-register-stride.patch
+7dd32d75f4822d441a6ad3afc82c25b09019923bf585248a5a51ac31632c73c6cb23ca81d853d56cddaf9d8f68b33581d38b1fecfb8fdc2d606967c0f6f34ee4  0014-clk-qcom-hfpll-add-msm8974-data.patch
+03d746a9e5deb4a7d98dae262a66bbae07b78b6c36200aa6c8600b2f105d70d006ddb91084dcccc14e0812ec6ccdf310de763950ac40340f826044dfe7f57d38  0015-arm-dts-msm8974-wire-up-krait-cpufreq.patch
+2042e0c20b36b10846ca396f95338fec82d37fab7214567b8deb461218a2c49e8d484c8f39847698d3619a38d391f557b23f041dd0764a26710ffdc909cde0a4  0016-arm-dts-msm8974-let-the-cpu-throttle.patch
+c939780e9428c1669e2ecf4f9099e0c7eb4bfc8290a5a8ab41214ed75e984bab87704609f3c6879afb1f272b9f0bca2ac937ec8e626ba0600c2fd6513e05cf82  0017-iommu-qcom-make-the-secure-id-optional.patch
+472290aebf6d6e911eaab6bd47df4c01f6618cb73319462deb434e3ed58ff451689b289186e5a0237c0371bfc68ed8178b11e59afbc5352030544042af058816  0019-iommu-qcom-add-an-optional-alt-clock.patch
+66a57263b7bfae783dcb66059ae6e30035d99d5e6ae29b33a3bfe70f5e816d40cacfd0c8cc38908db2a54a25bda072b5d99806b7d5d84577e0ec9eade3405df5  0022-arm-dts-msm8974-give-each-krait-its-own-cpufreq-policy.patch
+58b474e8d0c5316457201c4625247f1dae902f7837491ba992284a90063e7d7582142f3054ede959574b034cadda74f9cc664d6b9af8d15102b0d72de4efd306  0023-iio-adc-spmi-iadc-fix-current-scaling-and-sign.patch
+3c962f54677a0e3fd9226849bf07e947df52f71c8b708caa299fc95e50cf89528f916ab7f86173205698e77c3c06db15ad81eff1cd7cd349ff1fd0609669f90c  0024-arm-dts-amami-widen-the-battery-temperature-band.patch
+41f3c1be6d01be01e90b1435bc5c5ef696cfeeefab008610f092a971fe584c371c8ed432e9d8daa8f014730210de113a4e93a7a61b371a55ae5266a4c94a53e4  0026-drm-msm-detach-the-arm-dma-iommu-mapping-first.patch
+5b76d0311f4c225b97cb24c60cbf2f23e7545f5efb3738ea8ab5345bff2d040fadb893f0bb9762d57f9781f85aed4163a4d940ee4a02e824a747daf84c75620b  0028-iio-qcom-smgr-skip-duplicate-sensor-ids.patch
+9266d4f1fee06504a48ac9c7f1a003f5facf2ecd1ff977c8d366ac7ffc859d69f28f4efe34d327d92e4ff6bca30878c4ac53166259347609f11c596819c75ee9  0029-soc-qcom-ocmem-use-a-bit-number-not-a-mask.patch
+d93c529117131431bb4e16eede10e3d5cc677a69548afb959f8703a9e643a7e37123cc078078ee3d74fb786cd2f325b58d5a332e940067275a88e63a0277bdb3  0039-arm-dts-msm8974-add-the-adsp-audio-services.patch
+b183dee17c54c47c66e9de71e68cfeee2745dc33bca4f6c7b9ff976921f4dd209e4b0e0339286cd8ae539d19c6755ef7a346e66be7fdc9d1f077229725390da3  0040-arm-dts-amami-enable-the-vibrator.patch
+dd4d58a2c93e73fdaec23ad136a21c544a9eddb354c2c880379c6a30f2c73f84a55afa1bb0ecc2818e8680e62a5819272d85291c8e7ff2ee7c517f4f8cbb289e  0041-arm-dts-amami-add-the-q6asm-frontend-dais.patch
+a391354fdd24eb1a86d8b06145faee398a470304fd62b0eb9bee1374992f1c1bd27661c91b0a6be5637d1a811d95ab399edeb84fbe81dfe0595ea65ac8e7feb2  0042-slimbus-qcom-ngd-add-msm8974.patch
+e2f78f70bb88156df0154592524f97bf9c4ee79c9bc37127fffc930bb3cc8a55cf22ec4074c4f199980425d66b8a720329acecb678a5bb6ca5332ee49a9fd247  0043-arm-dts-msm8974-add-slimbus.patch
+0c24c9fef9b3ae74bae86e213cffde7c955e0bb3ee6ef14fc956b823cef05956a2a7739f959e6e5012bd46e032ffc72b49312c2cfde999b51c0c407ab7595406  0044-arm-dts-amami-add-the-taiko-on-slimbus.patch
+08c9a42cf60454402eb5a88ad357dccc18c7b13293d91f5e5bb7543aba3b68eb0956386f8aa917f2ecb1d3118c79a15c8f30bea463b6c71bcc64f628183a9175  0045-iio-qcom-smgr-init-every-data-type-sample-rate.patch
+d4bf57c4d63e835680bb3d34a5b380c88de484bc834cf9bb9b14de2a3b74589a2a659bb19470136f4bb23676ed4cadd9effa23a3d1eecbc9733fdb0369083699  0047-iio-qcom-smgr-keep-a-second-subscription-for-proximity.patch
+a348c25380ceec8e1e76fd915c08091ea1a976d00e61393435f49bd2d72217ad81df73d0eb0a86f7f79d7308808b288b4a0c6041be66f1b7ea7c513b9fb9911c  0048-iio-qcom-smgr-expose-ambient-light-as-its-own-device.patch
+5acd30f6e0a44f3fc30e799d98a0ba9b4a0d5680558e9874364d650ca5d4a559dd9fa6e1f53734906d72c8328364039bac4db0bf8570646e7aa9fa48db22f669  0049-asoc-wcd9320-add-the-taiko-codec-driver.patch
+97f7befb760d15c6b6de3cd5e2a59df6944ce56661f2f5ab7de424dd2bda505bab509f93450bd71d6a2b3ca8dce4f4765789bb86dab4f65e25429b8cbf38dd61  0050-arm-dts-amami-wire-up-the-taiko-codec.patch
+b6a8e89a81388b884d0e5e10121b2d81f98174c692448e633fef293efb07c51ac87dd65c82b9230e863da876d814779ae73d7e896aec73eb90f6f7e5994701f0  0051-asoc-qcom-accept-an-msm8974-sndcard.patch
+281d9db80ba1e039a50dbefe08aa267b9c9d5ef0d534327e1fc0d1c8fa4bf3b83725a8dedad5db59452982dc0b75db13a79ee032f59d3628333cf8e58b43d75d  0052-asoc-wcd9320-populate-every-slim-rx-mux-control.patch
+c45c56b8e5eee772cab101607678ba2ef6a0d037fea653b0e7fe1ffb642a73dc641bd55e8d89822eccd943ba0577336cc05531815fd3164249af882446616e67  0053-asoc-wcd9320-address-the-interface-device-after-bring-up.patch
+037e2976e318d2b800252b81ee16d6d39af143e82579a85e956df249b79727423fa38e4002623799beefacaedbee01b3847fcd72fd7d8f8ae4dde19c4795b28b  0055-asoc-wcd9320-give-the-interface-regmap-a-max-register.patch
+7f86330b170138a70d564b8ccd97af79bf8943d9b9f98c0eeb63317e65ff1161407721ab08178e2866e9acaf25fbbdb761c17b8c5d9467edddfbd73aa3465daf  0056-asoc-wcd9320-set-up-interrupts-like-downstream.patch
+e89feeeb5ed670253f6aed3d31ab64483db045959a4f3f6823e66d9ea77aca9e1fc0c46c5d321c4827a1dc12e135a9b0363e759f83d993436e2ea10b42a03ab4  0058-asoc-wcd9320-acknowledge-every-interrupt-status-register.patch
+c6f6f1e6a60cc38b9eed85f021de8a7a1273dc7449a4650a0495b96b2ae476e29ad536d7d30437db8d90bb1415d780ce623273dd86299659e97f6ab8cf3cf5c2  0059-asoc-wcd9320-address-registers-from-the-0x800-base.patch
+d4bf3402edee695c0eb3679964655ab16c7323c972e5d2a54717460f192c9240d05609dfb6141e53ddda22bcc2fc36fef3fb703fae844b90e61b3d20329e7010  0060-asoc-wcd9320-deliver-the-port-interrupt-to-the-codec.patch
+e924b1800a92bde56f6655452ae0a683972c2f42e484d507b056bbad506e40953be2a18f250768d26a58b1837e4f189ad04c01cf4e633ad0eb6297eeaf1a0a40  0061-asoc-wcd9320-set-the-slim-rx-port-sample-width-per-port.patch
+dd6e0ab20bb7d5f5c7c354939e37886222ce7b23108e15b51c4c35268440bfc9f86b6d4213e687dcd747249dd76b25ca8f296a174135671d193ce10a848c23ab  0062-asoc-wcd9320-start-the-slim-channel-after-the-rx-chain-is-up.patch
+02b9e893e36fbe224b8990f3cf62b8ffd5d28f4f7cfed416f68298528c464905ef83e9017984820bfff5b75df34176305299283663fff98b318f8e309e306c61  0063-asoc-wcd9320-number-the-rx-ports-from-one-like-downstream.patch
+bc8095b3cf85c536fefa1f316f74807265bda26fafedbe3f9d00e2e787b0b46e6364b5976c4c5e7cb03a02c5a03e134aecc18f9c4afb08df3fd2a95bc840df84  0064-asoc-wcd9320-port-class-h-to-the-taiko.patch
+e294aab1ed1bdae36bcec441e6591b956275f77e9322415243c111b926e584d8b9f47e1a835aaeea94e94f6faf4366f57cc7754be4fda4d765bf70a74a0119d5  0065-asoc-wcd9320-stop-the-remove-path-oopsing.patch
+f3eb349f91ad1736d4bfdff0b02bc722ec1e2f73b735083ecfb58315ad9d2676f1e74eddd2631a465e06e9d8a8c81ff5824b1112186e9596a572050e72788cdd  0066-asoc-wcd9320-defer-the-codec-probe-until-slim-is-up.patch
+a5f3d6869579caa80cd623434a4af927cf41bc24664c3881d5a461c3c5d79ae5402bd1445e8aaf59d281acd081358f36af169f2137226dd0ab1461785f053594  0067-asoc-wcd9320-add-a-slimbus-capture-path.patch
+2bf7e0257adbb24c877147c8d906aa0b28364833439490d84b93fa32d1573e2177bd469b0c47cbea86abe987f253ed5ebd5dfd0d0c0e55415fde57c0ce6dc8b6  0068-arm-dts-amami-add-the-slimbus-capture-dai-links.patch
+f4450f5247a13a4b160af4332bd7eab2084183cfdf5ea5a2697787cbf64d7df4edc248543b2cadaf937434f60e4cacf9b4f61e75a600f3efc0afbf52f5538b44  0069-iio-qcom-spmi-vadc-scale-the-battery-thermistor.patch
+8b11bcff636aeea20aa68301d156470d23127a8078ddff55b6e0176f903e191109a738999d36de1d8585a65c5fb9ed8ff6ba32f3b9da9f15a1a6ee288aa6fcd6  0070-power-smbb-report-battery-temperature.patch
+4d2f5905773915cde7264aa79e0f31fa689e92a2dc1ec05676a37c6476611cbc48ec753bb428b522465007308c74781503deb7c7233c9790fdb7771f2033c512  0071-arm-dts-amami-give-the-charger-the-battery-thermistor.patch
+18f3a66db378c44e1a4f3057f8da7d58532f5b8409c8c894b14d5ef677934a5e44b7155689d9e5aa62fa75ad651fd8ca3543dd45d06543632c70aaa9fc3f4d8a  0072-soc-qcom-spm-add-the-msm8974-l2-saw-and-pc-sequences.patch
+fb3a0f138420f2214bf82a9a68fc70a089c3c66cb7f02eab63ed584c80960b2f270ab42b3472c8142b3ca240e32f8dc403732656e3f92c2e701dd545aeaa9752  0073-arm-dts-msm8974-add-the-mpm-wakeup-controller.patch
+25137a2656d384445d8a88e12a3c7c1846276177b2ad8ef8e4e8e2f261babca20537cd72420d8ad49d4c205cf9ad26428065dc05b9fcb2fe5eb44c30c8fc2667  0074-arm-dts-msm8974-route-tsens-through-the-mpm.patch
+325b90eba5c47eda8ed33ecac421daa417bf182d951338284ec4a273c616312e5be0b1707a21c4c6f939051b97ca20c9583172ec19cdad9d31de7d6550dc7414  0075-arm-dts-msm8974-route-the-spmi-arbiter-through-the-mpm.patch
+eb2c28957b9a8b92a8839f0502f8e2854702c12b4f661de2b67e928e0d8fe4b64a972bb0fdbe530ea0080e40754d4ec8b220d82c6bf201249c6beb41690d2c69  0076-irqchip-qcom-mpm-flush-vmpm-at-system-suspend.patch
+0252a79b7be788e5246291944822fe46b94c92038c80706e49595a6c0ea0f309fb9573169999d9800a1726f922154528ab096d9f77ddb09163cc8319a8e02752  0079-arm-qcom-power-collapse-the-dying-cpu.patch
+047939c002abdd340b4b10a813f51ad7de99b80f85b50601a9409cf7a1f164b76f8c4a18e0060b1f3a32cd97fdd0bd00049883cfb345935d208cc9d52cea5897  0080-arm-qcom-re-release-a-cpu-that-was-powered-down.patch
+eb4f918b184d41736f6403b5be5ba856f140d7b5eb73b703f34f8d5f22394cc631380e6dd12879d2ec01f63228b181d4f79bff34c7b78456f6be659d81b7b953  0081-arm-qcom-let-a-recalled-cpu-leave-the-collapse-loop.patch
+e80b56e3403220953b4607c702d0b64affbae64795f2aada4322bed5bc878c5c639ca089e18e18a6b25c377ce524ff95c9f50f5c57642485754ab6b3e75d90af  0085-media-camss-add-msm8974-support.patch
+32af613dc47b6a3777f32906412c7c70c5c52edfccda49ba53fbb902f63463e2b276596776767d5b6afa2b52faee80745f81ddd9984541658c88540d9ea042cf  0086-arm-dts-msm8974-add-the-camss-node.patch
+fcaa804c0665860a8383f45d345753de9e9745217b64a8efbd058db93537faa52dbbc51649b500c3e65a989004da965f4c82f8bf27965faf96719854143d40d6  0087-arm-dts-amami-enable-the-camss.patch
+39b571e7301fe66647ed8bcef654aa9819a7d2827ad4ecb5298ad286dbf85fd25b71c5e94ac98766aa7b0f5f98b3134bf2cee9b44b5df5673da3ea69ffe453f1  0089-drm-msm-do-not-shmem-truncate-a-vram-object-on-purge.patch
+5796eea285c9c26948e1c672d5b52f1e29e381750b0da8161998661fa59c58f4ce2104020341e67839cac7046a95e226afb40266273b0c3c9e4b8f0214c7f773  0090-clk-qcom-mmcc-msm8974-list-only-mclk-rates-without-mn.patch
+1e3748a0dd8638b0702787dbd16d2981170b78cea6dc302d7ab847e8fc1fa1cbeb6e2c7ea50fe02dd6e6048f35d55c057ae963edb7bdc51755b71ce6afebe06d  0091-media-ccs-ignore-ccs-only-limits-on-smia-sensors.patch
+57ddec076e4d3df8f3a92be725db9b7353344d25c06e72fd51eb2a4bf1887cfe278f478292876803f3db88e1cc67ca1571e1379acab48198ee40eee4a5ba7fdd  0092-media-ccs-initialise-the-binner-and-pixel-array-state.patch
+9fc5d4bf0833a2eff4a689fabe0e9428c1643cde4bffb1c3b6c7a4086b4b81f0b95e61dd03051c0c54b67cb9b115c35e85ea8fd3baf7a4fd1fbf33d92f8b5fc9  0093-media-ccs-keep-the-pixel-array-and-sink-formats-in-the-state.patch
+48796e3251ec8daee533feb903b3537ba8ac3713907f42e7453af1709847b2728556f3aa5318678a9db2d3400c842b73c491e6fe0b4d24694c95975142a77c8c  0094-media-ccs-add-a-lane-speed-quirk-for-sony-imx200.patch
+17b35a2bcfa007503cb0f3fe846362f0b82464264dacc4b4660b9825731eea67ae4f843ee53def662e693a544ea1e90107c0578061003259c75716274dd0da71  0095-media-ccs-start-the-sensor-only-from-the-source-subdev.patch
+62bb2837c84ab1b04075f4a47ce4d7b735c4185b8207719e92442b43e7c308e622e40750b3d17d05845320f9b0e15058d41cf2aeea4362efd05c4976775f8979  0096-media-ccs-give-quirk-register-tables-their-width.patch
+33d0a8c71b69ccf92e17f7ddaf27baa00c6fb5045533847f87cd9d7a22cce83017388e4c409dd275c4a0ad1594db169791dff0c54b52fc92d46cad5b806960e4  9006-debug-camss-allow-arm32-bringup.patch
+bd31e9ca8747d84a4d5b26e6d2fd1c0a522ee79e16cf2fc95ad97ee86c7e6523d949551746587361b70114effb6a6984600980c554e052fecf1987dea6bc25a2  9007-debug-amami-describe-both-cameras.patch
+4c5f60e1629f4a8b84338ecc96ec35cb6588aaef916a2bc4c61dafcece1cc62c9e99e40bf33155188e89e27f60e30f7630e6317facac4aa69cc45a99ea9d0dcb  9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
+380f83fc1d862cd307b03953af29bdfae9cb016e87b46bc907bf4d80c9a34249383d671ff398b5cef7d012a6c793918098513ad023ad87951d9b4a2d00583b70  9009-debug-camss-refuse-non-contiguous-buffers-without-iommu.patch
+6ce5c4a3e245eb267b92c1cd1083dcf37ff12a3d0b3f7b74d54338a86eadeff93ba0e012a0c8084e1814aedec522a3fb12d22372c0dbda86bb60e9c0beeed234  9010-debug-camss-use-contiguous-buffers-without-iommu.patch
+4a4e084ab71d002f65e0912c2cbd1142b36d46150b320620a02886d32e8c9e43e14fd94793cfaeff5ac9321d93da75f9b44f9969f83ef63cdaf8ed3880af4ed7  9012-debug-camss-size-the-msm8974-vfe-clock-for-rdi.patch
+f92ec17f996b2dd4911f7db78edb65165e2d0a8a63d6d0c6c5d3bbec6f85e76553a2480a07c904702311241d8aca27a5263f2bd59e07978d3482c9261bb4142d  9013-debug-ccs-imx200-stock-register-tables.patch
+bc846a809fa4aac7142d6b242f602e436109287c0176a3df9d3d6f2711d6d8d8c2d1a15e55c0f80c2dff719484b2d1c5bd3c09799bd91dd9ffd5a95e4795b0cf  9000-debug-regmap-allow-write-debugfs.patch
+ef932ace6d9144afd9cb89d97895a0a448f8e09d666b214ffdf87fb6b3e7d4d3874956c62431483daff46b0bce41682a8f69311c1446209e14a980c2d82bf271  9001-debug-sns-reg-extra-group.patch
+c5c81ae047103cff73fc74aee1bd27a5a212f3af60c98e6aece8867995325d3c3194c66ef44ddc0dd55620e4286b3744a99e5dbe645c7b20bfe227e23ee8864b  9002-debug-scan-offload-ie-trim.patch
+999e3e0777b8dffc0e0d20b214c8217dab577a31753b6a29af2fae57293693196e992a905265e35a586a7978c04547aa8c88496dbe6f836b74ed39026eaa5f05  a330_pm4.fw
+a642584990333d62ba6a985eeaddc6898c37a8e80aabb61121f93a90d5076861eb698422101e7b00706b7d3dfc00f9f358ea5e44a70fda7369931eb58b455931  a330_pfp.fw
+"

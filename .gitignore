@@ -5,3 +5,7 @@
 out/
 src/
 __pycache__/
+*.raw
+*.fw
+*.sin
+*.ftf

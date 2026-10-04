@@ -56,3 +56,47 @@ staring at the wire.
 
 Kept because "does the firmware care about the length of this message" is a
 question that will come up again.
+
+## 9003-9005 - GPU, IOMMU and suspend probes
+
+`9003` logs each a3xx GPU init step, `9004` dumps the SMMU context bank state, and
+`9005` dumps the MPM's vMPM enable masks at suspend. Each answered one question in the
+GPU IOMMU and deep suspend work. None of them is in the build.
+
+## 9006 - CAMSS on arm32
+
+`VIDEO_QCOM_CAMSS` depends on `IOMMU_DMA`, which 32-bit ARM cannot select. This drops
+the dependency so the driver can be built for bring-up. Real use wants the CAMSS IOMMU.
+
+## 9007 - describe both cameras
+
+Adds both sensors to amami's device tree as `nokia,smia` (the generic CCS driver), with
+their regulators, MCLKs and reset lines. The rear one is linked to CSIPHY0; the front
+one is left unlinked until its driver quirk exists, because CAMSS waits for every linked
+sensor before registering anything.
+
+## 9008 - imx219 at 19.2 MHz
+
+Lets imx219 accept a 19.2 MHz clock and dump a sensor's ID header and EEPROM. It is how
+both sensors were identified, before they moved to the CCS driver.
+
+## 9009 and 9010 - buffers without an IOMMU
+
+Without an IOMMU the VFE only gets the first segment of a scatter-gather buffer and
+writes the whole frame from there. `9009` refuses such buffers; `9010` switches CAMSS
+to contiguous CMA buffers when there is no IOMMU, which is what makes full-size frames
+work.
+
+## 9012 - CSID and VFE clocks for msm8974
+
+camss sizes the VFE clock for raw dumps as if it moved 64 bits a cycle, and the CSID
+clock from the link frequency alone. On msm8974 both were too low for a four-lane
+RAW10 stream. This raises them while a proper rule is worked out.
+
+## 9013 - the stock IMX200 register tables
+
+Writes the init table and mode-0 tables from the stock firmware's
+`SOI20BS0_IMX200.dat` after power-on. The `imx200_stock` module parameter picks which
+groups to write (1 init, 2 lane setting, 4 the rest of mode 0, 8 sizes, 16 clock
+registers, 32 D-PHY timings). `9` is the combination that gives real frames.
+

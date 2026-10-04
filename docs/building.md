@@ -12,109 +12,20 @@ v26.06 still has it in `device/testing/` with prebuilt armv7 packages.
 
 ## Applying the patches
 
-Drop them into the kernel aport, add each filename to `source=` in the APKBUILD
-and bump `pkgrel`:
+The exact recipe is in `recipe/`: the kernel APKBUILD and config as this port builds
+them. Copy both, plus every patch the APKBUILD's `source=` list names, into the kernel
+aport, then refresh the checksums and build:
 
     P=~/.local/var/pmbootstrap/cache_git/pmaports/device/testing/linux-postmarketos-qcom-msm8974
-    cp patches/*.patch "$P/"
-    $EDITOR "$P/APKBUILD"
+    cp recipe/APKBUILD recipe/config-postmarketos-qcom-msm8974.armv7 "$P/"
+    cp patches/*.patch patches/debug/*.patch "$P/"
     pmbootstrap checksum linux-postmarketos-qcom-msm8974
-    pmbootstrap build linux-postmarketos-qcom-msm8974
+    pmbootstrap build linux-postmarketos-qcom-msm8974 --arch armv7
 
-You also need to add `CONFIG_DRM_PANEL_SONY_AMAMI_NOVATEK=y` to
-`config-postmarketos-qcom-msm8974.armv7` by hand. A new Kconfig symbol defaults
-to `n` and the build won't prompt for it.
-
-The stock config has devfreq switched off entirely, which leaves the GPU with no
-frequency scaling at all -- `msm_devfreq_init` prints `Couldn't initialize GPU
-devfreq` and gives up. DRM_MSM doesn't select the symbol, so it has to be added:
-
-    CONFIG_PM_DEVFREQ=y
-    CONFIG_DEVFREQ_GOV_SIMPLE_ONDEMAND=y
-    CONFIG_DEVFREQ_THERMAL=y
-
-The governor is the one `msm_devfreq_init` asks for by name, so enabling devfreq
-without it gets you no further. `DEVFREQ_THERMAL` is optional and registers the
-GPU as a cooling device. With all three, `/sys/class/devfreq/fdb00000.gpu` turns
-up and the Adreno moves between 27, 200 and 320 MHz.
-
-CPU frequency scaling needs four more, and no others: the prerequisites
-(`QCOM_SMEM`, `NVMEM_QCOM_QFPROM`) are already on.
-
-    CONFIG_QCOM_HFPLL=y
-    CONFIG_KRAIT_CLOCKS=y
-    CONFIG_KRAITCC=y
-    CONFIG_ARM_QCOM_CPUFREQ_NVMEM=y
-
-`KPSS_XCC` is deliberately absent: it only matches `qcom,kpss-acc-v1`, and for
-`qcom,krait-cc-v2` the Krait clock driver builds its own aux clock instead. Expect
-`CPU0 @ 960000 KHz` from `krait-cc` early in the boot, and
-`/sys/devices/system/cpu/cpufreq/policy0` covering all four cores. `scaling_driver`
-reads `cpufreq-dt`, which is correct - `qcom-cpufreq-nvmem` reads the speed bin,
-applies the OPP filter and then registers `cpufreq-dt` to do the actual work.
-
-CPU thermal throttling (`0016`) needs two more, plus two that are only for testing
-it:
-
-    CONFIG_CPU_THERMAL=y
-    CONFIG_CPU_FREQ_THERMAL=y
-    CONFIG_THERMAL_STATISTICS=y
-    CONFIG_THERMAL_EMULATION=y
-
-`CPU_FREQ_THERMAL` defaults to `y` once `CPU_THERMAL` is on, but set it explicitly
-so the config file says what it means. `THERMAL_STATISTICS` adds
-`cooling_device*/stats/`, which is how you tell afterwards whether anything actually
-throttled. `THERMAL_EMULATION` adds `thermal_zone*/emul_temp`, which is the only way
-to reach the 75C trip on a device that peaks at 57C; it also lets root fake a low
-reading and mask the 110C critical trip, so drop it if that matters more than being
-able to test.
-
-With all four on, expect one `cpufreq-cpu0` cooling device with `max_state` 8, and
-each of `thermal_zone5` through `thermal_zone8` (`cpu0`- through `cpu3-thermal`)
-showing a `cdev0` pointing at it with `cdev0_trip_point` 0.
-
-`pstore` is on, and is what makes a hang debuggable at all:
-
-    CONFIG_PSTORE=y
-    CONFIG_PSTORE_RAM=y
-    CONFIG_PSTORE_CONSOLE=y
-    CONFIG_PSTORE_PMSG=y
-
-The device tree already reserved `ramoops@3e8e0000` - 2MB with a 1MB console buffer -
-and nothing was using it. Two things to know when reading a record back:
-`systemd-pstore.service` **moves** the files out of `/sys/fs/pstore` into
-`/var/lib/systemd/pstore/`, so look there; and the buffer survives a panic or a soft
-reboot but **not** a forced power-off, because that loses DRAM. For a hard hang,
-photograph the screen instead - it is a real console and the timestamps are enough to
-date the failure.
-
-The command line to build into the boot image is:
-
-    plymouth.enable=0 msm.vram=192m msm.allow_vram_carveout=1
-    sysctl.kernel.panic_on_rcu_stall=1 panic=10
-    rcupdate.rcu_exp_cpu_stall_timeout=21000
-    pmos_boot_uuid=... pmos_root_uuid=... pmos_rootfsopts=defaults
-
-The RCU parameters turn a wedged core into a panic, a pstore record and an automatic
-reboot instead of a phone that needs its battery pulled. Keep all three together:
-`rcu_exp_cpu_stall_timeout` is in **milliseconds** and defaults to 20, while
-`rcu_cpu_stall_timeout` is in **seconds**, so leaving it out makes the kernel panic on
-the harmless expedited stall this device emits at about 36s of every boot.
-
-`reboot bootloader` does not work here. The `reboot-mode` node exists and
-`syscon-reboot-mode` binds to it, but adding the usual Qualcomm magics at offset
-`0x65c` changed nothing - Sony's S1Boot ignores them. Getting into fastboot still
-means holding Volume Up while plugging the cable in.
-
-The Adreno firmware has to be built into the kernel image rather than loaded from
-`/lib/firmware`, because DRM_MSM probes from the initramfs before the rootfs is
-mounted and only tries once:
-
-    CONFIG_EXTRA_FIRMWARE="qcom/a330_pm4.fw qcom/a330_pfp.fw"
-    CONFIG_EXTRA_FIRMWARE_DIR="firmware"
-
-The blobs come from Alpine's `linux-firmware-qcom`; stage them into
-`firmware/qcom/` in `prepare()`.
+Only the patches named in the APKBUILD are applied; the rest of `patches/` are kept
+for reference (the README explains which). The Adreno 330 firmware (`a330_pm4.fw`,
+`a330_pfp.fw`) comes from linux-firmware and has to sit next to the APKBUILD too,
+because it is built into the image.
 
 ## Installing
 
@@ -123,6 +34,31 @@ The blobs come from Alpine's `linux-firmware-qcom`; stage them into
 Then the rootfs goes on by booting TWRP and dd'ing the image to
 `/dev/block/mmcblk0p25`, and the boot image to `/dev/block/mmcblk0p14` either
 over fastboot or with dd from a running system.
+
+## Flashing notes
+
+The bootloader's fastboot is minimal. It won't take a ~2 GiB image (`data too
+large`) and it rejects sparse images (`Unknown chunk type`), so the rootfs has to
+go on by booting TWRP and dd'ing the combined image to `/dev/block/mmcblk0p25`.
+Boot partition is `mmcblk0p14`, 20 MiB.
+
+Once postmarketOS is up, much the fastest way to iterate is writing boot images
+straight to the boot partition over SSH:
+
+    cat boot.img | ssh user@172.16.42.1 'sudo dd of=/dev/mmcblk0p14 bs=1M'
+
+That is only half an update, though. Not everything is built in: `QCOM_SPMI_VADC`
+and `QCOM_VADC_COMMON` are modules, and modules live on the rootfs, so writing the
+boot partition alone leaves the old ones in place. Worse, vermagic only encodes
+the version and SMP/PREEMPT, not the build number, so stale modules load without a
+word of complaint. A patch touching both a built-in and a module then looks half
+applied, which is a genuinely confusing thing to debug. Install the package as
+well:
+
+    scp linux-...apk user@172.16.42.1:/tmp/
+    ssh user@172.16.42.1 'sudo apk add --allow-untrusted /tmp/linux-...apk'
+
+`systemctl reboot bootloader` doesn't work on this device, in case you try it.
 
 ## Iterating on the kernel
 
@@ -145,7 +81,7 @@ msm.allow_vram_carveout=1` and build the image yourself.
 
 ## Afterwards
 
-WiFi needs one setting, explained in the README:
+WiFi needs one setting, explained in `notes.md`:
 
     # /etc/NetworkManager/conf.d/98-wifi-powersave.conf
     [connection]
@@ -168,12 +104,12 @@ default controller at all:
 
 It needs nothing but python3 and `rfkill`, both already present. Check it with
 `bluetoothctl show`, which should report the controller powered on with a
-`BC:6E:64:...` address. The README explains where that address comes from.
+`BC:6E:64:...` address. `notes.md` explains where that address comes from.
 
 The same script will give WiFi its factory address, on one named connection so
 that other networks keep postmarketOS's randomised default:
 
-    sudo amami-factory-macs wlan "Mahan"
+    sudo amami-factory-macs wlan "<connection name>"
 
 That one is a one-shot, not a service; it edits the connection and stays put.
 Expect a new DHCP lease afterwards, because it is a different MAC.
@@ -193,8 +129,20 @@ The gyroscope, magnetometer and proximity sensor hang off the DSP rather than
 any I2C bus the application processor can see, so they need two files and no
 patches at all.
 
-First the DSP firmware, out of the LineageOS 18.1 zip (see the README for how to
-unpack `system.new.dat.br`):
+First the DSP firmware, out of the LineageOS 18.1 zip. Its system image is a
+brotli-compressed sparse transfer list, which `sdat2img.py` (github.com/xpirt/sdat2img)
+turns into ext4, and
+`debugfs` reads that without mounting or root. Work on a real disk, not `/tmp`: the
+image is 2.3 GiB.
+
+    unzip -o lineage-18.1-*.zip system.new.dat.br system.transfer.list -d work/
+    cd work
+    brotli -d -f system.new.dat.br -o system.new.dat
+    python3 sdat2img.py system.transfer.list system.new.dat system.img
+    debugfs -R "ls -l /etc/firmware" system.img
+    debugfs -R "dump /etc/firmware/adsp.mdt adsp.mdt" system.img    # and adsp.b00-b11
+
+Then install it:
 
     sudo install -m 644 adsp.mdt adsp.b0? adsp.b1? /lib/firmware/
 

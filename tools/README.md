@@ -130,3 +130,34 @@ It also reads `ack_nak` (TLV `0x11`) from the buffering response, which
 `qcom_smgr_set_buffering()` ignores - it only checks `result`. Every subscription
 to sensor `0x28` is NAKed while the accelerometer is ACKed, and the driver cannot
 see the difference.
+
+`unsin.py` unpacks a Sony SIN v3 file (from inside the stock FTF) into a raw partition
+image. The payload is a map of chunks with source and destination offsets, so the output
+is a sparse image; `system.sin` becomes an ext4 image that `debugfs -R "rdump / dir"`
+reads without mounting:
+
+    unzip -p D5503_*.zip '*.ftf' > fw.ftf
+    unzip -p fw.ftf system.sin > system.sin
+    tools/unsin.py system.sin system.img
+
+`semcdat.py` dumps the register tables in a stock camera module file, such as
+`/system/vendor/camera/SOI20BS0_IMX200.dat`. Each entry is a 32-bit address, a 32-bit
+value and a constant `0xffff0000`; runs of entries are tables (init, one per sensor
+mode, streaming, test pattern). This is where the IMX200's working configuration came
+from.
+
+`camera/` holds the scripts used to bring up the rear camera:
+
+- `capture.sh` streams RAW10 frames from the IMX200 with the working settings. Run it
+  as root on the phone, once per boot.
+- `setsettle.py` sets the CSIPHY settle count as soon as camss powers the PHY. It waits
+  for the clock first, because touching those registers with the clock off can hang the
+  bus.
+- `settle-sweep.py` steps through settle values during a stream and reports PHY errors,
+  VFE interrupts and the CSID packet and ECC counters for each.
+- `sensor-reg.sh` reads or writes sensor registers over `/dev/i2c-3` during a stream
+  (needs i2c-tools). Reading the sensor back is how exposure and gain were ruled out
+  when the picture was black.
+- `raw10.py` runs on the host: per-frame statistics, or a quick preview PNG of the last
+  frame.
+
