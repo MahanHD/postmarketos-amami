@@ -10,13 +10,10 @@ bugs in one sitting. Prefer instrumenting the hardware over rebuilding it.
 
 ## Start here
 
-**Device state as of 2026-10-04 (morning): r178 is flashed and installed, and the recipe agrees.**
-`uname -v` prints `#179`. r178 is r161 plus the CCS work - `0091`-`0095` and `debug/9012` -
-with `CONFIG_VIDEO_CCS=m`, and `debug/9007` binds both sensors to the generic CCS driver
-(`nokia,smia`). The rear IMX200 probes as "imx200", streams RAW10 at a 288 MHz link with a
-clean PHY once the settle count is 9, and **the pixel data is real** (test-pattern bars decode
-correctly) - but frames only reach memory when the link is *noisy*; on a clean link the VFE
-never sees a start of frame (Camera, "The rear sensor through CCS"). On the phone,
+**Device state as of 2026-10-04 (evening): r181's modules are installed on r178's boot image**
+(`uname -v` `#179`; the camera is all modules, so the boot image did not need reflashing).
+r181 adds `0096` and `debug/9013` to r178. **The rear camera has produced its first real
+photo** - see Camera, "First image". On the phone,
 `/etc/modprobe.d/camss-bringup.conf` blacklists `qcom_camss`, `i2c_qcom_cci`, `imx219` and `ccs`
 (each with `install ... /bin/false`), so nothing camera-related loads at boot. Load by hand
 with `modprobe --ignore-install <module>`. `dtc` is installed on the phone (the host has none),
@@ -44,7 +41,7 @@ and `/lib/modules` agree and `uname -v` prints `#135`. r134 is `0072`-`0077` plu
 resumes on all four cores** - though it does not yet save power, because the collapse
 itself is still unwritten. `mem_sleep` reads `[s2idle] deep`, s2idle by default. Images kept in `boot-images/`, newest first:
 
-        r178  (current)  c93cd24b55bb9ef4074f911c1147371f   0094 with vt lanes = 4, 9011 out, + debug/9012
+        r178  (boot)     c93cd24b55bb9ef4074f911c1147371f   0094 with vt lanes = 4, 9011 out, + debug/9012
         r171             e829711c11c0fc0eb098d9f6644d683c   + 0094 IMX200 quirk, 0095, debug/9011
         r171-swap        b7bc347f6667864a66c928a8490e736a   test only: CSIPHY lanes 0 and 4 swapped
         r170-1lane       cff4cf465a2ce8ed205eb43e15565c98   test only: sensor on one lane
@@ -3397,6 +3394,51 @@ timeout", and once reset the phone outright. Reboot between tests. The scripts u
 and `ttpg.sh` for the TPG) sit in `/home/mahan` on the phone. **Never read CSIPHY/CSID
 registers through `/dev/mem` while their clocks are off** - `setsettle.py` waits for
 `camss_csi0phy_clk` to be enabled first; `rd.py` once read 0xff from a powered-down PHY.
+
+### First image, 2026-10-04 evening: the stock firmware's init table was the missing piece
+
+The stock FTF (`Android 5 (Stock Firmware)/D5503_14.6.A.1.236_*.zip`) holds the camera
+configuration in `/system/vendor/camera/SOI20BS0_IMX200.dat` (and `SEM02BN1_IMX132.dat` for
+the front). `tools/unsin.py` unpacks `system.sin` (SIN v3: an MMCF map of ADDR records) to an
+ext4 image that `debugfs -R "rdump / dir"` reads without mounting; `tools/semcdat.py` dumps the
+module file's register tables - 12-byte entries `u32 addr, u32 value, u32 0xffff0000`:
+
+- an **87-register init table** of Sony manufacturer registers (0x3xxx/0x5xxx/0x9xxx) plus
+  0x0105=01, 0x0110=00, 0x0220=01 - CCS writes none of it;
+- **18 per-mode tables** of 130 registers (mode 0 is 5248x3936 RAW10). They set the lane
+  count at **0x0108=03** (the older Sony location; stock never writes 0x0114), manual D-PHY
+  timings at 0x0830-0x0847, and more manufacturer registers - but **no PLL registers**;
+- small tables for stream on/off, soft reset, orientation (0x0101=03) and test pattern
+  (0x0601). The header before the tables holds per-mode geometry (crop, output size, binning,
+  frame length 3992, line length 5904 in every mode).
+
+`debug/9013` writes them from the IMX200 quirk's `post_poweron`, selected by a debug module
+parameter `imx200_stock` (1 init table, 2 the 0x0108 lane write, 4 the rest of mode 0). That
+needed **`0096`**: `ccs_write_addr_8s()` - the helper every CCS quirk table goes through - passed
+bare 16-bit addresses to `ccs_write_addr()`, which since the CCI conversion wants the width
+encoded, so every quirk table write failed with -EINVAL ("invalid reg-width 0").
+
+**Init table only (`imx200_stock=1`), RAW10, 288 MHz link, CSIPHY settle 3: clean frames.**
+The settle sweep with the init table loaded: at 3 the VFE gets ~15k interrupts/s and the CSID
+ECC counter does not move; at 7 and 9 the link is just as clean but the VFE gets nothing; at
+11 (camss's own value) sync fails. The reading is that the frame-start short packets come in
+bursts whose HS-zero is shorter than the line bursts', and only a short settle catches them.
+The sensor's colour bars came back perfect - the autocorrelation period is exactly 13120 bytes,
+two 6560-byte lines - and with the test pattern off, exposure 3000 lines and analogue gain 128,
+**a real photo of the room**: dim, raw (no lens shading), and wrapped about two thirds down
+(the frame in the buffer starts mid-image, with a horizontal offset).
+
+All of mode 0 on top of the init table (`imx200_stock=7`) moves the sync window down to settle
+1 with ECC errors - those tables change the D-PHY timing, maybe the rate - so they stay off for
+now. The `pll` array in the stock DT (600, 318, ... per mode) is the per-mode lane rate; where
+stock programs the PLL itself is still unknown (not in the .dat tables).
+
+**The phone hung once** (USB gadget dead, no oops, needed Power+VolUp) during a settle sweep
+with the init table loaded. A gentler sweep (3-11) on the next boot was fine.
+
+Next: find why the frame lands wrapped (frame start vs. the VFE write start, maybe the first
+frames after start), then fold the init table into the quirk properly, make camss's settle
+right for this sensor, and take a correctly exposed photo. Then the IMX132 the same way.
 
 ## Parked patches
 

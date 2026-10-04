@@ -1,0 +1,11 @@
+--- a/drivers/media/i2c/ccs/ccs-quirk.c
++++ b/drivers/media/i2c/ccs/ccs-quirk.c
+@@ -21,7 +21,7 @@
+ 	int rval;
+ 
+ 	for (; len > 0; len--, regs++) {
+-		rval = ccs_write_addr(sensor, regs->reg, regs->val);
++		rval = ccs_write_addr(sensor, CCI_REG8(regs->reg), regs->val);
+ 		if (rval < 0) {
+ 			dev_err(&client->dev,
+ 				"error %d writing reg 0x%4.4x, val 0x%2.2x",
