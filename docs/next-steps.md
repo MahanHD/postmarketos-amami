@@ -3440,6 +3440,34 @@ Next: find why the frame lands wrapped (frame start vs. the VFE write start, may
 frames after start), then fold the init table into the quirk properly, make camss's settle
 right for this sensor, and take a correctly exposed photo. Then the IMX132 the same way.
 
+### Second image, 2026-10-04 late: aligned, upright, and seeing the scene
+
+Three more findings, each on the device, with `debug/9013`'s `imx200_stock` bits now split
+into groups (1 init, 2 lane write, 4 mode-0 rest, 8 mode-0 sizes, 16 mode-0 clock regs
+0x3004/0x3005/0x9229, 32 mode-0 D-PHY timings):
+
+- **The ribbon shift was missed frame starts, and settle 2 fixes it.** At settle 3 every
+  other frame started at the wrong place (the fade test pattern shows it: even frames have the
+  bar edge at x = 1311 from row 0, odd ones are offset). At settle 2 and at 1, 8 of 8 frames
+  are aligned. (The pattern's own gradient repeats every 2048 rows - that is not a frame edge.)
+- **The pixel array read black until the stock size registers went in.** With the init table
+  alone the image sat at the black level (64) however long the exposure - the sensor was
+  reading somewhere dark. Mode 0's size/crop registers (0x13c0-0x13c4, 0xad34-0xad3f,
+  0x9030-0x9037; `imx200_stock=9`) put real light on it: a full, aligned frame of the desk.
+- **Read the sensor back before believing a register.** `i2ctransfer -f -y 3` on the phone
+  (i2c-tools installed; /dev/i2c-3 is CCI master 0) reads the IMX200 mid-stream. It showed
+  exposure and gain set as asked, 0x0108 already 3 (4 lanes) by default, 0x0114 reading 0, and
+  CCS's PLL actually at 19.2 / 6 x 108 = 345.6 MHz.
+- The mode-0 clock group (16) changes the sensor's lane timing so that no settle value syncs
+  cleanly; it stays off. The stock kernel (unpacked: SIN -> ELF -> LZO zImage) only does power,
+  EEPROM and module info - sensor registers come from Sony's userspace, so where stock sets the
+  PLL is still open.
+
+Working recipe now: `imx200_stock=9`, RAW10, 288 MHz, settle 2, exposure up to 3976 lines,
+analogue gain e.g. 128; rotate the result 90 degrees clockwise. Still to do: lens shading and
+colour, brightness/exposure units, folding all this into real patches (init + size tables in
+the quirk, settle in camss), then the IMX132.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

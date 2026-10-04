@@ -1,6 +1,6 @@
 --- a/drivers/media/i2c/ccs/ccs-quirk.c
 +++ b/drivers/media/i2c/ccs/ccs-quirk.c
-@@ -237,6 +237,91 @@
+@@ -237,6 +237,101 @@
  	return 0;
  }
  
@@ -13,7 +13,7 @@
 + */
 +static unsigned int imx200_stock = 7;
 +module_param(imx200_stock, uint, 0644);
-+MODULE_PARM_DESC(imx200_stock, "debug: stock tables to write (1 init, 2 lane mode, 4 mode 0)");
++MODULE_PARM_DESC(imx200_stock, "debug: stock tables (1 init, 2 lanes, 4 mode 0 rest, 8 sizes, 16 clock, 32 d-phy)");
 +
 +static int imx200_post_poweron(struct ccs_sensor *sensor)
 +{
@@ -78,10 +78,20 @@
 +		return rval;
 +
 +	for (i = 0; i < ARRAY_SIZE(mode0) && !rval; i++) {
-+		bool lanes = mode0[i].reg == 0x0108;
++		u16 r = mode0[i].reg;
++		bool lanes = r == 0x0108;
++		bool size = (r >= 0x13c0 && r <= 0x13c4) ||
++			    (r >= 0xad34 && r <= 0xad3f) ||
++			    (r >= 0x9030 && r <= 0x9037);
++
++		bool clk = r == 0x3004 || r == 0x3005 || r == 0x9229;
++		bool dphy = r >= 0x0830 && r <= 0x0847;
 +
 +		if ((lanes && (imx200_stock & 2)) ||
-+		    (!lanes && (imx200_stock & 4)))
++		    (size && (imx200_stock & 8)) ||
++		    (clk && (imx200_stock & 16)) ||
++		    (dphy && (imx200_stock & 32)) ||
++		    (!lanes && !size && !clk && !dphy && (imx200_stock & 4)))
 +			rval = ccs_write_addr_8s(sensor, &mode0[i], 1);
 +	}
 +
