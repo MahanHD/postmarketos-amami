@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=184
+pkgrel=190
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -109,12 +109,13 @@ source="
 	0096-media-ccs-give-quirk-register-tables-their-width.patch
 	0097-media-camss-let-the-board-set-the-csiphy-hs-settle-time.patch
 	0098-media-ccs-write-the-imx200-stock-init-and-window-tables.patch
+	0099-media-camss-size-the-msm8974-csid-and-vfe-clocks-for-16-bit-paths.patch
+	0100-arm-dts-amami-add-the-rear-camera.patch
 	9006-debug-camss-allow-arm32-bringup.patch
-	9007-debug-amami-describe-both-cameras.patch
+	9007-debug-amami-describe-the-front-camera.patch
 	9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
 	9009-debug-camss-refuse-non-contiguous-buffers-without-iommu.patch
 	9010-debug-camss-use-contiguous-buffers-without-iommu.patch
-	9012-debug-camss-size-the-msm8974-vfe-clock-for-rdi.patch
 	9000-debug-regmap-allow-write-debugfs.patch
 	9001-debug-sns-reg-extra-group.patch
 	9002-debug-scan-offload-ie-trim.patch
@@ -231,12 +232,13 @@ fcaa804c0665860a8383f45d345753de9e9745217b64a8efbd058db93537faa52dbbc51649b500c3
 62bb2837c84ab1b04075f4a47ce4d7b735c4185b8207719e92442b43e7c308e622e40750b3d17d05845320f9b0e15058d41cf2aeea4362efd05c4976775f8979  0096-media-ccs-give-quirk-register-tables-their-width.patch
 3272f4e2450a1cda02ed465a351388e850be0493abcc092e9630a139d40e240272eac0df5e3eeb0b5eda27f8cbc6acdd06d96ff95fffdcdaf8729297048bb30b  0097-media-camss-let-the-board-set-the-csiphy-hs-settle-time.patch
 4a93c65b8e224fe715bb078f969425a67f9f921dbb135a29f6949c3897384289ca961ae24c173fbe0cdafd8b62d99f6836ba54ebadd8a8ce2a34a60a3e862c77  0098-media-ccs-write-the-imx200-stock-init-and-window-tables.patch
+cfc3e9f7ad56d3af5f44b778f968f7df1361d7e7a0fa84555f712d716773a00ed084c952ebc60e53c114d53a3e93834fbdc9860d9804182aa1c3f68b500a3da4  0099-media-camss-size-the-msm8974-csid-and-vfe-clocks-for-16-bit-paths.patch
+138882dd979b7227def914bd80e9dd42e77442c6142983183466a76f8892bd543d065b783db32e767e9726bbee9b99cbae18ec39674490200047c497ce87bc1d  0100-arm-dts-amami-add-the-rear-camera.patch
 33d0a8c71b69ccf92e17f7ddaf27baa00c6fb5045533847f87cd9d7a22cce83017388e4c409dd275c4a0ad1594db169791dff0c54b52fc92d46cad5b806960e4  9006-debug-camss-allow-arm32-bringup.patch
-d7c6a7e31eb55c8166780b476e197cb2c90371b95e06f0fa352d7d8e60dd9f5b6b1cbedf95517aa3502d2413ad7292f294afde7914112621de3116b78f0f3497  9007-debug-amami-describe-both-cameras.patch
+5ca89212cb516c0b6319e8bdfc2aecdce9f1fe5dd9cb8f1d04175530268990d87a7e8a5f38db5a623dd549012dc7d55c61bc87cab792b6bdb24279567a2dc469  9007-debug-amami-describe-the-front-camera.patch
 4c5f60e1629f4a8b84338ecc96ec35cb6588aaef916a2bc4c61dafcece1cc62c9e99e40bf33155188e89e27f60e30f7630e6317facac4aa69cc45a99ea9d0dcb  9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
 380f83fc1d862cd307b03953af29bdfae9cb016e87b46bc907bf4d80c9a34249383d671ff398b5cef7d012a6c793918098513ad023ad87951d9b4a2d00583b70  9009-debug-camss-refuse-non-contiguous-buffers-without-iommu.patch
 6ce5c4a3e245eb267b92c1cd1083dcf37ff12a3d0b3f7b74d54338a86eadeff93ba0e012a0c8084e1814aedec522a3fb12d22372c0dbda86bb60e9c0beeed234  9010-debug-camss-use-contiguous-buffers-without-iommu.patch
-4a4e084ab71d002f65e0912c2cbd1142b36d46150b320620a02886d32e8c9e43e14fd94793cfaeff5ac9321d93da75f9b44f9969f83ef63cdaf8ed3880af4ed7  9012-debug-camss-size-the-msm8974-vfe-clock-for-rdi.patch
 bc846a809fa4aac7142d6b242f602e436109287c0176a3df9d3d6f2711d6d8d8c2d1a15e55c0f80c2dff719484b2d1c5bd3c09799bd91dd9ffd5a95e4795b0cf  9000-debug-regmap-allow-write-debugfs.patch
 ef932ace6d9144afd9cb89d97895a0a448f8e09d666b214ffdf87fb6b3e7d4d3874956c62431483daff46b0bce41682a8f69311c1446209e14a980c2d82bf271  9001-debug-sns-reg-extra-group.patch
 c5c81ae047103cff73fc74aee1bd27a5a212f3af60c98e6aece8867995325d3c3194c66ef44ddc0dd55620e4286b3744a99e5dbe645c7b20bfe227e23ee8864b  9002-debug-scan-offload-ie-trim.patch

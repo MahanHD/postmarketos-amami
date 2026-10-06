@@ -5,8 +5,8 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-07)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 184, boot image
-included (`uname -v` prints `#185`). Install the package for module changes and
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 190, boot image
+included (`uname -v` prints `#191`). Install the package for module changes and
 rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
 device tree.
 
@@ -23,19 +23,15 @@ so nothing camera-related loads at boot. `tools/camera/capture.sh` loads them wi
 
 ## Camera, rear (IMX200)
 
-1. **Finish turning debug patches into real ones.** Done: the stock tables are in the
-   IMX200 quirk (`0098`) and the settle time comes from the device tree (`0097`).
-   Left: the CSID and VFE clock sizing for msm8974 (`debug/9012`) needs a proper rule,
-   and the camera nodes (`debug/9007`) should become a real device-tree patch.
+1. **Lens shading and colour.** Stock's per-module tuning sits in
+   `vendor/camera/SOI20BS0/`. Until then every frame shows coloured blotches.
 2. **Find where stock sets the PLL.** Not in the `.dat` tables and not in the stock
    kernel; it is in Sony's userspace camera stack (`libcammw`, `libcacao_*`,
    `libexcal_*`). Matching stock's lane rate would let the mode-0 clock and D-PHY
    registers go in too.
-3. **Lens shading and colour.** Stock's per-module tuning sits in
-   `vendor/camera/SOI20BS0/`. Until then every frame shows coloured blotches.
-4. **Stream reliability.** A second stream after a failed one wedges camss; one
+3. **Stream reliability.** A second stream after a failed one wedges camss; one
    stream per boot is the rule for now.
-5. **Autofocus (BU64296G)** and the EEPROM's calibration data.
+4. **Autofocus (BU64296G)** and the EEPROM's calibration data.
 
 ## Camera, front (IMX132)
 

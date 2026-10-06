@@ -1,0 +1,96 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -376,3 +376,93 @@
+ 
+ 	status = "okay";
+ };
++
++&rpm_requests {
++	regulators-1 {
++		/* Camera I/O rail: a 1.8 V switch off s3 */
++		pm8941_lvs2: lvs2 {};
++	};
++};
++
++&cci {
++	status = "okay";
++};
++
++&cci_i2c0 {
++	/* Rear camera: Sony IMX200 in module SOI20BS0, a SMIA++ sensor */
++	camera@10 {
++		compatible = "nokia,smia";
++		reg = <0x10>;
++
++		/*
++		 * The MCLK RCGs have no M/N counter, so 24 MHz is not available;
++		 * run the sensor from 19.2 MHz straight off XO.
++		 */
++		clocks = <&mmcc CAMSS_MCLK0_CLK>;
++		assigned-clocks = <&mmcc CAMSS_MCLK0_CLK>;
++		assigned-clock-rates = <19200000>;
++		clock-frequency = <19200000>;
++
++		vana-supply = <&pm8941_l17>;
++		vio-supply = <&pm8941_lvs2>;
++		vcore-supply = <&pm8941_l3>;
++
++		/* XCLR, active low */
++		reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&cam_rear_default>;
++
++		port {
++			rear_cam_ep: endpoint {
++				data-lanes = <1 2 3 4>;
++				link-frequencies = /bits/ 64 <288000000 312000000 384000000
++							      416000000 456000000 480000000>;
++				remote-endpoint = <&csiphy0_ep>;
++			};
++		};
++	};
++};
++
++&camss {
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		port@0 {
++			reg = <0>;
++
++			/* Data on CSIPHY lanes 0, 2, 3 and 4, clock on 1 */
++			csiphy0_ep: endpoint {
++				clock-lanes = <1>;
++				data-lanes = <0 2 3 4>;
++				/*
++				 * The IMX200's frame-start bursts are only caught
++				 * with a settle of about 30 ns, far below what the
++				 * D-PHY formula gives.
++				 */
++				qcom,hs-settle-ns = <30>;
++				remote-endpoint = <&rear_cam_ep>;
++			};
++		};
++	};
++};
++
++&tlmm {
++	cam_rear_default: cam-rear-default-state {
++		mclk-pins {
++			pins = "gpio15";
++			function = "cam_mclk0";
++			drive-strength = <2>;
++			bias-disable;
++		};
++
++		reset-pins {
++			pins = "gpio94";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-disable;
++		};
++	};
++};
++

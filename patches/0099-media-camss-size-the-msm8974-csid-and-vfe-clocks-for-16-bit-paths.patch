@@ -1,45 +1,41 @@
 --- a/drivers/media/platform/qcom/camss/camss-csid.c
 +++ b/drivers/media/platform/qcom/camss/camss-csid.c
-@@ -576,6 +576,13 @@
- 			if (min_rate == 0)
- 				j = clock->nfreqs - 1;
+@@ -559,6 +559,13 @@
+ 			u64 min_rate = link_freq / 4;
+ 			long rate;
  
 +			/*
-+			 * debug: at 100 MHz msm8974's CSID/ISPIF keep only
-+			 * ~58% of a 4-lane 576 Mbit/s RAW10 line
++			 * msm8974's CSID moves 16 bits a clock: below that a
++			 * four-lane stream comes through corrupted.
 +			 */
 +			if (csid->camss->res->version == CAMSS_8x74)
-+				j = clock->nfreqs - 1;
++				min_rate = div_u64(link_freq * csid->phy.lane_cnt, 8);
 +
- 			rate = clk_round_rate(clock->clk, clock->freq[j]);
- 			if (rate < 0) {
- 				dev_err(dev, "clk round rate failed: %ld\n",
+ 			camss_add_clock_margin(&min_rate);
+ 
+ 			for (j = 0; j < clock->nfreqs; j++)
 --- a/drivers/media/platform/qcom/camss/camss-vfe.c
 +++ b/drivers/media/platform/qcom/camss/camss-vfe.c
-@@ -954,6 +954,14 @@
+@@ -954,6 +954,12 @@
  								   l->nformats,
  								   l->fmt[MSM_VFE_PAD_SINK].code);
  					tmp = pixel_clock[j] * bpp / 64;
 +					/*
-+					 * debug: msm8974's VFE drops ~42% of a
-+					 * 4-lane RAW10 line at the rate the
-+					 * 64-bit assumption gives; size it as
-+					 * if the RDI path moved 16 bits a cycle
++					 * msm8974's raw dump path writes 16 bits a
++					 * clock; at the 64-bit rate it drops frames.
 +					 */
 +					if (vfe->camss->res->version == CAMSS_8x74)
 +						tmp = pixel_clock[j] * bpp / 16;
  				}
  
  				if (min_rate < tmp)
-@@ -1035,6 +1043,14 @@
+@@ -1035,6 +1041,12 @@
  								   l->nformats,
  								   l->fmt[MSM_VFE_PAD_SINK].code);
  					tmp = pixel_clock[j] * bpp / 64;
 +					/*
-+					 * debug: msm8974's VFE drops ~42% of a
-+					 * 4-lane RAW10 line at the rate the
-+					 * 64-bit assumption gives; size it as
-+					 * if the RDI path moved 16 bits a cycle
++					 * msm8974's raw dump path writes 16 bits a
++					 * clock; at the 64-bit rate it drops frames.
 +					 */
 +					if (vfe->camss->res->version == CAMSS_8x74)
 +						tmp = pixel_clock[j] * bpp / 16;

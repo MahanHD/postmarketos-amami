@@ -1236,6 +1236,13 @@ which arm32 cannot select, so `debug/9006` drops that for bring-up, and without 
 IOMMU the VFE needs contiguous buffers (`debug/9010`, CMA). The media config must be
 modular; built in, it stops the kernel booting.
 
+camss sizes its clocks too low for msm8974. The CSID rule assumes four bytes a
+clock and the VFE raw-dump rule eight, which gives 100 and 50 MHz for a four-lane
+576 Mbit/s stream. Built separately, each half failed: a fast VFE behind a 100 MHz
+CSID still corrupted every frame, a 200 MHz CSID in front of a 50 or 80 MHz VFE
+delivered no frames at all, and only both at 200 MHz worked. Both blocks behave as
+16-bit paths, which is what `0099` sizes them for.
+
 **The sensors**, read off the chips and the module EEPROMs rather than guessed:
 
     rear   Sony IMX200  module SOI20BS0  CCI 0, 0x10  CSIPHY0, 4 lanes  AF: BU64296G

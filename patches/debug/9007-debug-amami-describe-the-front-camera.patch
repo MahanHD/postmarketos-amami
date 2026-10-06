@@ -1,0 +1,57 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -466,3 +466,54 @@
+ 	};
+ };
+ 
++&cci_i2c1 {
++	/*
++	 * Front camera: Sony IMX132 in module SEM02BN1, SMIA 1.0, two lanes on
++	 * CSIPHY2. Not linked into the camss graph yet: its CCS PLL limits are
++	 * broken and it does not bind, and camss waits for every linked sensor
++	 * before it registers anything.
++	 */
++	camera@36 {
++		compatible = "nokia,smia";
++		reg = <0x36>;
++
++		clocks = <&mmcc CAMSS_MCLK2_CLK>;
++		assigned-clocks = <&mmcc CAMSS_MCLK2_CLK>;
++		assigned-clock-rates = <19200000>;
++		clock-frequency = <19200000>;
++
++		vana-supply = <&pm8941_l17>;
++		vio-supply = <&pm8941_lvs2>;
++		vcore-supply = <&pm8941_l3>;
++
++		reset-gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&cam_front_default>;
++
++		port {
++			front_cam_ep: endpoint {
++				data-lanes = <1 2>;
++				link-frequencies = /bits/ 64 <96000000 104000000 192000000 208000000>;
++			};
++		};
++	};
++};
++
++&tlmm {
++	cam_front_default: cam-front-default-state {
++		mclk-pins {
++			pins = "gpio17";
++			function = "cam_mclk2";
++			drive-strength = <2>;
++			bias-disable;
++		};
++
++		reset-pins {
++			pins = "gpio18";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-disable;
++		};
++	};
++};

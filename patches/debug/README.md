@@ -68,12 +68,12 @@ GPU IOMMU and deep suspend work. None of them is in the build.
 `VIDEO_QCOM_CAMSS` depends on `IOMMU_DMA`, which 32-bit ARM cannot select. This drops
 the dependency so the driver can be built for bring-up. Real use wants the CAMSS IOMMU.
 
-## 9007 - describe both cameras
+## 9007 - describe the front camera
 
-Adds both sensors to amami's device tree as `nokia,smia` (the generic CCS driver), with
-their regulators, MCLKs and reset lines. The rear one is linked to CSIPHY0; the front
-one is left unlinked until its driver quirk exists, because CAMSS waits for every linked
-sensor before registering anything.
+Adds the front IMX132 to amami's device tree as `nokia,smia`, with its MCLK, rails and
+reset line. The rear camera is a real patch now (`0100`). The front one stays here,
+unlinked from CAMSS, until its driver quirk exists, because CAMSS waits for every
+linked sensor before registering anything.
 
 ## 9008 - imx219 at 19.2 MHz
 
@@ -86,12 +86,6 @@ Without an IOMMU the VFE only gets the first segment of a scatter-gather buffer 
 writes the whole frame from there. `9009` refuses such buffers; `9010` switches CAMSS
 to contiguous CMA buffers when there is no IOMMU, which is what makes full-size frames
 work.
-
-## 9012 - CSID and VFE clocks for msm8974
-
-camss sizes the VFE clock for raw dumps as if it moved 64 bits a cycle, and the CSID
-clock from the link frequency alone. On msm8974 both were too low for a four-lane
-RAW10 stream. This raises them while a proper rule is worked out.
 
 ## 9013 - the stock IMX200 register tables
 
