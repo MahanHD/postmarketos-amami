@@ -3,12 +3,12 @@
 Where the port stands and what comes next, in order. The history behind every item
 is in `worklog.md`; the settled findings are in `notes.md`.
 
-## Current state (2026-10-04)
+## Current state (2026-10-07)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 183, with the boot
-image from pkgrel 178 (`uname -v` prints `#179`). Everything after 178 touched only
-modules, so the boot image did not need reflashing; install the package for module
-changes and rebuild the boot image with `tools/mkbootimg.py` for anything built in.
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 184, boot image
+included (`uname -v` prints `#185`). Install the package for module changes and
+rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
+device tree.
 
 Working: display, touch, GPU, WiFi, Bluetooth, charging and battery reporting, all
 sensors, the notification LED, CPU and GPU frequency scaling with thermal limits,
@@ -23,11 +23,10 @@ so nothing camera-related loads at boot. `tools/camera/capture.sh` loads them wi
 
 ## Camera, rear (IMX200)
 
-1. **Turn the debug patches into real ones.** The init table and mode-0 size tables
-   belong in the IMX200 quirk without a module parameter (`debug/9013`); the CSID and
-   VFE clock sizing for msm8974 (`debug/9012`) needs a proper rule; and camss should
-   compute a settle count that catches frame starts (it computes 11, the sensor needs
-   2) instead of `setsettle.py` poking it at stream start.
+1. **Finish turning debug patches into real ones.** Done: the stock tables are in the
+   IMX200 quirk (`0098`) and the settle time comes from the device tree (`0097`).
+   Left: the CSID and VFE clock sizing for msm8974 (`debug/9012`) needs a proper rule,
+   and the camera nodes (`debug/9007`) should become a real device-tree patch.
 2. **Find where stock sets the PLL.** Not in the `.dat` tables and not in the stock
    kernel; it is in Sony's userspace camera stack (`libcammw`, `libcacao_*`,
    `libexcal_*`). Matching stock's lane rate would let the mode-0 clock and D-PHY

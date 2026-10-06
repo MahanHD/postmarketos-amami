@@ -135,7 +135,7 @@ The ADSP audio services, a SLIMbus controller for msm8974, and a WCD9320 (Taiko)
 codec driver, which mainline did not have. The codec probes and all of its
 registers work, but no samples move over SLIMbus in either direction yet.
 
-**Camera** (`0085`-`0096`)
+**Camera** (`0085`-`0098`)
 
 - `0085`-`0087` add msm8974 support to CAMSS. The block matches msm8916's, which
   mainline already supports.
@@ -145,11 +145,13 @@ registers work, but no samples move over SLIMbus in either direction yet.
   junk in CCS-only limit registers, sub-device state broken by the 6.16 conversion,
   the IMX200's identification and PLL model, the sensor being started twice, and
   the helper every quirk register table goes through.
+- `0097` lets the board set the CSIPHY settle time; the IMX200 needs far less than
+  the D-PHY formula gives.
+- `0098` writes the IMX200's init and readout-window tables from the stock firmware.
 
 The debug patches that matter right now are the camera ones: `9006` (CAMSS on
 arm32), `9007` (both sensors in the device tree), `9010` (contiguous buffers without
-an IOMMU), `9012` (VFE and CSID clock sizing) and `9013` (the IMX200 register tables
-from the stock firmware).
+an IOMMU) and `9012` (VFE and CSID clock sizing).
 
 Patches that touch shared msm8974 files should help the Z1 (`honami`) and Z Ultra
 (`togari`) too, though neither has been tested. Several are not specific to this

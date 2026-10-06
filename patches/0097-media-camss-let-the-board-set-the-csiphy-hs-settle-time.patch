@@ -1,0 +1,45 @@
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -3252,6 +3252,13 @@
+ 		lncfg->data[i].pol = mipi_csi2->lane_polarities[i + 1];
+ 	}
+ 
++	/*
++	 * Some sensors need a much shorter HS settle than the D-PHY formula
++	 * gives; let the board say so.
++	 */
++	of_property_read_u32(node, "qcom,hs-settle-ns",
++			     &csd->interface.csi2.hs_settle_ns);
++
+ 	return 0;
+ }
+ 
+--- a/drivers/media/platform/qcom/camss/camss-csiphy-2ph-1-0.c
++++ b/drivers/media/platform/qcom/camss/camss-csiphy-2ph-1-0.c
+@@ -103,7 +103,15 @@
+ 	u8 val, l = 0;
+ 	int i = 0;
+ 
+-	settle_cnt = csiphy_settle_cnt_calc(link_freq, csiphy->timer_clk_rate);
++	if (cfg->csi2->hs_settle_ns) {
++		u32 period_ps = div_u64(1000000000000LL, csiphy->timer_clk_rate);
++		u32 ticks = DIV_ROUND_UP(cfg->csi2->hs_settle_ns * 1000, period_ps);
++
++		settle_cnt = ticks ? ticks - 1 : 0;
++	} else {
++		settle_cnt = csiphy_settle_cnt_calc(link_freq,
++						    csiphy->timer_clk_rate);
++	}
+ 
+ 	writel_relaxed(0x1, csiphy->base +
+ 		       CAMSS_CSI_PHY_GLBL_T_INIT_CFG0);
+--- a/drivers/media/platform/qcom/camss/camss-csiphy.h
++++ b/drivers/media/platform/qcom/camss/camss-csiphy.h
+@@ -40,6 +40,7 @@
+ 
+ struct csiphy_csi2_cfg {
+ 	struct csiphy_lanes_cfg lane_cfg;
++	u32 hs_settle_ns;
+ };
+ 
+ struct csiphy_config {

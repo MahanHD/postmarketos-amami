@@ -5,17 +5,16 @@
 #   capture.sh [frames] [exposure] [analogue_gain] [test_pattern]
 #
 # Writes /home/mahan/capture.raw (packed RAW10, 6560 bytes per line) and a log.
-# Needs debug/9013 (imx200_stock) and the camera modules unblacklisted or
-# loaded with --ignore-install. See docs/notes.md, "Camera".
+# The camera modules are loaded with --ignore-install, so this works with the
+# bring-up blacklist in place. See docs/notes.md, "Camera".
 set -u
 OUT=${OUT:-/home/mahan/capture.raw}; LOG=${OUT%.raw}.log
 CNT=${1:-4}; EXPO=${2:-3976}; AGAIN=${3:-128}; TP=${4:-0}
-W=5248; H=3936; SETTLE=${SETTLE:-2}; STOCK=${STOCK:-9}
-DIR=$(dirname "$0")
+W=5248; H=3936
 : > "$LOG"
 
 modprobe --ignore-install i2c_qcom_cci
-modprobe --ignore-install ccs imx200_stock=$STOCK
+modprobe --ignore-install ccs
 modprobe --ignore-install qcom_camss
 for i in $(seq 30); do [ -e /dev/media0 ] && break; sleep 1; done
 
@@ -33,10 +32,6 @@ media-ctl -d $M -V "\"imx200 scaler 3-0010\":1[fmt:$F],\"msm_csiphy0\":0[fmt:$F]
 v4l2-ctl -d "$V" --set-fmt-video=width=$W,height=$H,pixelformat=pRAA
 v4l2-ctl -d "$PA" -c test_pattern=$TP
 v4l2-ctl -d "$PA" -c exposure=$EXPO,analogue_gain=$AGAIN
-
-# camss computes a CSIPHY settle count of 11 for this link; frame starts only
-# come through reliably at 1-2. Set it as soon as the PHY clock is on.
-python3 "$DIR/setsettle.py" "$SETTLE" >> "$LOG" 2>&1 &
 
 timeout 60 v4l2-ctl -d "$V" --stream-mmap=2 --stream-count="$CNT" --stream-to="$OUT" 2>>"$LOG"
 echo "bytes=$(stat -c %s "$OUT")" >> "$LOG"

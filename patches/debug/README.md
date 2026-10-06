@@ -98,5 +98,7 @@ RAW10 stream. This raises them while a proper rule is worked out.
 Writes the init table and mode-0 tables from the stock firmware's
 `SOI20BS0_IMX200.dat` after power-on. The `imx200_stock` module parameter picks which
 groups to write (1 init, 2 lane setting, 4 the rest of mode 0, 8 sizes, 16 clock
-registers, 32 D-PHY timings). `9` is the combination that gives real frames.
+registers, 32 D-PHY timings). `9` is the combination that gives real frames, and
+that combination is now `0098`, so `9013` is out of the build. Keep it for the next
+round of table experiments.
 

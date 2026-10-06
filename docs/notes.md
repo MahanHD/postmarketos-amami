@@ -1259,9 +1259,10 @@ sensors run from 19.2 MHz.
 camera stack writes: an 87-register init table of manufacturer registers, 18
 per-mode tables, and small ones for streaming, reset, orientation and test patterns.
 `tools/unsin.py` gets the system image out of the FTF and `tools/semcdat.py` dumps the
-tables. `debug/9013` writes them from the IMX200 quirk, in groups selected by the
-`imx200_stock` module parameter. The init table plus mode 0's size and crop registers
-(`imx200_stock=9`) is what works: without the sizes the pixel array reads pure black.
+tables. `0098` writes the init table and mode 0's readout window registers from the IMX200
+quirk at power-on; without the window registers the pixel array reads pure black.
+(`debug/9013`, out of the build, is the harness that found this: it writes the stock
+tables in groups chosen by a module parameter.)
 
 **Three things about the link that took finding:**
 
@@ -1270,14 +1271,17 @@ tables. `debug/9013` writes them from the IMX200 quirk, in groups selected by th
 - camss computes a CSIPHY settle count of 11 for the 288 MHz link; the line data is
   clean from about 9 down, but the frame-start packets only come through at 2 or 1.
   At 3, every other frame starts in the wrong place, which shows up as a horizontally
-  shifted band in the picture.
+  shifted band in the picture. Measured in time it is the same at a 200 MHz PHY
+  timer: frame starts need a settle of about 35 ns or less, line data syncs up to
+  about 125 ns. `0097` lets the board set the settle time (`qcom,hs-settle-ns` on the
+  CSIPHY endpoint), and amami sets 30 ns.
 - Stock mode 0's clock registers (0x3004/0x3005/0x9229) change the sensor's lane
   timing so that nothing syncs; they stay off. Where stock programs the PLL is still
   unknown: the stock kernel's camera driver only handles power and the EEPROM, so it
   lives in Sony's userspace.
 
-**Working recipe** (`tools/camera/capture.sh`): `imx200_stock=9`, RAW10, 288 MHz,
-settle 2, exposure up to 3976 lines, analogue gain around 128. The module is mounted
+**Working recipe** (`tools/camera/capture.sh`): RAW10 at 288 MHz, exposure up to
+3976 lines, analogue gain around 128. Nothing is poked at run time any more. The module is mounted
 sideways, so the picture needs rotating 90 degrees clockwise. Only one stream per
 boot is reliable: after a stream that fails or times out, the next start wedges
 camss and sometimes resets the phone.

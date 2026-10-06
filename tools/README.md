@@ -150,9 +150,9 @@ from.
 
 - `capture.sh` streams RAW10 frames from the IMX200 with the working settings. Run it
   as root on the phone, once per boot.
-- `setsettle.py` sets the CSIPHY settle count as soon as camss powers the PHY. It waits
-  for the clock first, because touching those registers with the clock off can hang the
-  bus.
+- `setsettle.py` sets the CSIPHY settle count as soon as camss powers the PHY, for
+  experiments; the working value is now in the device tree. It waits for the clock
+  first, because touching those registers with the clock off can hang the bus.
 - `settle-sweep.py` steps through settle values during a stream and reports PHY errors,
   VFE interrupts and the CSID packet and ECC counters for each.
 - `sensor-reg.sh` reads or writes sensor registers over `/dev/i2c-3` during a stream

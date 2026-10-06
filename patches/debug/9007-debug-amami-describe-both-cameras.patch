@@ -1,6 +1,6 @@
 --- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
 +++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-@@ -376,3 +376,178 @@
+@@ -376,3 +376,185 @@
  
  	status = "okay";
  };
@@ -140,6 +140,13 @@
 +			csiphy0_ep: endpoint {
 +				clock-lanes = <1>;
 +				data-lanes = <0 2 3 4>;
++				/*
++				 * The IMX200's frame-start bursts are only caught
++				 * with a settle of about 30 ns; line data syncs up
++				 * to ~120 ns, so the D-PHY formula loses every
++				 * frame start.
++				 */
++				qcom,hs-settle-ns = <30>;
 +				remote-endpoint = <&rear_cam_ep>;
 +			};
 +		};
