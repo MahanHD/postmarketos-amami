@@ -1,0 +1,41 @@
+--- a/drivers/media/i2c/ccs/ccs-quirk.c
++++ b/drivers/media/i2c/ccs/ccs-quirk.c
+@@ -288,7 +288,38 @@
+ 	return ccs_write_addr_8s(sensor, window, ARRAY_SIZE(window));
+ }
+ 
++/*
++ * debug: the stock firmware programs the IMX200's clocks itself (libcammw,
++ * set_mode): the external clock at 0x011e (CCS writes 0x0136, which this
++ * sensor ignores), and a second PLL multiplier at 0x030c that CCS does not
++ * know about. Stock runs from 8 MHz; these are its mode-0 values with both
++ * multipliers scaled to 19.2 MHz.
++ */
++static unsigned int imx200_pll;
++module_param(imx200_pll, uint, 0644);
++MODULE_PARM_DESC(imx200_pll, "debug: program the stock PLL (scaled to 19.2 MHz) at stream on");
++
++static int imx200_pre_streamon(struct ccs_sensor *sensor)
++{
++	static const struct ccs_reg_8 pll[] = {
++		{ 0x011e, 0x13 }, { 0x011f, 0x33 },
++		{ 0x0301, 0x0a }, { 0x0303, 0x01 },
++		{ 0x0305, 0x06 },
++		{ 0x0306, 0x00 }, { 0x0307, 0x2c },
++		{ 0x0309, 0x0a }, { 0x030b, 0x01 },
++		{ 0x030c, 0x00 }, { 0x030d, 0xfa },
++		{ 0x030e, 0x00 },
++		{ 0x30a4, 0x01 }, { 0x303c, 0x19 },
++	};
++
++	if (!imx200_pll)
++		return 0;
++
++	return ccs_write_addr_8s(sensor, pll, ARRAY_SIZE(pll));
++}
++
+ const struct ccs_quirk smiapp_imx200_quirk = {
+ 	.limits = imx200_limits,
+ 	.post_poweron = imx200_post_poweron,
++	.pre_streamon = imx200_pre_streamon,
+ };

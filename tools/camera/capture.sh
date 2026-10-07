@@ -14,7 +14,7 @@ W=5248; H=3936
 : > "$LOG"
 
 modprobe --ignore-install i2c_qcom_cci
-modprobe --ignore-install ccs
+modprobe --ignore-install ccs ${CCS_OPTS:-}
 modprobe --ignore-install qcom_camss
 for i in $(seq 30); do [ -e /dev/media0 ] && break; sleep 1; done
 

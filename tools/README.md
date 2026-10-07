@@ -159,5 +159,8 @@ from.
   (needs i2c-tools). Reading the sensor back is how exposure and gain were ruled out
   when the picture was black.
 - `raw10.py` runs on the host: per-frame statistics, or a quick preview PNG of the last
-  frame.
+  frame, corrected for lens shading when given a dump of the module EEPROM.
+- `capture.sh` passes `CCS_OPTS` to the ccs module and writes to `OUT`. To measure the
+  real frame rate, set `OUT=/dev/null`: writing 26 MB frames to the phone's storage caps
+  it at about 1.7 fps.
 

@@ -5,8 +5,8 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-07)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 190, boot image
-included (`uname -v` prints `#191`). Install the package for module changes and
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 192, with the boot
+image from 190 (`uname -v` prints `#191`). Install the package for module changes and
 rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
 device tree.
 
@@ -23,12 +23,14 @@ so nothing camera-related loads at boot. `tools/camera/capture.sh` loads them wi
 
 ## Camera, rear (IMX200)
 
-1. **Lens shading and colour.** Stock's per-module tuning sits in
-   `vendor/camera/SOI20BS0/`. Until then every frame shows coloured blotches.
-2. **Find where stock sets the PLL.** Not in the `.dat` tables and not in the stock
-   kernel; it is in Sony's userspace camera stack (`libcammw`, `libcacao_*`,
-   `libexcal_*`). Matching stock's lane rate would let the mode-0 clock and D-PHY
-   registers go in too.
+1. **A daylight capture.** Check whether full exposure fills the range in good light
+   (see `notes.md`, "Brightness is not settled yet"), then judge colour with the
+   EEPROM lens shading applied (`raw10.py ... png out.png eeprom.bin`). Decode the
+   rest of the EEPROM (white balance) and, if needed, stock's tuning in
+   `vendor/camera/SOI20BS0/` (Sony's `cacao` format).
+2. **Stock's clocks.** Found in `libcammw` (see `notes.md`), but stock needs an 8 MHz
+   MCLK and the sensor ignores PLL writes made after CCS's. If it matters, try
+   writing them before CCS's PLL setup, or in place of it.
 3. **Stream reliability.** A second stream after a failed one wedges camss; one
    stream per boot is the rule for now.
 4. **Autofocus (BU64296G)** and the EEPROM's calibration data.

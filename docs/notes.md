@@ -1292,3 +1292,35 @@ tables in groups chosen by a module parameter.)
 sideways, so the picture needs rotating 90 degrees clockwise. Only one stream per
 boot is reliable: after a stream that fails or times out, the next start wedges
 camss and sometimes resets the phone.
+
+**The module EEPROM holds factory lens-shading calibration.** It is 2 KB at 7-bit
+0x50-0x57 on CCI master 0 (eight 256-byte pages, one-byte addressing; read it during a
+stream so the module is powered). It starts with the module, sensor and actuator names
+(`SOI20BS0`, `IMX2000A`, `BU64296G`). From 0x100 come 64-byte blocks, each a 9x7 grid
+of relative brightness with 0x80 at the centre, plus one trailing byte. The corners sit
+around 0x24, so the lens loses about 70% of its light at the edges. `tools/camera/raw10.py`
+takes the first four blocks as R, Gr, Gb and B and corrects the preview with them. The
+other blocks and the bytes around 0x60-0xdf (probably white-balance data) are not decoded.
+
+**How stock clocks the sensor.** `libcammw.so` has the IMX200 parameters built in, in the
+same layout as the header of the `.dat` file, and its set-mode routine writes the clocks
+itself: the external clock frequency at 0x011e (CCS writes 0x0136, which this sensor
+ignores), the dividers at 0x0301, 0x0303, 0x0309 and 0x030b, the pre-divider at 0x0305, one
+multiplier at 0x0306 and a second at 0x030c. The values come from a 24-byte record at
+`0x104 + 0x90 x mode` in the `.dat` header, except 0x030c, which is the stock device
+tree's per-mode `pll` number (600 for full resolution). Stock runs the sensor from an
+8 MHz MCLK, which mainline cannot make: the MCLK RCGs have no M/N counter, and their M/N
+registers do not take writes even with the clock running. Writing stock's values scaled to
+19.2 MHz after CCS's own (`debug/9014`) changed nothing: the registers read back CCS's
+values and the frame rate stayed the same.
+
+**Measure the frame rate with the frames going to `/dev/null`.** With `--stream-to` a
+file, v4l2-ctl reports about 1.7 fps, which is the phone's storage writing 26 MB frames.
+The sensor itself runs at about 6.7 fps at full resolution, against stock's 8.6.
+
+**Brightness is not settled yet.** In a room lit by one lamp at night, the longest
+exposure (3976 lines, about 0.15 s) at base gain fills only a few percent of the range,
+and the preview's stretching turns the noise into coloured blotches. Exposure does scale
+the signal. Whether this is simply dim light or a missing analogue setting needs a
+daylight capture.
+

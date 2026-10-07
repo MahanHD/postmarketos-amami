@@ -96,3 +96,10 @@ registers, 32 D-PHY timings). `9` is the combination that gives real frames, and
 that combination is now `0098`, so `9013` is out of the build. Keep it for the next
 round of table experiments.
 
+## 9014 - the stock PLL
+
+Writes stock's clock registers, scaled from its 8 MHz MCLK to 19.2 MHz, after CCS has
+programmed its own, when the `imx200_pll` module parameter is set. The sensor ignored
+them (same frame rate, CCS's values on readback), so it is out of the build. Kept as the
+starting point for trying it before CCS's PLL setup instead.
+
