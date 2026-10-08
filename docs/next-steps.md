@@ -39,15 +39,21 @@ Snapshot's cairo stopgap is gone.
 
 1. The other a3xx workarounds stock applies on this chip (flag bits in `notes.md`) did not
    affect the hang. They stay documented; port one only if a symptom points to it.
-2. Port kgsl's power-on shader-corruption fixup for a3xx to drm/msm. The stock kernel
-   binary has it; nothing is known to need it yet.
-3. Xorg can still hang the GPU on the fixed Mesa (twice in one Megapixels run). That
+2. kgsl's power-on fixup is ported as `0105`, identical to kgsl's commands, and parked:
+   on r205 it came with many "Division by zero" warnings, hangs and a slow GPU. Retry it
+   once item 3 is done, since the warnings turned out to come from the carveout.
+3. **Clear VRAM carveout buffers on allocation.** Every GPU buffer comes from the
+   carveout uncleared (worklog, 2026-10-09): garbage per-submit stats cause
+   "Division by zero" in `retire_submits`, and user buffers start with stale data.
+   Fix that first, then measure the Xorg hangs and retry `0105` (kgsl's power-on
+   fixup, parked after it made things worse on r205).
+4. Xorg can still hang the GPU on the fixed Mesa (twice in one Megapixels run). That
    dump (`work/mesa/xorg-hang.devcore`) is a different state: pipeline idle, both IBs
    read, the CP busy with a non-real-time memory operation, three fences unwritten.
-4. GPU recovery can fail for good: after one hang at 21:39 (Xorg, still on the old Mesa)
+5. GPU recovery can fail for good: after one hang at 21:39 (Xorg, still on the old Mesa)
    every reset left the GPU unable to finish anything until a reboot. Earlier the same day
    it recovered from dozens of hangs. Decode `work/mesa/stuck.devcore` and find out why.
-5. Offer the Mesa fix upstream once the port is clean.
+6. Offer the Mesa fix upstream once the port is clean.
 
 ## Camera, rear (IMX200)
 

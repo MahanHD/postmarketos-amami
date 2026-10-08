@@ -1,0 +1,315 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] drm/msm/a3xx: run kgsl's power-on fixup after every power-on
+
+The downstream kgsl driver runs a short compute dispatch on every a3xx
+before the first submission after each power-on, to set up the shader
+processor after power collapse ("Some targets require a special
+workaround shader to be executed after power-collapse"). The stock
+kernel of the Xperia Z1 Compact has it too. drm/msm never ran it.
+
+Emit the same commands, in the same order, right after CP_ME_INIT, which
+runs on every hw_init: at power-on, on runtime resume and after a GPU
+reset. Like kgsl, turn register protection off around it, since it
+writes RBBM_CLOCK_CTL. The 491 dwords are identical to what kgsl's
+adreno_a3xx_pwron_fixup_init() generates, and the shader to the copy in
+the stock kernel binary.
+
+---
+--- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-08 23:48:53.731041770 +0400
++++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-08 23:49:46.309805758 +0400
+@@ -82,6 +82,286 @@
+ 	adreno_flush(gpu, ring, REG_AXXX_CP_RB_WPTR);
+ }
+ 
++/*
++ * The a3xx power-on fixup of the downstream kgsl driver
++ * (adreno_a3xx_pwron_fixup_init()): "Some targets require a special
++ * workaround shader to be executed after power-collapse". kgsl, and the
++ * stock kernel of the Xperia Z1 Compact, run it on every a3xx before the
++ * first submission after each power-on. It is a small compute dispatch over
++ * the shader processor. The commands are kgsl's, in kgsl's order; the shader
++ * matches the stock kernel's byte for byte.
++ */
++static const u32 a3xx_pwron_fixup_fs[] = {
++	0x00000000, 0x302cc300, 0x00000000, 0x302cc304,
++	0x00000000, 0x302cc308, 0x00000000, 0x302cc30c,
++	0x00000000, 0x302cc310, 0x00000000, 0x302cc314,
++	0x00000000, 0x302cc318, 0x00000000, 0x302cc31c,
++	0x00000000, 0x302cc320, 0x00000000, 0x302cc324,
++	0x00000000, 0x302cc328, 0x00000000, 0x302cc32c,
++	0x00000000, 0x302cc330, 0x00000000, 0x302cc334,
++	0x00000000, 0x302cc338, 0x00000000, 0x302cc33c,
++	0x00000000, 0x00000400, 0x00020000, 0x63808003,
++	0x00060004, 0x63828007, 0x000a0008, 0x6384800b,
++	0x000e000c, 0x6386800f, 0x00120010, 0x63888013,
++	0x00160014, 0x638a8017, 0x001a0018, 0x638c801b,
++	0x001e001c, 0x638e801f, 0x00220020, 0x63908023,
++	0x00260024, 0x63928027, 0x002a0028, 0x6394802b,
++	0x002e002c, 0x6396802f, 0x00320030, 0x63988033,
++	0x00360034, 0x639a8037, 0x003a0038, 0x639c803b,
++	0x003e003c, 0x639e803f, 0x00000000, 0x00000400,
++	0x00000003, 0x80d60003, 0x00000007, 0x80d60007,
++	0x0000000b, 0x80d6000b, 0x0000000f, 0x80d6000f,
++	0x00000013, 0x80d60013, 0x00000017, 0x80d60017,
++	0x0000001b, 0x80d6001b, 0x0000001f, 0x80d6001f,
++	0x00000023, 0x80d60023, 0x00000027, 0x80d60027,
++	0x0000002b, 0x80d6002b, 0x0000002f, 0x80d6002f,
++	0x00000033, 0x80d60033, 0x00000037, 0x80d60037,
++	0x0000003b, 0x80d6003b, 0x0000003f, 0x80d6003f,
++	0x00000000, 0x03000000, 0x00000000, 0x00000000,
++};
++
++static void a3xx_fixup_write(struct msm_ringbuffer *ring, u32 reg, u32 val)
++{
++	OUT_PKT0(ring, reg, 1);
++	OUT_RING(ring, val);
++}
++
++static void a3xx_pwron_fixup(struct msm_ringbuffer *ring)
++{
++	unsigned int i;
++
++	/* RBBM_CLOCK_CTL is protected */
++	OUT_PKT3(ring, CP_SET_PROTECTED_MODE, 1);
++	OUT_RING(ring, 0);
++
++	OUT_PKT0(ring, REG_A3XX_UCHE_CACHE_INVALIDATE0_REG, 2);
++	OUT_RING(ring, 0x00000000);
++	OUT_RING(ring, 0x90000000);
++	OUT_PKT3(ring, CP_WAIT_FOR_IDLE, 1);
++	OUT_RING(ring, 0x00000000);
++	OUT_PKT3(ring, CP_REG_RMW, 3);
++	OUT_RING(ring, REG_A3XX_RBBM_CLOCK_CTL);
++	OUT_RING(ring, 0xfffcffff);
++	OUT_RING(ring, 0x00010000);
++	OUT_PKT3(ring, CP_WAIT_FOR_IDLE, 1);
++	OUT_RING(ring, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CONTROL_0_REG, 0x1e000150);
++	OUT_PKT3(ring, CP_WAIT_FOR_IDLE, 1);
++	OUT_RING(ring, 0x00000000);
++	OUT_PKT3(ring, CP_SET_CONSTANT, 2);
++	OUT_RING(ring, 0x00040000 | (REG_A3XX_HLSQ_CONTROL_0_REG - 0x2000));
++	OUT_RING(ring, 0x1e000150);
++	OUT_PKT3(ring, CP_WAIT_FOR_IDLE, 1);
++	OUT_RING(ring, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CONTROL_0_REG, 0x1e000150);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CONTROL_1_REG, 0x00000040);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CONTROL_2_REG, 0x80000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CONTROL_3_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_VS_CONTROL_REG, 0x00000001);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_FS_CONTROL_REG, 0x0d001002);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CONST_VSPRESV_RANGE_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CONST_FSPRESV_RANGE_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_NDRANGE_0_REG, 0x00401101);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_GLOBAL_WORK_SIZE(0), 0x00000400);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_GLOBAL_WORK_OFFSET(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_GLOBAL_WORK_SIZE(1), 0x00000001);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_GLOBAL_WORK_OFFSET(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_GLOBAL_WORK_SIZE(2), 0x00000001);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_GLOBAL_WORK_OFFSET(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_CONTROL_0_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_CONTROL_1_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_KERNEL_CONST_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_KERNEL_GROUP_RATIO(0), 0x00000010);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_KERNEL_GROUP_Y_REG, 0x00000001);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_KERNEL_GROUP_Z_REG, 0x00000001);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_WG_OFFSET_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_SP_CTRL_REG, 0x00040000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_CTRL_REG0, 0x0000000a);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_CTRL_REG1, 0x00000001);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_PARAM_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OUT_REG(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OUT_REG(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OUT_REG(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OUT_REG(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OUT_REG(4), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OUT_REG(5), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OUT_REG(6), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OUT_REG(7), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_VPC_DST_REG(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_VPC_DST_REG(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_VPC_DST_REG(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_VPC_DST_REG(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OBJ_OFFSET_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_OBJ_START_REG, 0x00000004);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_PVT_MEM_PARAM_REG, 0x04008001);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_PVT_MEM_ADDR_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_PVT_MEM_SIZE_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_VS_LENGTH_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_CTRL_REG0, 0x0db0400a);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_CTRL_REG1, 0x00300402);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_OBJ_OFFSET_REG, 0x00010000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_OBJ_START_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_PVT_MEM_PARAM_REG, 0x04008001);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_PVT_MEM_ADDR_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_PVT_MEM_SIZE_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_FLAT_SHAD_MODE_REG_0, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_FLAT_SHAD_MODE_REG_1, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_OUTPUT_REG, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_MRT_REG(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_MRT_REG(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_MRT_REG(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_MRT_REG(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_IMAGE_OUTPUT_REG(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_IMAGE_OUTPUT_REG(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_IMAGE_OUTPUT_REG(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_IMAGE_OUTPUT_REG(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_SP_FS_LENGTH_REG, 0x0000000d);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_CLIP_CNTL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_GB_CLIP_ADJ, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_VPORT_XOFFSET, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_VPORT_XSCALE, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_VPORT_YOFFSET, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_VPORT_YSCALE, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_VPORT_ZOFFSET, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_VPORT_ZSCALE, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_X(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Y(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Z(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_W(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_X(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Y(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Z(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_W(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_X(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Y(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Z(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_W(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_X(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Y(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Z(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_W(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_X(4), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Y(4), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Z(4), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_W(4), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_X(5), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Y(5), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_Z(5), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_CL_USER_PLANE_W(5), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SU_POINT_MINMAX, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SU_POINT_SIZE, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SU_POLY_OFFSET_OFFSET, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SU_POLY_OFFSET_SCALE, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SU_MODE_CONTROL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SC_CONTROL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SC_SCREEN_SCISSOR_TL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SC_SCREEN_SCISSOR_BR, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SC_WINDOW_SCISSOR_BR, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_SC_WINDOW_SCISSOR_TL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_TSE_DEBUG_ECO, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_PERFCOUNTER0_SELECT, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_PERFCOUNTER1_SELECT, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_PERFCOUNTER2_SELECT, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_GRAS_PERFCOUNTER3_SELECT, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MODE_CONTROL, 0x00008000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_RENDER_CONTROL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MSAA_CONTROL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_ALPHA_REF, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_CONTROL(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_CONTROL(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_CONTROL(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_CONTROL(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BUF_INFO(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BUF_INFO(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BUF_INFO(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BUF_INFO(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BUF_BASE(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BUF_BASE(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BUF_BASE(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BUF_BASE(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BLEND_CONTROL(0), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BLEND_CONTROL(1), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BLEND_CONTROL(2), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_MRT_BLEND_CONTROL(3), 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_BLEND_RED, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_BLEND_GREEN, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_BLEND_BLUE, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_BLEND_ALPHA, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_CLEAR_COLOR_DW0, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_CLEAR_COLOR_DW1, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_CLEAR_COLOR_DW2, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_CLEAR_COLOR_DW3, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_COPY_CONTROL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_COPY_DEST_BASE, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_COPY_DEST_PITCH, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_COPY_DEST_INFO, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_DEPTH_CONTROL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_DEPTH_CLEAR, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_DEPTH_INFO, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_DEPTH_PITCH, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_STENCIL_CONTROL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_STENCIL_CLEAR, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_STENCIL_INFO, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_STENCIL_PITCH, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_STENCILREFMASK, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_STENCILREFMASK_BF, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_LRZ_VSC_CONTROL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_WINDOW_OFFSET, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_SAMPLE_COUNT_CONTROL, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_SAMPLE_COUNT_ADDR, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_Z_CLAMP_MIN, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_Z_CLAMP_MAX, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_GMEM_BASE_ADDR, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_DEBUG_ECO_CONTROLS_ADDR, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_PERFCOUNTER0_SELECT, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_PERFCOUNTER1_SELECT, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_RB_FRAME_BUFFER_DIMENSION, 0x00000000);
++	OUT_PKT3(ring, CP_LOAD_STATE, 4);
++	OUT_RING(ring, 0x00700001);
++	OUT_RING(ring, 0x00000001);
++	OUT_RING(ring, 0x00400000);
++	OUT_RING(ring, 0x00000000);
++	OUT_PKT3(ring, CP_LOAD_STATE, 4);
++	OUT_RING(ring, 0x00700002);
++	OUT_RING(ring, 0x00000001);
++	OUT_RING(ring, 0x00400220);
++	OUT_RING(ring, 0x00000000);
++	OUT_PKT3(ring, CP_LOAD_STATE, 4);
++	OUT_RING(ring, 0x00700000);
++	OUT_RING(ring, 0x00000001);
++	OUT_RING(ring, 0x00000000);
++	OUT_RING(ring, 0x00000000);
++	OUT_PKT3(ring, CP_LOAD_STATE, 2 + ARRAY_SIZE(a3xx_pwron_fixup_fs));
++	OUT_RING(ring, 0x03700000);
++	OUT_RING(ring, 0x00000000);
++	for (i = 0; i < ARRAY_SIZE(a3xx_pwron_fixup_fs); i++)
++		OUT_RING(ring, a3xx_pwron_fixup_fs[i]);
++	OUT_PKT3(ring, CP_RUN_OPENCL, 1);
++	OUT_RING(ring, 0x00000000);
++	OUT_PKT3(ring, CP_WAIT_FOR_IDLE, 1);
++	OUT_RING(ring, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CL_CONTROL_0_REG, 0x00000000);
++	OUT_PKT3(ring, CP_WAIT_FOR_IDLE, 1);
++	OUT_RING(ring, 0x00000000);
++	a3xx_fixup_write(ring, REG_A3XX_HLSQ_CONTROL_0_REG, 0x1e000150);
++	OUT_PKT3(ring, CP_WAIT_FOR_IDLE, 1);
++	OUT_RING(ring, 0x00000000);
++	OUT_PKT3(ring, CP_SET_CONSTANT, 2);
++	OUT_RING(ring, 0x00040000 | (REG_A3XX_HLSQ_CONTROL_0_REG - 0x2000));
++	OUT_RING(ring, 0x1e000050);
++	OUT_PKT3(ring, CP_WAIT_FOR_IDLE, 1);
++	OUT_RING(ring, 0x00000000);
++	OUT_PKT3(ring, CP_REG_RMW, 3);
++	OUT_RING(ring, REG_A3XX_RBBM_CLOCK_CTL);
++	OUT_RING(ring, 0xfffcffff);
++	OUT_RING(ring, 0x00000000);
++	OUT_PKT3(ring, CP_WAIT_FOR_IDLE, 1);
++	OUT_RING(ring, 0x00000000);
++
++	OUT_PKT3(ring, CP_SET_PROTECTED_MODE, 1);
++	OUT_RING(ring, 1);
++}
++
+ static bool a3xx_me_init(struct msm_gpu *gpu)
+ {
+ 	struct msm_ringbuffer *ring = gpu->rb[0];
+@@ -105,6 +385,8 @@
+ 	OUT_RING(ring, 0x00000000);
+ 	OUT_RING(ring, 0x00000000);
+ 
++	a3xx_pwron_fixup(ring);
++
+ 	adreno_flush(gpu, ring, REG_AXXX_CP_RB_WPTR);
+ 	return a3xx_idle(gpu);
+ }

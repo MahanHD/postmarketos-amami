@@ -108,8 +108,8 @@ with Alpine's, GTK's GL renderer hangs the Adreno 330 within seconds. Copy it ov
 `recipe/README.md`.
 
 For Megapixels, build `recipe/libmegapixels` and `recipe/megapixels` the same way (as
-`pmaports/temp/libmegapixels` and `pmaports/temp/megapixels`),
-install it, and add this phone's config and colour profile:
+`pmaports/temp/libmegapixels` and `pmaports/temp/megapixels`), install both, and add
+this phone's config and colour profile:
 
     sudo install -m 644 userspace/megapixels/* /usr/share/megapixels/config/
 

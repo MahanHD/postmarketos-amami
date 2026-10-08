@@ -3572,10 +3572,39 @@ the quirk, settle in camss), then the IMX132.
   could not finish a frame) until a reboot. Dump in `work/mesa/stuck.devcore`. A failed
   recovery is its own bug, still to look at.
 
+### Megapixels and the GPU, 2026-10-08 night to 10-09
+
+- Megapixels' colour: three bugs between the profile and the preview, all still in upstream
+  master (`recipe/megapixels`). White is white now.
+- Megapixels' exposure: libmegapixels could not set a frame rate on a raw sensor, so the
+  1312x988 mode ran at 95.9 fps and exposure stopped at about 10 ms
+  (`recipe/libmegapixels`). Now 30 fps and up to 3288 lines.
+- Xorg still hung the GPU now and then on the fixed Mesa (twice in one run, once in ten
+  starts). 40 starts with the other three stock workarounds and 40 without both gave
+  zero hangs, so that comparison says nothing; the hangs so far all came in an Xorg that
+  had run since boot.
+- `0105` ports kgsl's power-on fixup, dword for dword (the shader matches the stock
+  kernel's). On the phone (r205) it went badly: 126 "Division by zero" warnings from
+  `retire_submits` under load, three hangs, and glxgears at 5-12 fps. Reverted to r204;
+  `0105` is parked.
+- The division by zero is not `0105`'s, though: the next r204 boot had 20 of them while
+  earlier r204 boots had none. The cause is in the VRAM carveout. This port keeps the
+  display on it, `msm_use_mmu()` follows the display, so every buffer, the GPU's
+  included, comes from the carveout, and `get_pages_vram()` hands pages out without
+  clearing them. a3xx never writes the per-submit stats in the ring's memptrs, so
+  `retire_submit()` reads whatever the carveout held, and `do_div()` (32-bit divisor)
+  divides by the low half of a garbage `elapsed`. Every user buffer starts with stale
+  data too, which Mesa does not expect. Upstream has dropped the carveout code, so the
+  fix has to be ours.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:
 
+- `0105` - kgsl's a3xx power-on fixup, run after `CP_ME_INIT` on every hw_init. Its
+  commands are verified identical to what kgsl generates, and its shader to the stock
+  kernel's. Parked because r205 with it was slow and hung; that boot also had the
+  carveout's garbage-stats warnings, so retry it after the carveout is cleared.
 - `0082` - the actual SoC collapse in `spm_suspend_enter()`. Correct-looking and
   **the phone does not wake from it** (r135, Phase 2). Parked rather than deleted
   because the sequence is probably right and the wakeup side is the suspect, so
