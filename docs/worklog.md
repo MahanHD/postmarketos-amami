@@ -3542,6 +3542,23 @@ the quirk, settle in camss), then the IMX132.
   devcoredumps (`msm.rd_full=Y`) decode cleanly with `crashdec -v`.
 - `tools/camera/mkdcp.py`: a DCP for Megapixels from stock's colour matrix.
 
+### The GPU hang, 2026-10-08 evening: stock's a3xx workarounds, one of them the fix
+
+- The stock `libGLESv2_adreno.so` exports its symbols. `oxili_detect_workarounds()` picks
+  flag bits by chip id (`0xc2878307`, `0x1b` for 3.3.0.1). Ran the stock workaround code
+  under Unicorn (`tools/re/`) to see its command output instead of decoding it by hand.
+- Four things stock does that Mesa does not: a register write after every direct
+  `CP_LOAD_STATE`, event `0x18` before each draw, `HLSQ_CONTROL_0` without the restart
+  bits after each draw, and a dummy-draw preamble. A Mesa with each behind a switch
+  (`FD3_WA`) showed the first alone takes Megapixels from 9-40 hangs to none; the rest
+  do nothing. Any register write works.
+- Checked and dropped on the way: GPU power collapse (runtime PM held on, still hangs)
+  and the VBIF setup (the stock kernel binary uses the same short table as mainline;
+  `work/kgsl` is older than what Sony shipped).
+- `recipe/mesa` r4: `freedreno-a3xx-end-direct-loads.patch`. Megapixels 120 s and
+  Snapshot 90 s on the GL renderer, then three photos: no hangs, no faults. The cairo
+  stopgap (`userspace/snapshot`) is removed.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

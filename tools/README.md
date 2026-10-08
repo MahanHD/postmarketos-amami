@@ -163,3 +163,20 @@ from.
 - To measure the real frame rate, stream without `--stream-to`: writing 26 MB frames to
   the phone's storage caps it at about 1.7 fps. `raw10.py` takes the same `SIZE`.
 
+
+`re/` holds the tools for reading stock's ARM libraries. They need Python with
+`capstone`, `pyelftools` and `unicorn`.
+
+- `armdis.py lib.so symbol` disassembles one function, naming PLT calls and showing
+  the words that literal-pool loads fetch.
+- `xref.py lib.so symbol...` finds the call sites of functions.
+- `armemu.py` runs one function of a library under Unicorn: the library is mapped at
+  its link address with its relocations applied, imports return 0, and any other memory
+  reads as zeros.
+- `pm4dec.py` names the registers and packets in an a3xx command stream, using Mesa's
+  register files (set `MESA_REGS` to `src/freedreno/registers/adreno` in a Mesa tree).
+- `a3xx-flagscan.py lib.so` maps the bits of stock's a3xx workaround flags to the
+  functions that test them.
+- `a3xx-stock-wa.py libGLESv2_adreno.so` runs stock's a3xx workaround code for this GPU
+  and prints the commands it adds: the context preamble, and what goes before and after
+  each draw. This is how the GPU hang fix was found (`docs/notes.md`).

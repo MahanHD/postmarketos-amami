@@ -30,3 +30,15 @@ and the boot image.
 short list of output sizes) and `imx200.yaml`, the tuning file with the focus range
 (stock's colour matrix is in it, switched off for speed). The `APKBUILD` there is the
 complete one, with all nine patches and the tuning file in its source list.
+
+## mesa
+
+`mesa/` is Alpine 3.24's `main/mesa` (26.1.6) with one fix for this GPU,
+`freedreno-a3xx-end-direct-loads.patch`: every direct `CP_LOAD_STATE` is followed by a
+register write, as the stock driver does on a3xx. Without it GTK4's GL renderer hangs the
+Adreno 330 within seconds (see `../docs/notes.md`, "The GPU hang, solved"). Two build
+changes go with it: rusticl is off on armv7, since pmbootstrap's cross build has no Rust,
+and clang, libclc and the SPIR-V translator are top-level makedepends, because
+pmbootstrap does not read the `case` blocks that add them. Build it from pmaports'
+`temp/mesa` with `pmbootstrap build mesa --arch armv7` (about 15 minutes) and install
+`mesa`, `mesa-dri-gallium`, `mesa-egl`, `mesa-gbm`, `mesa-gl` and `mesa-gles`.

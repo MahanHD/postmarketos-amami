@@ -1,0 +1,106 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] freedreno/a3xx: end direct CP_LOAD_STATE with a register write
+
+The stock Adreno driver for a3xx (libGLESv2_adreno.so,
+oxili_cmdbuffer_insert_hlsqloadcmd) follows every direct CP_LOAD_STATE with a
+write of GRAS_SU_POINT_MINMAX. freedreno does not, and on an a330 (chip id
+3.3.0.1, msm8974) GTK4's GL renderer hangs the GPU within seconds: Megapixels
+gets 29-40 hangchecks in 90-120 s, Snapshot 14 in 45 s.
+
+With a register write after each direct load (constants, samplers, textures,
+mipaddrs) there were none in the same runs. Any register does it: the stock
+one, the same with a fixed value, or the VFD_PERFCOUNTER0_SELECT dummy write
+the driver already emits after shader loads, which is used here.
+
+---
+diff -ru a/src/gallium/drivers/freedreno/a3xx/fd3_emit.c b/src/gallium/drivers/freedreno/a3xx/fd3_emit.c
+--- a/src/gallium/drivers/freedreno/a3xx/fd3_emit.c	2026-10-08 20:28:20.593430592 +0400
++++ b/src/gallium/drivers/freedreno/a3xx/fd3_emit.c	2026-10-08 20:28:20.607164433 +0400
+@@ -54,6 +54,7 @@
+                      CP_LOAD_STATE_1_STATE_TYPE(ST_CONSTANTS));
+    for (int i = 0; i < sizedwords; i++)
+       OUT_RING(ring, dwords[i]);
++   fd3_emit_direct_load_end(ring);
+ }
+ 
+ static void
+@@ -108,6 +109,7 @@
+ 
+    for (; i < anum; i++)
+       OUT_RING(ring, 0xffffffff);
++   fd3_emit_direct_load_end(ring);
+ }
+ 
+ static bool
+@@ -170,6 +172,7 @@
+ 
+          needs_border |= sampler->needs_border;
+       }
++      fd3_emit_direct_load_end(ring);
+    }
+ 
+    if (tex->num_textures > 0) {
+@@ -192,6 +195,7 @@
+                   view->texconst2 | A3XX_TEX_CONST_2_INDX(BASETABLE_SZ * i));
+          OUT_RING(ring, view->texconst3);
+       }
++      fd3_emit_direct_load_end(ring);
+ 
+       /* emit mipaddrs: */
+       OUT_PKT3(ring, CP_LOAD_STATE, 2 + (BASETABLE_SZ * tex->num_textures));
+@@ -229,6 +233,7 @@
+             OUT_RING(ring, 0x00000000);
+          }
+       }
++      fd3_emit_direct_load_end(ring);
+    }
+ 
+    if (needs_border) {
+@@ -277,6 +282,7 @@
+                         A3XX_TEX_SAMP_0_WRAP_R(A3XX_TEX_REPEAT));
+       OUT_RING(ring, 0x00000000);
+    }
++   fd3_emit_direct_load_end(ring);
+ 
+    /* emit texture state: */
+    OUT_PKT3(ring, CP_LOAD_STATE, 2 + 4 * bufs);
+@@ -327,6 +333,7 @@
+                         A3XX_TEX_CONST_2_INDX(BASETABLE_SZ * i));
+       OUT_RING(ring, 0x00000000);
+    }
++   fd3_emit_direct_load_end(ring);
+ 
+    /* emit mipaddrs: */
+    OUT_PKT3(ring, CP_LOAD_STATE, 2 + BASETABLE_SZ * bufs);
+@@ -355,6 +362,7 @@
+          OUT_RING(ring, 0x00000000);
+       }
+    }
++   fd3_emit_direct_load_end(ring);
+ }
+ 
+ void
+diff -ru a/src/gallium/drivers/freedreno/a3xx/fd3_emit.h b/src/gallium/drivers/freedreno/a3xx/fd3_emit.h
+--- a/src/gallium/drivers/freedreno/a3xx/fd3_emit.h	2026-10-08 20:28:20.595430588 +0400
++++ b/src/gallium/drivers/freedreno/a3xx/fd3_emit.h	2026-10-08 20:28:42.585997362 +0400
+@@ -23,6 +23,20 @@
+ void fd3_emit_gmem_restore_tex(struct fd_ringbuffer *ring,
+                                struct pipe_surface *psurf, int bufs);
+ 
++/* End every direct (inline) CP_LOAD_STATE with a register write, as the stock
++ * driver does on a3xx: oxili_cmdbuffer_insert_hlsqloadcmd() writes
++ * GRAS_SU_POINT_MINMAX back after each one.  Without it an a330 (8974) hangs
++ * within seconds under GTK4's GL renderer, with HLSQ, VFD and PC busy, unless
++ * shaders are loaded directly too.  Which register is written does not matter,
++ * so use the dummy write this driver already does after shader loads.
++ */
++static inline void
++fd3_emit_direct_load_end(struct fd_ringbuffer *ring)
++{
++   OUT_PKT0(ring, REG_A3XX_VFD_PERFCOUNTER0_SELECT, 1);
++   OUT_RING(ring, 0x00000000);
++}
++
+ /* grouped together emit-state for prog/vertex/state emit: */
+ struct fd3_emit {
+    struct util_debug_callback *debug;

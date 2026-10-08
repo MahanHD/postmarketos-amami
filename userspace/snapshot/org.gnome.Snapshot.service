@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=org.gnome.Snapshot
-Exec=/usr/bin/env GSK_RENDERER=cairo /usr/bin/snapshot --gapplication-service

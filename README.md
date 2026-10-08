@@ -37,10 +37,12 @@ that makes mainline do the same.
     patches/debug/    diagnostic patches, numbered from 9000 (see its README)
     recipe/           the kernel APKBUILD and config exactly as built
     recipe/libcamera/ libcamera patches and the IMX200 tuning file
+    recipe/mesa/      Mesa with the Adreno 330 fix for GTK4's GL renderer
     tools/            helper scripts (boot image, firmware unpacking, probes)
     tools/camera/     capture and analysis scripts for the rear camera
+    tools/re/         disassembler and emulator for stock's ARM libraries
     userspace/        MAC address service, journald setting, camera udev rule,
-                      libcamera configuration and Snapshot launcher overrides
+                      libcamera configuration and the Megapixels config
     docs/building.md  building, flashing and the first-boot setup
     docs/notes.md     what each part needed and why, with the measurements
     docs/next-steps.md  current state and what comes next
@@ -126,10 +128,13 @@ data for features that are not worth their cost yet.
 
 - `0089` stops the GPU shrinker dereferencing a NULL file on objects that live in
   the VRAM carveout. That oops killed kswapd under memory pressure.
-- The GPU and MDP IOMMU work (`0017`-`0019`, `0025`-`0027`, `0032`-`0038`) is kept
-  but out of the build. The GPU renders through its IOMMU without faults, but it
-  costs about five times the throughput and frees no memory until the display
-  controller has an IOMMU too.
+- `0034`-`0036` put the GPU behind its IOMMU (arm-smmu), built in since r204; `0036`
+  lets it map large pages, which brings the cost down to about 1.5x. The display
+  controller stays on the VRAM carveout, so no memory is freed yet. The older IOMMU
+  attempts (`0017`-`0019`, `0025`-`0027`, `0032`, `0033`, `0037`, `0038`) are kept out
+  of the build.
+- GTK4's GL renderer hung the GPU until Mesa ended direct `CP_LOAD_STATE` packets with a
+  register write, as the stock driver does (`recipe/mesa`).
 
 **Audio** (`0039`-`0044`, `0049`-`0068`)
 

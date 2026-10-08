@@ -3,11 +3,11 @@
 Where the port stands and what comes next, in order. The history behind every item
 is in `worklog.md`; the settled findings are in `notes.md`.
 
-## Current state (2026-10-07)
+## Current state (2026-10-08)
 
 The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 204, with the boot
 image from 204 (`uname -v` prints `#205`), and libcamera from
-`recipe/libcamera` at r7. The GPU runs behind its IOMMU since r204 (`0034`-`0036`);
+`recipe/libcamera` at r7 and Mesa from `recipe/mesa` at r4. The GPU runs behind its IOMMU since r204 (`0034`-`0036`);
 the display still uses the VRAM carveout. Install the package for module changes and
 rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
 device tree.
@@ -30,36 +30,30 @@ while the real fix is under way. And start from the other firmwares, above all s
 reverse engineer them, then use what they yield, combine it, and improve on it where we
 can.
 
-## GPU (Adreno 330): the hang, first
+## GPU (Adreno 330)
 
-GTK4's GPU renderer hangs the GPU: when Snapshot handles a photo, and within seconds of
-starting Megapixels. The decoded hang (see `notes.md`, "The GPU hang") is a GTK widget
-draw, not the camera code, so it can hit any GTK4 app. It blocks the proper camera path
-(GPU debayer, small preview, full-resolution photo). The cairo renderer forced on
-Snapshot by `userspace/snapshot` is a stopgap until this is fixed.
+The GTK4 hang is fixed (`notes.md`, "The GPU hang, solved"): Mesa now ends every direct
+`CP_LOAD_STATE` with a register write, as the stock driver does
+(`recipe/mesa`, r4). Megapixels and Snapshot run on GTK's GL renderer with no hangs, and
+Snapshot's cairo stopgap is gone.
 
-Established so far (`notes.md`, "The GPU hang, narrowed down"): not a memory fault (the
-GPU now runs behind its IOMMU and nothing faults), tied to indirect shader uploads
-(`FD_MESA_DEBUG=direct` removes it), timing dependent, and not cured by waiting for idle
-before the upload.
-
-1. Find out why an indirect shader upload stalls the pipeline when an inline one does
-   not: compare the two command streams for the same frame, and what kgsl and the stock
-   blob do around CP_LOAD_STATE (`libGLESv2_adreno.so` in the stock system image).
-2. Fix it in Mesa, then move Megapixels (with its new colour profile) and Snapshot onto
-   the GPU.
-3. Port kgsl's power-on shader-corruption fixup for a3xx to drm/msm.
+1. The other a3xx workarounds stock applies on this chip (flag bits in `notes.md`) did not
+   affect the hang. They stay documented; port one only if a symptom points to it.
+2. Port kgsl's power-on shader-corruption fixup for a3xx to drm/msm. The stock kernel
+   binary has it; nothing is known to need it yet.
+3. Offer the Mesa fix upstream once the port is clean.
 
 ## Camera, rear (IMX200)
 
-1. **Megapixels** (`userspace/megapixels/sony,xperia-amami.conf`): preview at 1312x988
-   and full-resolution capture work from the command line; the app waits on the GPU
-   hang. It also needs a colour profile (DCP) built from stock's colour matrix.
+1. **Megapixels** (`userspace/megapixels/sony,xperia-amami.conf`): the app now runs
+   without hanging the GPU. Next is checking its preview and photos, with the colour
+   profile from stock's matrix (`sony,xperia-amami,imx200.dcp`), on a lit scene.
 2. **Autofocus tuning.** Continuous contrast AF works (`recipe/libcamera` `0007`). It
    rescans on large sharpness changes only; tap to focus and the AF controls for apps
    are not there yet, and a scan takes a few seconds.
-3. **Full-resolution photos from apps** need the GPU path above, and enough CMA for
-   the capture buffers.
+3. **Full-resolution photos from apps** need a GPU debayer (Megapixels does its own; the
+   libcamera one still needs an msm IOMMU for the display), and enough CMA for the
+   capture buffers.
 4. **Tuning.** White balance and exposure are libcamera's simple defaults. The EEPROM's
    remaining bytes and stock's `exposure_ctrl.dat` may hold better starting points.
 5. **The first binned frames** come out at full size, because stream-on resets the mode.

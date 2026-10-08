@@ -101,12 +101,11 @@ The camera needs the patched libcamera from `recipe/libcamera` (copy it over
     sudo install -D -m 644 userspace/libcamera-configuration.yaml /etc/libcamera/configuration.yaml
     sudo apk add snapshot xdg-user-dirs
     xdg-user-dirs-update
-    mkdir -p ~/.local/share/applications ~/.local/share/dbus-1/services
-    cp userspace/snapshot/org.gnome.Snapshot.desktop ~/.local/share/applications/
-    cp userspace/snapshot/org.gnome.Snapshot.service ~/.local/share/dbus-1/services/
 
-The last two start Snapshot with GTK's software renderer: taking a photo with its GPU
-renderer locks up the Adreno 330 until a reboot.
+GTK4 apps, Snapshot and Megapixels among them, also need the Mesa from `recipe/mesa`:
+with Alpine's, GTK's GL renderer hangs the Adreno 330 within seconds. Copy it over
+`pmaports/temp/mesa`, build it, and install the six packages listed in
+`recipe/README.md`.
 
 Snapshot saves to the XDG pictures folder and refuses to take a photo without one, hence
 `xdg-user-dirs`. Reboot after upgrading libcamera, so WirePlumber loads the new one.

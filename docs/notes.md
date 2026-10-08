@@ -1425,8 +1425,8 @@ earlier WirePlumber crashes put down to a libcamera upgrade were this.
   1920x1080 instead (any size still validates). First frame now after about 8 s.
 - Taking a photo with GTK4's GL renderer hangs the GPU (`hangcheck ... offending task:
   snapshot`), and the X server with it; closing Snapshot ends it, otherwise only a reboot
-  does. With `GSK_RENDERER=cairo` it does not happen, at about 10 fps. `userspace/snapshot`
-  sets it for Snapshot alone.
+  does. With `GSK_RENDERER=cairo` it does not happen, at about 10 fps. That was the
+  stopgap until the Mesa fix below ("The GPU hang, solved"); it is gone.
 - Snapshot takes photos from the preview stream, so they are 1920x1080.
 - The photo failure itself was a missing XDG pictures folder.
 
@@ -1473,6 +1473,42 @@ style DNG profiles next to the config.
 Tools: `crashdec` and `cffdump` build from Mesa with `-Dtools=freedreno` inside
 pmbootstrap's native chroot; a strict `pmbootstrap build` zaps that chroot, so rebuild
 them after one. Command streams record with `FD_RD_DUMP=full FD_RD_DUMP_PATH=dir`.
+
+**The GPU hang, solved (2026-10-08): a register write after every direct load.**
+The stock driver's a3xx code (`libGLESv2_adreno.so`, functions `oxili_*`, symbols
+exported) has a table of hardware workarounds. `oxili_detect_workarounds()` picks a set
+of flag bits by chip id; for this GPU, 3.3.0.1, it is word 0 `0xc2878307` and word 1
+`0x1b`. Running the stock code under an emulator (`tools/re/a3xx-stock-wa.py`) shows
+what each flag adds to the command stream. Four of them do something Mesa does not:
+
+| flag | stock adds | effect on the hang |
+|------|------------|--------------------|
+| w0 bit 23 | a write of `GRAS_SU_POINT_MINMAX` (its current value) after every direct `CP_LOAD_STATE` | **cures it** |
+| w1 bit 1 | `CP_EVENT_WRITE` event `0x18` before every draw | none |
+| w0 bit 25 | after every draw, `HLSQ_CONTROL_0` again without the shader-restart and full-update bits | none |
+| w0 bit 30 | a per-context preamble: a dummy one-pixel draw with a two-instruction shader pair | none |
+
+Each was put behind its own switch in a test Mesa and run in Megapixels for 30 to 120 s:
+9 to 40 hangchecks with none, 0 with bit 23's write, and no change from the other three.
+Snapshot with GTK's GL renderer: 14 hangs in 45 s without, 0 with. The register does not
+matter: the same write with a fixed value, or Mesa's `VFD_PERFCOUNTER0_SELECT = 0` dummy
+write, works as well. It fits the earlier clue, though this part is inference: with
+`FD_MESA_DEBUG=direct` the shaders load directly too (each followed by that dummy
+write), so no indirect load is left to come after a direct one that was not closed.
+
+The fix is `recipe/mesa/freedreno-a3xx-end-direct-loads.patch`: after each of the eight
+direct `CP_LOAD_STATE` packets in `fd3_emit.c` (constants, constant pointers, samplers,
+textures, mipaddrs, and the GMEM restore's three), write `VFD_PERFCOUNTER0_SELECT`.
+
+Two leads checked on the way and dropped:
+
+- Power collapse. The GPU autosuspends after 66 ms, so GTK's bursty frames power-cycle it
+  constantly, and kgsl runs a "power-on shader corruption" fixup that mainline lacks.
+  With runtime PM held on, Megapixels hung exactly as before.
+- The VBIF (bus interface) setup. Sony's kgsl source in `work/kgsl` writes the full a330
+  table, mainline's 8974v2 branch only five registers. The stock *kernel binary* has both
+  tables, and the short v2 one, identical to mainline's, is the one for chip 3.3.0.1. The
+  source in `work/kgsl` is older than what Sony shipped; check the binary before trusting it.
 
 **A colour profile for Megapixels from stock's matrix.** `tools/camera/mkdcp.py` writes
 `userspace/megapixels/sony,xperia-amami,imx200.dcp`: ForwardMatrix1 is stock's colour
