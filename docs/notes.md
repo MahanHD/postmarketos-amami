@@ -1498,6 +1498,18 @@ With all three a white wall comes out white under a warm room lamp. The brightes
 highlights still turn slightly pink, clipped pixels getting white balance gain (the same
 thing libcamera's `0005` fixed by clipping after white balance).
 
+**Megapixels' exposure range (2026-10-08).** Megapixels runs each mode at the rate in
+its config and lets auto exposure go up to the exposure control's maximum, which the
+sensor driver keeps at the frame length. libmegapixels set the rate only through the
+subdev frame interval, which raw sensors in mainline do not implement; frame timing on
+them is `V4L2_CID_VBLANK`. So the 1312x988 mode, configured as 30 fps, ran at the
+sensor's default 95.9 fps and exposure stopped at about 10 ms. `recipe/libmegapixels`
+(`rate-through-vblank.patch`) falls back to computing the blanking from the pixel rate,
+the horizontal blanking and the format when the frame interval is not supported, and the
+config now has a `Rate` command after the sensor's `Mode` in each mode. Vertical
+blanking comes out at 2308, exposure reaches 3288 lines, and the night preview is far
+less noisy.
+
 **The GPU hang, solved (2026-10-08): a register write after every direct load.**
 The stock driver's a3xx code (`libGLESv2_adreno.so`, functions `oxili_*`, symbols
 exported) has a table of hardware workarounds. `oxili_detect_workarounds()` picks a set

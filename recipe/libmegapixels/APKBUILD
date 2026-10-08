@@ -1,0 +1,33 @@
+maintainer="Stefan Hansson <newbyte@postmarketos.org>"
+# Alpine 3.24 community/libmegapixels, with frame rates through vertical blanking
+pkgname=libmegapixels
+pkgver=0.2.3
+pkgrel=1
+pkgdesc="Device abstraction for the Megapixels application"
+url="https://libme.gapixels.me"
+arch="all"
+license="GPL-3.0-or-later"
+makedepends="libconfig-dev linux-headers meson"
+subpackages="$pkgname-dev"
+source="https://gitlab.com/megapixels-org/libmegapixels/-/archive/$pkgver/libmegapixels-$pkgver.tar.gz
+	rate-through-vblank.patch
+	"
+
+build() {
+	abuild-meson \
+		output .
+	meson compile -C output
+}
+
+check() {
+	meson test --print-errorlogs -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+sha512sums="
+7ba62991b8ad3f06ef0797d873874e5367eb2ac2793b72df7a668d9aa4cbff9719a9b83c73b6dc41bebc658a137a3a31aecea62e6dee775c7eda1a7354c57430  libmegapixels-0.2.3.tar.gz
+c978cc40276bc17ab43d6e3a5d3b95aa74e258108ec875bf24505f0b84aacf3d1797ab02389500204b9d3c1dbc4ac330ec5b9fcef424bb1f2e1d501d72296542  rate-through-vblank.patch
+"

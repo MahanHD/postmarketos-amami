@@ -41,17 +41,20 @@ Snapshot's cairo stopgap is gone.
    affect the hang. They stay documented; port one only if a symptom points to it.
 2. Port kgsl's power-on shader-corruption fixup for a3xx to drm/msm. The stock kernel
    binary has it; nothing is known to need it yet.
-3. GPU recovery can fail for good: after one hang at 21:39 (Xorg, still on the old Mesa)
+3. Xorg can still hang the GPU on the fixed Mesa (twice in one Megapixels run). That
+   dump (`work/mesa/xorg-hang.devcore`) is a different state: pipeline idle, both IBs
+   read, the CP busy with a non-real-time memory operation, three fences unwritten.
+4. GPU recovery can fail for good: after one hang at 21:39 (Xorg, still on the old Mesa)
    every reset left the GPU unable to finish anything until a reboot. Earlier the same day
    it recovered from dozens of hangs. Decode `work/mesa/stuck.devcore` and find out why.
-4. Offer the Mesa fix upstream once the port is clean.
+5. Offer the Mesa fix upstream once the port is clean.
 
 ## Camera, rear (IMX200)
 
 1. **Megapixels** (`userspace/megapixels/sony,xperia-amami.conf`, `recipe/megapixels`):
-   it previews live on the GPU with no hangs, and with the colour fixes white is white. Its
-   auto exposure never stretches the frame, so it tops out at about 10 ms and is dim
-   indoors at night. Clipped highlights turn pink.
+   it previews live on the GPU, white is white, and auto exposure now has the whole 30 fps
+   frame (`recipe/libmegapixels`). Clipped highlights turn pink: clip after white
+   balance in its shader, as libcamera's `0005` does.
 2. **Autofocus tuning.** Continuous contrast AF works (`recipe/libcamera` `0007`). It
    rescans on large sharpness changes only; tap to focus and the AF controls for apps
    are not there yet, and a scan takes a few seconds.

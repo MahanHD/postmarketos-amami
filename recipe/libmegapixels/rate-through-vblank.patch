@@ -1,0 +1,91 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] pipeline: set the rate through vertical blanking when there is no frame interval
+
+Raw sensors in mainline (imx200 on the Xperia Z1 Compact among them) do
+not implement the subdev frame interval; their frame rate is the pixel
+rate over the line length times the frame length, and the frame length
+is set with V4L2_CID_VBLANK. A "Rate" command on such a sensor failed,
+the sensor ran at its default rate (95.9 fps for a mode configured as
+30), and since exposure cannot exceed the frame length, auto exposure
+topped out at about 10 ms.
+
+When VIDIOC_SUBDEV_S_FRAME_INTERVAL is not supported, compute the
+blanking for the requested rate from V4L2_CID_PIXEL_RATE, V4L2_CID_HBLANK
+and the active format, and set V4L2_CID_VBLANK.
+
+---
+--- a/src/pipeline.c	2026-10-08 23:14:56.965343448 +0400
++++ b/src/pipeline.c	2026-10-08 23:15:08.959143792 +0400
+@@ -3,6 +3,7 @@
+ #include <string.h>
+ #include <linux/media.h>
+ #include <linux/v4l2-subdev.h>
++#include <linux/videodev2.h>
+ #include <unistd.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+@@ -243,6 +244,54 @@
+ 	}
+ }
+ 
++/*
++ * Raw sensors set their frame rate with vertical blanking, not with a frame
++ * interval: work out the blanking that gives the requested rate from the
++ * pixel rate and the line length.
++ */
++static int
++set_rate_by_blanking(int fd, int pad, int rate)
++{
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
++		.pad = pad,
++	};
++	struct v4l2_ext_control pixel_rate = {.id = V4L2_CID_PIXEL_RATE};
++	struct v4l2_ext_controls ctrls = {
++		.which = V4L2_CTRL_WHICH_CUR_VAL,
++		.count = 1,
++		.controls = &pixel_rate,
++	};
++	struct v4l2_control hblank = {.id = V4L2_CID_HBLANK};
++	struct v4l2_queryctrl range = {.id = V4L2_CID_VBLANK};
++	struct v4l2_control vblank = {.id = V4L2_CID_VBLANK};
++	long long line, lines, value;
++
++	if (rate <= 0 ||
++		xioctl(fd, VIDIOC_SUBDEV_G_FMT, &fmt) == -1 ||
++		xioctl(fd, VIDIOC_G_EXT_CTRLS, &ctrls) == -1 ||
++		xioctl(fd, VIDIOC_G_CTRL, &hblank) == -1 ||
++		xioctl(fd, VIDIOC_QUERYCTRL, &range) == -1) {
++		return -1;
++	}
++
++	line = (long long) fmt.format.width + hblank.value;
++	lines = pixel_rate.value64 / (line * rate);
++	value = lines - fmt.format.height;
++	if (value < range.minimum) {
++		value = range.minimum;
++	}
++	if (value > range.maximum) {
++		value = range.maximum;
++	}
++	vblank.value = (int) value;
++	if (xioctl(fd, VIDIOC_S_CTRL, &vblank) == -1) {
++		return -1;
++	}
++	log_debug("  Rate %d through vertical blanking %d\n", rate, vblank.value);
++	return 0;
++}
++
+ unsigned int
+ libmegapixels_select_mode(libmegapixels_camera *camera, libmegapixels_mode *mode, struct v4l2_format *format)
+ {
+@@ -361,7 +410,8 @@
+ 					}
+ 				}
+ 
+-				if (xioctl(sd->fd, VIDIOC_SUBDEV_S_FRAME_INTERVAL, &subdev_ival) == -1) {
++				if (xioctl(sd->fd, VIDIOC_SUBDEV_S_FRAME_INTERVAL, &subdev_ival) == -1 &&
++					(errno != ENOTTY || set_rate_by_blanking(sd->fd, cmd->pad_from, cmd->rate) != 0)) {
+ 					log_error("Could not set rate on %s:%d: %s\n", cmd->entity_from, cmd->pad_from, strerror(errno));
+ 				}
+ 				break;

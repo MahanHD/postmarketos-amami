@@ -51,3 +51,10 @@ applies the colour steps in the right order (`preview-colour-order.patch`), and 
 white balance on the preview as it is (`awb-stats-in-srgb.patch`). See
 `../docs/notes.md`, "Megapixels' colour, fixed". Build it from pmaports' `temp/megapixels`
 and install it with `userspace/megapixels/*` copied to `/usr/share/megapixels/config/`.
+
+## libmegapixels
+
+`libmegapixels/` is Alpine 3.24's `community/libmegapixels` (0.2.3) with
+`rate-through-vblank.patch`: a `Rate` command on a sensor without a frame interval (every
+raw sensor in mainline, imx200 included) sets the frame rate through vertical blanking.
+Without it Megapixels' auto exposure stops at the sensor's default frame length.

@@ -39,6 +39,7 @@ that makes mainline do the same.
     recipe/libcamera/ libcamera patches and the IMX200 tuning file
     recipe/mesa/      Mesa with the Adreno 330 fix for GTK4's GL renderer
     recipe/megapixels/ Megapixels with its colour profile handling fixed
+    recipe/libmegapixels/ libmegapixels with frame rates through vertical blanking
     tools/            helper scripts (boot image, firmware unpacking, probes)
     tools/camera/     capture and analysis scripts for the rear camera
     tools/re/         disassembler and emulator for stock's ARM libraries
