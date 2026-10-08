@@ -39,8 +39,8 @@ that makes mainline do the same.
     recipe/libcamera/ libcamera patches and the IMX200 tuning file
     tools/            helper scripts (boot image, firmware unpacking, probes)
     tools/camera/     capture and analysis scripts for the rear camera
-    userspace/        MAC address service, journald setting, camera udev rule and
-                      libcamera configuration
+    userspace/        MAC address service, journald setting, camera udev rule,
+                      libcamera configuration and Snapshot launcher overrides
     docs/building.md  building, flashing and the first-boot setup
     docs/notes.md     what each part needed and why, with the measurements
     docs/next-steps.md  current state and what comes next

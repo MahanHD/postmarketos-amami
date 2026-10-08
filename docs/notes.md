@@ -1413,3 +1413,20 @@ soft IPA read the exposure out of the sensor controls before checking they were 
 and statistics arriving as the stream stops come with none. `0008` checks first. Two
 earlier WirePlumber crashes put down to a libcamera upgrade were this.
 
+**Making Snapshot usable.** First tries: the preview ran at 4-5 fps, the camera took about
+23 s to appear, the photo failed and the GPU locked up.
+
+- The CPU debayer with a colour matrix does nine table lookups and three clamps per pixel:
+  11 fps at 1080p against 33 without. Stock's matrix is now off in `imx200.yaml`; Snapshot
+  gets 12-15 fps.
+- 14 s of the start went into Snapshot weighing 300 caps: six formats by fifty sizes,
+  because the soft ISP advertises a range and `StreamFormats` expands it into every
+  standard resolution. `0009` offers each mode's full size plus 640x480, 1280x720 and
+  1920x1080 instead (any size still validates). First frame now after about 8 s.
+- Taking a photo with GTK4's GL renderer hangs the GPU (`hangcheck ... offending task:
+  snapshot`), and the X server with it; closing Snapshot ends it, otherwise only a reboot
+  does. With `GSK_RENDERER=cairo` it does not happen, at about 10 fps. `userspace/snapshot`
+  sets it for Snapshot alone.
+- Snapshot takes photos from the preview stream, so they are 1920x1080.
+- The photo failure itself was a missing XDG pictures folder.
+

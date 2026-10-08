@@ -23,16 +23,19 @@ works for raw frames.
 
 ## Camera, rear (IMX200)
 
-1. **Autofocus tuning.** Continuous contrast AF works (`recipe/libcamera` `0007`). It
+1. **Faster preview.** Snapshot gets about 10 fps with the software renderer. A GPU
+   debayer would need the msm IOMMU; the GTK GL hang on photo is a freedreno a3xx bug
+   worth reporting.
+2. **Autofocus tuning.** Continuous contrast AF works (`recipe/libcamera` `0007`). It
    rescans on large sharpness changes only; tap to focus and the AF controls for apps
    are not there yet, and a scan takes a few seconds.
-2. **Full-resolution photos from apps.** 2560x1920 works; 5248x3936 needs more CMA for
+3. **Full-resolution photos from apps.** 2560x1920 works; 5248x3936 needs more CMA for
    the capture buffers (`CONFIG_CMA_SIZE_MBYTES`, now 256 MB, most of it taken by the GPU
    carveout).
-3. **Tuning.** White balance and exposure are libcamera's simple defaults. The EEPROM's
+4. **Tuning.** White balance and exposure are libcamera's simple defaults. The EEPROM's
    remaining bytes and stock's `exposure_ctrl.dat` may hold better starting points.
-4. **The first binned frames** come out at full size, because stream-on resets the mode.
-5. **Stream reliability.** A stream after a failed one can still wedge camss.
+5. **The first binned frames** come out at full size, because stream-on resets the mode.
+6. **Stream reliability.** A stream after a failed one can still wedge camss.
 
 ## Camera, front (IMX132)
 

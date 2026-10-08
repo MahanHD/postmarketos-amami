@@ -3530,6 +3530,9 @@ the quirk, settle in camss), then the IMX132.
 - First real use in Snapshot: the photo failed (no XDG pictures folder), the preview ran
   at 4-5 fps, and the GPU hung once. WirePlumber had been aborting in the soft IPA when a
   stream stopped (`0008`).
+- Lag: the colour matrix tripled the debayer cost (off now), and Snapshot spent 14 s
+  choosing among 300 caps (`0009`). The GPU hang came from GTK's GL renderer handling the
+  photo, avoided with the cairo one. Photos now save, 1920x1080.
 
 ## Parked patches
 

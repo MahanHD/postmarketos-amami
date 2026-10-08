@@ -26,7 +26,7 @@ and the boot image.
 
 `libcamera/` holds what this port adds to pmaports' `temp/libcamera` (0.7.1):
 `0004` (IMX200 gain model and properties), `0005` and `0006` (soft ISP colour fixes),
-`0007` (contrast autofocus for the simple pipeline), `0008` (a crash fix) and
-`imx200.yaml`, the tuning file
-with stock's colour matrix and the focus range. The `APKBUILD` there is the complete
-one, with all eight patches and the tuning file in its source list.
+`0007` (contrast autofocus for the simple pipeline), `0008` (a crash fix), `0009` (a
+short list of output sizes) and `imx200.yaml`, the tuning file with the focus range
+(stock's colour matrix is in it, switched off for speed). The `APKBUILD` there is the
+complete one, with all nine patches and the tuning file in its source list.
