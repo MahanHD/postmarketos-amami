@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=193
+pkgrel=194
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -111,6 +111,8 @@ source="
 	0098-media-ccs-write-the-imx200-stock-init-and-window-tables.patch
 	0099-media-camss-size-the-msm8974-csid-and-vfe-clocks-for-16-bit-paths.patch
 	0100-arm-dts-amami-add-the-rear-camera.patch
+	0101-media-i2c-add-a-driver-for-the-rohm-bu64296-lens-actuator.patch
+	0102-arm-dts-amami-add-the-rear-camera-focus-actuator.patch
 	9006-debug-camss-allow-arm32-bringup.patch
 	9007-debug-amami-describe-the-front-camera.patch
 	9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
@@ -156,7 +158,7 @@ package() {
 
 sha512sums="
 6e67e6c86e36e235bad086ea2984c0885eb2e47264e667aa177df8ed7c29edbb23a866407dc59bdd39cfb95f6677e755a426eff485a93898c01997a6a6fcdd9c  linux-v6.16.12-msm8974.tar.gz
-512bfa9f66801c223a27e59dbe88e6c573f6f2ba193ace849ca60b063ff145460d0519cfb553000450568b12bc61c9bf1079bb8581e889dd4f2be29b744fc572  config-postmarketos-qcom-msm8974.armv7
+de7a3c6c53fe9e208298dac24590b8bf0c25402ab59d0e6d8ace84a78501ba827c1c27bc24a6e2926e3c0dffedfc9ace267d8d75ccb325526b67095fa19942de  config-postmarketos-qcom-msm8974.armv7
 4527280bea3966a4d59d27336f6fb6ad4149ac8be94fa5f2dd238172ae4fac2c7a36dcc5c145aac0f7d979291475f4721bf7da0058545533f7df4e21d9cb6490  0001-arm-dts-rhine-enable-wcnss-wifi-bt.patch
 ea4aa2b9216a367acc8c97480c3f8e659d4a522d0301de3f397cd2515a3fffe10c6c77efba6751c0452f8c808b3395282e2d32caa4882ddfe5391c813f862c61  0002-wcn36xx-add-scan_offload-module-param.patch
 5b0f7ed258736bfb207bfe11c9dd50a0dcc7f4ce835ef2d10dfd840cb3f9b8aee28418642dc64e4705c24f33391b4ee6351f0489d730767c6cbb4d4ff7fb9a5a  0003-drm-panel-add-sony-amami-novatek.patch
@@ -234,6 +236,8 @@ fcaa804c0665860a8383f45d345753de9e9745217b64a8efbd058db93537faa52dbbc51649b500c3
 3c29c8e7912d3b249fc7275ea50904376b8238d8dc9874108978a3189badb2591d6e88852a74eee77f1949118106edda60347c3414006bcd113abb471ab9227a  0098-media-ccs-write-the-imx200-stock-init-and-window-tables.patch
 cfc3e9f7ad56d3af5f44b778f968f7df1361d7e7a0fa84555f712d716773a00ed084c952ebc60e53c114d53a3e93834fbdc9860d9804182aa1c3f68b500a3da4  0099-media-camss-size-the-msm8974-csid-and-vfe-clocks-for-16-bit-paths.patch
 138882dd979b7227def914bd80e9dd42e77442c6142983183466a76f8892bd543d065b783db32e767e9726bbee9b99cbae18ec39674490200047c497ce87bc1d  0100-arm-dts-amami-add-the-rear-camera.patch
+68ac09a2415f06e2e99bd0f80c4381d9d7373e9c6578e6bed8b296e10e965cacef7964d5c05189b772e0be8d55f62a4ea4a5a5b974c55d0a9670dbf218f08071  0101-media-i2c-add-a-driver-for-the-rohm-bu64296-lens-actuator.patch
+26d5bfc77e149ec950da51601773ae99a77462abfe460f034783a62695da92a7062af5fe204709ab2d7716849377a20ddbe76bb6e73e719de4ad0b94efc2f029  0102-arm-dts-amami-add-the-rear-camera-focus-actuator.patch
 33d0a8c71b69ccf92e17f7ddaf27baa00c6fb5045533847f87cd9d7a22cce83017388e4c409dd275c4a0ad1594db169791dff0c54b52fc92d46cad5b806960e4  9006-debug-camss-allow-arm32-bringup.patch
 5ca89212cb516c0b6319e8bdfc2aecdce9f1fe5dd9cb8f1d04175530268990d87a7e8a5f38db5a623dd549012dc7d55c61bc87cab792b6bdb24279567a2dc469  9007-debug-amami-describe-the-front-camera.patch
 4c5f60e1629f4a8b84338ecc96ec35cb6588aaef916a2bc4c61dafcece1cc62c9e99e40bf33155188e89e27f60e30f7630e6317facac4aa69cc45a99ea9d0dcb  9008-debug-imx219-accept-19m2-xclk-for-id-only.patch

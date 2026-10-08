@@ -160,7 +160,8 @@ from.
   when the picture was black.
 - `raw10.py` runs on the host: per-frame statistics, or a quick preview PNG of the last
   frame, corrected for lens shading when given a dump of the module EEPROM.
-- `capture.sh` passes `CCS_OPTS` to the ccs module and writes to `OUT`. To measure the
+- `capture.sh` passes `CCS_OPTS` to the ccs module and writes to `OUT`. `FOCUS=0..1023`
+  powers the lens and sets its position for the capture (about 256 for distant scenes). To measure the
   real frame rate, set `OUT=/dev/null`: writing 26 MB frames to the phone's storage caps
   it at about 1.7 fps.
 

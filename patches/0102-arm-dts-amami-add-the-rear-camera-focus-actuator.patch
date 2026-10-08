@@ -1,0 +1,26 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -413,6 +413,8 @@
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&cam_rear_default>;
+ 
++		lens-focus = <&rear_lens>;
++
+ 		port {
+ 			rear_cam_ep: endpoint {
+ 				data-lanes = <1 2 3 4>;
+@@ -422,6 +424,14 @@
+ 			};
+ 		};
+ 	};
++
++	/* The rear module's focus actuator, a ROHM BU64296GWX */
++	rear_lens: lens@c {
++		compatible = "rohm,bu64296";
++		reg = <0x0c>;
++		vdd-supply = <&pm8941_l23>;
++		vio-supply = <&pm8941_lvs2>;
++	};
+ };
+ 
+ &camss {

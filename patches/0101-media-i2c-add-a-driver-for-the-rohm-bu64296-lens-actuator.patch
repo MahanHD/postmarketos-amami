@@ -1,0 +1,276 @@
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -789,6 +789,16 @@
+ 	  capability. This is designed for linear control of
+ 	  voice coil motors, controlled via I2C serial interface.
+ 
++config VIDEO_BU64296
++	tristate "BU64296 lens voice coil support"
++	depends on I2C && VIDEO_DEV
++	select MEDIA_CONTROLLER
++	select VIDEO_V4L2_SUBDEV_API
++	select V4L2_ASYNC
++	help
++	  This is a driver for the ROHM BU64296GWX camera lens voice coil,
++	  a 10 bit DAC controlled over I2C.
++
+ config VIDEO_DW9714
+ 	tristate "DW9714 lens voice coil support"
+ 	depends on I2C && VIDEO_DEV
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -21,6 +21,7 @@
+ obj-$(CONFIG_VIDEO_APTINA_PLL) += aptina-pll.o
+ obj-$(CONFIG_VIDEO_AR0521) += ar0521.o
+ obj-$(CONFIG_VIDEO_BT819) += bt819.o
++obj-$(CONFIG_VIDEO_BU64296) += bu64296.o
+ obj-$(CONFIG_VIDEO_BT856) += bt856.o
+ obj-$(CONFIG_VIDEO_BT866) += bt866.o
+ obj-$(CONFIG_VIDEO_CCS) += ccs/
+--- /dev/null
++++ b/drivers/media/i2c/bu64296.c
+@@ -0,0 +1,244 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * ROHM BU64296GWX lens voice coil driver
++ *
++ * The protocol comes from Sony's camera middleware for the Xperia Z1 Compact,
++ * which drives this part in the SOI20BS0 module: every transfer is two bytes,
++ * and a lens position is written as 0xc4 | position[9:8], position[7:0].
++ */
++
++#include <linux/delay.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/pm_runtime.h>
++#include <linux/regulator/consumer.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-event.h>
++
++#define BU64296_MAX_FOCUS_POS	1023
++#define BU64296_CMD_DAC		0xc4
++/* Move the lens to and from rest in steps this large, so it does not click */
++#define BU64296_CTRL_STEPS	32
++#define BU64296_CTRL_DELAY_US	1000
++
++static const char * const bu64296_supply_names[] = {
++	"vdd",	/* the coil and the chip */
++	"vio",	/* the I2C levels, shared with the sensor */
++};
++
++struct bu64296_device {
++	struct v4l2_ctrl_handler ctrls;
++	struct v4l2_subdev sd;
++	struct regulator_bulk_data supplies[ARRAY_SIZE(bu64296_supply_names)];
++	u16 current_val;
++};
++
++static inline struct bu64296_device *sd_to_bu64296(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct bu64296_device, sd);
++}
++
++static int bu64296_write_pos(struct i2c_client *client, u16 val)
++{
++	u8 buf[2] = { BU64296_CMD_DAC | ((val >> 8) & 3), val & 0xff };
++	int ret;
++
++	ret = i2c_master_send(client, buf, sizeof(buf));
++	if (ret != sizeof(buf))
++		return ret < 0 ? ret : -EIO;
++
++	return 0;
++}
++
++static int bu64296_set_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct bu64296_device *bu = container_of(ctrl->handler,
++						 struct bu64296_device, ctrls);
++	struct i2c_client *client = v4l2_get_subdevdata(&bu->sd);
++	int ret;
++
++	if (ctrl->id != V4L2_CID_FOCUS_ABSOLUTE)
++		return -EINVAL;
++
++	/* Only write while powered; resume applies the value */
++	if (!pm_runtime_get_if_in_use(&client->dev)) {
++		bu->current_val = ctrl->val;
++		return 0;
++	}
++
++	ret = bu64296_write_pos(client, ctrl->val);
++	if (!ret)
++		bu->current_val = ctrl->val;
++	pm_runtime_put(&client->dev);
++
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops bu64296_ctrl_ops = {
++	.s_ctrl = bu64296_set_ctrl,
++};
++
++static int bu64296_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
++{
++	return pm_runtime_resume_and_get(sd->dev);
++}
++
++static int bu64296_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
++{
++	pm_runtime_put(sd->dev);
++
++	return 0;
++}
++
++static const struct v4l2_subdev_internal_ops bu64296_int_ops = {
++	.open = bu64296_open,
++	.close = bu64296_close,
++};
++
++static const struct v4l2_subdev_core_ops bu64296_core_ops = {
++	.log_status = v4l2_ctrl_subdev_log_status,
++	.subscribe_event = v4l2_ctrl_subdev_subscribe_event,
++	.unsubscribe_event = v4l2_event_subdev_unsubscribe,
++};
++
++static const struct v4l2_subdev_ops bu64296_ops = {
++	.core = &bu64296_core_ops,
++};
++
++static int bu64296_suspend(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct bu64296_device *bu = sd_to_bu64296(sd);
++	struct i2c_client *client = v4l2_get_subdevdata(sd);
++	int val;
++
++	for (val = bu->current_val & ~(BU64296_CTRL_STEPS - 1);
++	     val >= 0; val -= BU64296_CTRL_STEPS) {
++		if (bu64296_write_pos(client, val))
++			break;
++		usleep_range(BU64296_CTRL_DELAY_US, BU64296_CTRL_DELAY_US + 10);
++	}
++
++	return regulator_bulk_disable(ARRAY_SIZE(bu->supplies), bu->supplies);
++}
++
++static int bu64296_resume(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct bu64296_device *bu = sd_to_bu64296(sd);
++	struct i2c_client *client = v4l2_get_subdevdata(sd);
++	int ret, val;
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(bu->supplies), bu->supplies);
++	if (ret)
++		return ret;
++
++	/* Stock waits 2 ms after the actuator supply */
++	usleep_range(2000, 2500);
++
++	for (val = bu->current_val % BU64296_CTRL_STEPS;
++	     val <= bu->current_val; val += BU64296_CTRL_STEPS) {
++		ret = bu64296_write_pos(client, val);
++		if (ret) {
++			dev_err(dev, "failed to set the lens position: %d\n", ret);
++			regulator_bulk_disable(ARRAY_SIZE(bu->supplies),
++					       bu->supplies);
++			return ret;
++		}
++		usleep_range(BU64296_CTRL_DELAY_US, BU64296_CTRL_DELAY_US + 10);
++	}
++
++	return 0;
++}
++
++static int bu64296_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct bu64296_device *bu;
++	unsigned int i;
++	int ret;
++
++	bu = devm_kzalloc(dev, sizeof(*bu), GFP_KERNEL);
++	if (!bu)
++		return -ENOMEM;
++
++	for (i = 0; i < ARRAY_SIZE(bu64296_supply_names); i++)
++		bu->supplies[i].supply = bu64296_supply_names[i];
++	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(bu->supplies),
++				      bu->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get supplies\n");
++
++	v4l2_i2c_subdev_init(&bu->sd, client, &bu64296_ops);
++	bu->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
++	bu->sd.internal_ops = &bu64296_int_ops;
++	bu->sd.entity.function = MEDIA_ENT_F_LENS;
++
++	v4l2_ctrl_handler_init(&bu->ctrls, 1);
++	v4l2_ctrl_new_std(&bu->ctrls, &bu64296_ctrl_ops, V4L2_CID_FOCUS_ABSOLUTE,
++			  0, BU64296_MAX_FOCUS_POS, 1, 0);
++	if (bu->ctrls.error) {
++		ret = bu->ctrls.error;
++		goto err_free;
++	}
++	bu->sd.ctrl_handler = &bu->ctrls;
++
++	ret = media_entity_pads_init(&bu->sd.entity, 0, NULL);
++	if (ret)
++		goto err_free;
++
++	/* The supplies stay off until someone opens the lens */
++	pm_runtime_set_suspended(dev);
++	pm_runtime_enable(dev);
++
++	ret = v4l2_async_register_subdev(&bu->sd);
++	if (ret)
++		goto err_pm;
++
++	return 0;
++
++err_pm:
++	pm_runtime_disable(dev);
++	media_entity_cleanup(&bu->sd.entity);
++err_free:
++	v4l2_ctrl_handler_free(&bu->ctrls);
++	return ret;
++}
++
++static void bu64296_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct bu64296_device *bu = sd_to_bu64296(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	pm_runtime_disable(&client->dev);
++	if (!pm_runtime_status_suspended(&client->dev))
++		bu64296_suspend(&client->dev);
++	pm_runtime_set_suspended(&client->dev);
++	v4l2_ctrl_handler_free(&bu->ctrls);
++	media_entity_cleanup(&sd->entity);
++}
++
++static const struct of_device_id bu64296_of_table[] = {
++	{ .compatible = "rohm,bu64296" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, bu64296_of_table);
++
++static DEFINE_RUNTIME_DEV_PM_OPS(bu64296_pm_ops, bu64296_suspend,
++				 bu64296_resume, NULL);
++
++static struct i2c_driver bu64296_i2c_driver = {
++	.driver = {
++		.name = "bu64296",
++		.pm = pm_ptr(&bu64296_pm_ops),
++		.of_match_table = bu64296_of_table,
++	},
++	.probe = bu64296_probe,
++	.remove = bu64296_remove,
++};
++module_i2c_driver(bu64296_i2c_driver);
++
++MODULE_DESCRIPTION("ROHM BU64296GWX lens voice coil driver");
++MODULE_LICENSE("GPL");

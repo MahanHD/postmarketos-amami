@@ -1289,9 +1289,21 @@ tables in groups chosen by a module parameter.)
 
 **Working recipe** (`tools/camera/capture.sh`): RAW10 at 288 MHz, exposure up to
 3976 lines, analogue gain around 128. Nothing is poked at run time any more. The module is mounted
-sideways, so the picture needs rotating 90 degrees clockwise. Only one stream per
-boot is reliable: after a stream that fails or times out, the next start wedges
-camss and sometimes resets the phone.
+sideways, so the picture needs rotating 90 degrees clockwise. After a stream that fails
+or times out, the next start wedges camss and sometimes resets the phone; after good
+ones, six streams in a row in one boot worked. The frame rate follows the exposure: about
+6.7 fps at 3976 lines, 16.8 fps at 1200.
+
+**Focus: a ROHM BU64296GWX at 0x0c on CCI master 0, powered by l23 (2.8 V).** Stock has
+no enable GPIO for it (`sony,gpio_af = 0`) and switches l23 on after VANA. The protocol is
+in `libcammw` (`focus_bu64296gwx_vcm`, write helper around 0x10dd0): two-byte transfers,
+and a lens position is `0xc4 | pos[9:8]`, `pos[7:0]`. Stock also writes 0xcc (a mode, the
+low three bits of a `.dat` parameter) and 0xd4 (a timing value) at init; plain position
+writes work without them. `0101` is a driver in the style of `dw9714`
+(`V4L2_CID_FOCUS_ABSOLUTE`, 0-1023, powered while its subdev is open) and `0102` adds it
+to the device tree with `lens-focus` on the sensor. Higher values focus closer. Through a
+window, the city outside was sharpest at 256 and a board just in front at 512;
+768 and above is macro range. Sharpness changes by up to three times across the sweep.
 
 **The module EEPROM holds factory lens-shading calibration.** It is 2 KB at 7-bit
 0x50-0x57 on CCI master 0 (eight 256-byte pages, one-byte addressing; read it during a

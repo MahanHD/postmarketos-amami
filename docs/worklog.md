@@ -3492,6 +3492,20 @@ the quirk, settle in camss), then the IMX132.
   comes out even, and a window scene at 1200 lines (city, river, bridge) looks right.
 - Second and third streams in the same boot worked, after a successful first one.
 
+### Focus, 2026-10-08: the BU64296GWX actuator, from stock's library to a driver
+
+- Stock's `SOI20BS0_BU64296GWX.dat` is a 186-byte parameter file; the code is in
+  `libcammw` (`focus_bu64296gwx_vcm` ops table at 0x2737c). Its write helper sends two
+  bytes to 0x0c; the position write is `0xc4 | pos >> 8`, `pos & 0xff`. Init also writes
+  0xcc and 0xd4.
+- First probe during a stream: nothing at 0x0c. The stock DT explains it: the actuator
+  runs from `cam_vaf` = l23 (2.8 V), which nothing enabled, and has no GPIO.
+- `0101` (driver) and `0102` (DT, `lens-focus`) at r194. With the subdev open, the chip
+  ACKs and reads back the last command. A five-step sweep through a window: far detail
+  sharpest at 256, a near board at 512, 768-1023 macro. The 256 frame resolves cars and
+  railings that were mush at the rest position.
+- Six streams in one boot, all good. At exposure 1200 the sensor runs 16.8 fps.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

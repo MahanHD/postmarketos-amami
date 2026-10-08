@@ -27,7 +27,7 @@ that makes mainline do the same.
 | GPU frequency scaling and throttling | Works |
 | CPU hotplug | Works |
 | Suspend | s2idle works; deep suspend works but saves nothing here |
-| Rear camera (Sony IMX200, 20.7 MP) | Delivers real frames with clean colour; lens shading and white balance still to do |
+| Rear camera (Sony IMX200, 20.7 MP) | Real photos: clean colour, lens shading, manual focus; white balance and autofocus still to do |
 | Front camera (Sony IMX132) | Identified, not started |
 | Audio | No sound yet: the codec probes and its registers work, but no data moves over SLIMbus |
 
@@ -135,7 +135,7 @@ The ADSP audio services, a SLIMbus controller for msm8974, and a WCD9320 (Taiko)
 codec driver, which mainline did not have. The codec probes and all of its
 registers work, but no samples move over SLIMbus in either direction yet.
 
-**Camera** (`0085`-`0100`)
+**Camera** (`0085`-`0102`)
 
 - `0085`-`0087` add msm8974 support to CAMSS. The block matches msm8916's, which
   mainline already supports.
@@ -153,6 +153,8 @@ registers work, but no samples move over SLIMbus in either direction yet.
 - `0099` sizes the msm8974 CSID and VFE clocks for their 16-bit data paths; camss
   assumed wider ones, and four-lane frames came through corrupted or not at all.
 - `0100` adds the rear camera to amami's device tree.
+- `0101` is a driver for the rear module's focus actuator, a ROHM BU64296GWX, with the
+  protocol taken from Sony's camera library, and `0102` wires it up.
 
 The debug patches that matter right now are the camera ones: `9006` (CAMSS on
 arm32), `9007` (the front sensor, not yet working) and `9010` (contiguous buffers
@@ -180,6 +182,7 @@ None of Sony's files are in this repository.
 With the camera patches built, on the phone as root:
 
     tools/camera/capture.sh 4 3976 128     # 4 frames, exposure 3976 lines, gain 128
+    FOCUS=256 tools/camera/capture.sh 2 1200 128   # focused for a distant scene
 
 That writes packed RAW10 frames. On the host:
 

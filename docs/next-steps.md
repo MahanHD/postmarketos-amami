@@ -5,8 +5,8 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-07)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 193, with the boot
-image from 190 (`uname -v` prints `#191`). Install the package for module changes and
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 194, with the boot
+image from 194 (`uname -v` prints `#195`). Install the package for module changes and
 rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
 device tree.
 
@@ -31,9 +31,12 @@ so nothing camera-related loads at boot. `tools/camera/capture.sh` loads them wi
 2. **Stock's clocks.** Found in `libcammw` (see `notes.md`), but stock needs an 8 MHz
    MCLK and the sensor ignores PLL writes made after CCS's. If it matters, try
    writing them before CCS's PLL setup, or in place of it.
-3. **Stream reliability.** A second stream after a failed one wedges camss; one
-   stream per boot is the rule for now.
-4. **Autofocus (BU64296G)** and the EEPROM's calibration data.
+3. **Stream reliability.** A stream after a failed one wedges camss. After good ones,
+   several streams per boot work.
+4. **Autofocus.** The lens moves (`0101`, `0102`, `FOCUS=` in `capture.sh`). What is
+   missing is choosing the position: a contrast sweep like the one in `notes.md`, and
+   the EEPROM's focus calibration (stock reads "focus posi" and "lens stroke" data from
+   it).
 
 ## Camera, front (IMX132)
 

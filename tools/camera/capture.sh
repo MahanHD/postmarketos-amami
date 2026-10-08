@@ -5,6 +5,8 @@
 #   capture.sh [frames] [exposure] [analogue_gain] [test_pattern]
 #
 # Writes /home/mahan/capture.raw (packed RAW10, 6560 bytes per line) and a log.
+# FOCUS=0..1023 sets the lens (higher is closer; about 256 for distant scenes,
+# 512 for near objects); without it the lens stays unpowered at rest.
 # The camera modules are loaded with --ignore-install, so this works with the
 # bring-up blacklist in place. See docs/notes.md, "Camera".
 set -u
@@ -17,6 +19,14 @@ modprobe --ignore-install i2c_qcom_cci
 modprobe --ignore-install ccs ${CCS_OPTS:-}
 modprobe --ignore-install qcom_camss
 for i in $(seq 30); do [ -e /dev/media0 ] && break; sleep 1; done
+
+if [ -n "${FOCUS:-}" ]; then
+	LENS=$(media-ctl -d /dev/media0 -e "bu64296 3-000c")
+	# the lens stays powered only while its node is open
+	exec 3<>"$LENS"
+	v4l2-ctl -d "$LENS" -c focus_absolute="$FOCUS"
+	sleep 0.2
+fi
 
 M=/dev/media0
 SENSOR="imx200 pixel_array 3-0010"
