@@ -3533,6 +3533,9 @@ the quirk, settle in camss), then the IMX132.
 - Lag: the colour matrix tripled the debayer cost (off now), and Snapshot spent 14 s
   choosing among 300 caps (`0009`). The GPU hang came from GTK's GL renderer handling the
   photo, avoided with the cairo one. Photos now save, 1920x1080.
+- Megapixels: config written, command-line capture works, the app hangs the GPU. The
+  decoded hang is a GTK widget draw (instanced, 13 attributes, 242-instruction shader).
+  Rules from here on: proper root-cause fixes only, and stock firmware first.
 
 ## Parked patches
 

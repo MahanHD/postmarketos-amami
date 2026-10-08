@@ -21,21 +21,54 @@ The camera loads at boot and works in GNOME Snapshot through libcamera and PipeW
 old bring-up blacklist (`/etc/modprobe.d/camss-bringup.conf`) is gone; `capture.sh` still
 works for raw frames.
 
+## How this port is done
+
+Two rules for every part of it. Fix problems at the root, with the most reliable
+solution, not with a quick workaround; a workaround is only a stopgap, labelled as one,
+while the real fix is under way. And start from the other firmwares, above all stock:
+reverse engineer them, then use what they yield, combine it, and improve on it where we
+can.
+
+## GPU (Adreno 330): the hang, first
+
+GTK4's GPU renderer hangs the GPU: when Snapshot handles a photo, and within seconds of
+starting Megapixels. The decoded hang (see `notes.md`, "The GPU hang") is a GTK widget
+draw, not the camera code, so it can hit any GTK4 app. It blocks the proper camera path
+(GPU debayer, small preview, full-resolution photo). The cairo renderer forced on
+Snapshot by `userspace/snapshot` is a stopgap until this is fixed.
+
+1. Record the command stream of the hanging draw (Mesa's `FD_RD_DUMP`, decoded with
+   `cffdump`) and find what the a3xx chokes on.
+2. Check whether the GPU running without its IOMMU (VRAM carveout) is part of it. If it
+   is, the proper fix is a working GPU IOMMU, which also lets libcamera's GPU debayer
+   import buffers; the September attempt worked but cost about five times the
+   throughput, which itself needs explaining.
+3. Fix it at the root (Mesa or kernel), then move Megapixels and Snapshot onto the GPU.
+
 ## Camera, rear (IMX200)
 
-1. **Faster preview.** Snapshot gets about 10 fps with the software renderer. A GPU
-   debayer would need the msm IOMMU; the GTK GL hang on photo is a freedreno a3xx bug
-   worth reporting.
+1. **Megapixels** (`userspace/megapixels/sony,xperia-amami.conf`): preview at 1312x988
+   and full-resolution capture work from the command line; the app waits on the GPU
+   hang. It also needs a colour profile (DCP) built from stock's colour matrix.
 2. **Autofocus tuning.** Continuous contrast AF works (`recipe/libcamera` `0007`). It
    rescans on large sharpness changes only; tap to focus and the AF controls for apps
    are not there yet, and a scan takes a few seconds.
-3. **Full-resolution photos from apps.** 2560x1920 works; 5248x3936 needs more CMA for
-   the capture buffers (`CONFIG_CMA_SIZE_MBYTES`, now 256 MB, most of it taken by the GPU
-   carveout).
+3. **Full-resolution photos from apps** need the GPU path above, and enough CMA for
+   the capture buffers.
 4. **Tuning.** White balance and exposure are libcamera's simple defaults. The EEPROM's
    remaining bytes and stock's `exposure_ctrl.dat` may hold better starting points.
 5. **The first binned frames** come out at full size, because stream-on resets the mode.
+   This also wedges camss when Megapixels starts the 2624x1976 mode, so that mode is left
+   out of its config until the sensor's mode switching is understood (stock's 0x3004
+   group is the lead).
 6. **Stream reliability.** A stream after a failed one can still wedge camss.
+
+## CPU above 960 MHz
+
+The chip is rated to 2.15 GHz (speed2-pvs4, table in `notes.md`), but more than 960 MHz
+needs Linux to drive VDD_APC, which stock does with its `krait-regulator` driver and
+PM8841. That driver has to be ported from Sony's kernel; raising the clock without it
+would under-volt the CPU.
 
 ## Camera, front (IMX132)
 

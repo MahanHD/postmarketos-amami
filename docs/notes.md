@@ -1430,3 +1430,22 @@ earlier WirePlumber crashes put down to a libcamera upgrade were this.
 - Snapshot takes photos from the preview stream, so they are 1920x1080.
 - The photo failure itself was a missing XDG pictures folder.
 
+**The GPU hang.** It is GTK's GPU renderer, not the camera code. Megapixels (with this
+port's config) hangs the GPU within seconds; plain GL (glxgears) never does. The
+devcoredump, decoded with Mesa's `crashdec` (built from Mesa 26.1.6 with
+`-Dtools=freedreno` inside pmbootstrap's native chroot), shows the GPU stuck in a draw:
+`RBBM_STATUS` busy in PC_DCALL, VFD, VPC and HLSQ, an instanced draw fetching 13 vec4
+attributes per instance (`VFD_FETCH` stride 208, 50 inputs) with a 242-instruction
+fragment shader, scissored to 360x72, which is GTK drawing Megapixels' header bar. None of
+GTK's switches (`GSK_GPU_DISABLE=...`, `GDK_GL_DISABLE=...`, desktop GL instead of GLES)
+or Mesa's (`FD_MESA_DEBUG=nobin,sysmem,nogmem`) avoid it. With the cairo renderer there
+is no hang, but Megapixels' preview then freezes after a few frames, and with
+`LIBGL_ALWAYS_SOFTWARE=1` it is black and uses three cores. Devcoredumps vanish after
+five minutes: trigger, then read `/sys/class/devcoredump/devcd*/data` at once.
+
+**Megapixels** finds `sony,xperia-amami.conf` by the device-tree compatible. Getting a
+frame with `megapixels-getframe` works at 1312x988 and 5248x3936; the 2624x1976 mode
+wedges camss (its first frames come out at full size, see the stream-on reset above).
+Without a colour profile its preview is green; it looks for `sony,xperia-amami,imx200.dcp`
+style DNG profiles next to the config.
+
