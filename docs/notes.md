@@ -1449,3 +1449,35 @@ wedges camss (its first frames come out at full size, see the stream-on reset ab
 Without a colour profile its preview is green; it looks for `sony,xperia-amami,imx200.dcp`
 style DNG profiles next to the config.
 
+**The GPU hang, narrowed down (2026-10-08).**
+
+- It is not a memory fault. With the GPU behind its IOMMU (`0034`-`0036`, now in the
+  build) the hang reproduces exactly as before and the SMMU reports nothing.
+- It depends on how Mesa uploads shader instructions. `FD_MESA_DEBUG=direct`, which puts
+  them inline in the command stream (`SS_DIRECT`) instead of having the GPU fetch them
+  from the shader's buffer (`SS_INDIRECT`), removes it completely: no hangs and no dropped
+  frames in Megapixels. In the a3xx driver that flag changes nothing else.
+  `FD_MESA_DEBUG=flush` (one submit per draw) also hides it, and so does recording the
+  command stream, which slows everything down: it is timing dependent.
+- It is not a missing wait before the upload. kgsl (`adreno_a3xx.c`, Sony's GPL tree) does
+  `HLSQ_FLUSH` + `CP_WAIT_FOR_IDLE` before every shader load; a Mesa build doing the same
+  at the start of `fd3_program_emit()` still hung, so that change was dropped.
+- What the GPU was doing: with `msm.rd_full=Y` the devcoredump carries every buffer, and
+  Mesa's `crashdec -v` decodes the whole command stream with disassembled shaders. All the
+  loaded shaders are intact; the CP had consumed both IB levels, so the stall is in the
+  pipeline (PC, VFD, VPC, HLSQ busy) on the tile's draws, the last being a GMEM resolve.
+- kgsl also runs a power-on shader-corruption fixup on every a3xx after power collapse,
+  which mainline does not have. It is not this hang (that happens with the GPU awake), but
+  it belongs on the list.
+
+Tools: `crashdec` and `cffdump` build from Mesa with `-Dtools=freedreno` inside
+pmbootstrap's native chroot; a strict `pmbootstrap build` zaps that chroot, so rebuild
+them after one. Command streams record with `FD_RD_DUMP=full FD_RD_DUMP_PATH=dir`.
+
+**A colour profile for Megapixels from stock's matrix.** `tools/camera/mkdcp.py` writes
+`userspace/megapixels/sony,xperia-amami,imx200.dcp`: ForwardMatrix1 is stock's colour
+matrix chained with sRGB to XYZ (D50); ColorMatrix1 also needs the raw response to
+daylight white, measured on the white window frame in two daylight captures as R/G 0.485
+and B/G 0.62. Both check out: camera white maps to D50 white, D65 white to the measured
+response.
+

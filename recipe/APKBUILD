@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=203
+pkgrel=204
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -58,6 +58,9 @@ source="
 	0026-drm-msm-detach-the-arm-dma-iommu-mapping-first.patch
 	0028-iio-qcom-smgr-skip-duplicate-sensor-ids.patch
 	0029-soc-qcom-ocmem-use-a-bit-number-not-a-mask.patch
+	0034-arm-dts-msm8974-drive-the-gpu-iommu-with-arm-smmu.patch
+	0035-iommu-arm-smmu-qcom-add-msm8974.patch
+	0036-drm-msm-let-the-iommu-use-pages-bigger-than-4k.patch
 	0039-arm-dts-msm8974-add-the-adsp-audio-services.patch
 	0040-arm-dts-amami-enable-the-vibrator.patch
 	0041-arm-dts-amami-add-the-q6asm-frontend-dais.patch
@@ -160,7 +163,7 @@ package() {
 
 sha512sums="
 6e67e6c86e36e235bad086ea2984c0885eb2e47264e667aa177df8ed7c29edbb23a866407dc59bdd39cfb95f6677e755a426eff485a93898c01997a6a6fcdd9c  linux-v6.16.12-msm8974.tar.gz
-6429f7b4becaaeadc9c08b374d4ca3f87bffc3be4ab9d38dfefb2bee412fb81c8511b4cf61e2df5d99da95494cf18f535ee07aff098ed95d361226e52d2d3792  config-postmarketos-qcom-msm8974.armv7
+00f5aece5956828c44ef6142042d390323f888285a9566fe86cce3e92fa6557397a639c81c1b7c1727ef8958fb906960d050da56326c8ab3ecca014d9ea004e4  config-postmarketos-qcom-msm8974.armv7
 4527280bea3966a4d59d27336f6fb6ad4149ac8be94fa5f2dd238172ae4fac2c7a36dcc5c145aac0f7d979291475f4721bf7da0058545533f7df4e21d9cb6490  0001-arm-dts-rhine-enable-wcnss-wifi-bt.patch
 ea4aa2b9216a367acc8c97480c3f8e659d4a522d0301de3f397cd2515a3fffe10c6c77efba6751c0452f8c808b3395282e2d32caa4882ddfe5391c813f862c61  0002-wcn36xx-add-scan_offload-module-param.patch
 5b0f7ed258736bfb207bfe11c9dd50a0dcc7f4ce835ef2d10dfd840cb3f9b8aee28418642dc64e4705c24f33391b4ee6351f0489d730767c6cbb4d4ff7fb9a5a  0003-drm-panel-add-sony-amami-novatek.patch
@@ -185,6 +188,9 @@ c939780e9428c1669e2ecf4f9099e0c7eb4bfc8290a5a8ab41214ed75e984bab87704609f3c6879a
 41f3c1be6d01be01e90b1435bc5c5ef696cfeeefab008610f092a971fe584c371c8ed432e9d8daa8f014730210de113a4e93a7a61b371a55ae5266a4c94a53e4  0026-drm-msm-detach-the-arm-dma-iommu-mapping-first.patch
 5b76d0311f4c225b97cb24c60cbf2f23e7545f5efb3738ea8ab5345bff2d040fadb893f0bb9762d57f9781f85aed4163a4d940ee4a02e824a747daf84c75620b  0028-iio-qcom-smgr-skip-duplicate-sensor-ids.patch
 9266d4f1fee06504a48ac9c7f1a003f5facf2ecd1ff977c8d366ac7ffc859d69f28f4efe34d327d92e4ff6bca30878c4ac53166259347609f11c596819c75ee9  0029-soc-qcom-ocmem-use-a-bit-number-not-a-mask.patch
+0d5eba5268c7152f36b1583b26fd7b63f420e888219ea400079847dfcdb681c5722f21b62bf1512f39c3846a95b8a10a95cca63fe8feb685ea92400f9d0a1bf9  0034-arm-dts-msm8974-drive-the-gpu-iommu-with-arm-smmu.patch
+fd046f57dccc8339ef420ae3687814d3e5b33b3983543de64a996e29cc18494be329024168b7f92b349aabbc812bb628cd20a38af83c49c92113546ae74ebf84  0035-iommu-arm-smmu-qcom-add-msm8974.patch
+6a67b1db19132f7e1ab9d2e87e4b06711eba07c86928017ace085de8a6195dc9b7674e153c1a6d50fd9140b43cfc7cf1f0b04622ce26a35a62248f814d151968  0036-drm-msm-let-the-iommu-use-pages-bigger-than-4k.patch
 d93c529117131431bb4e16eede10e3d5cc677a69548afb959f8703a9e643a7e37123cc078078ee3d74fb786cd2f325b58d5a332e940067275a88e63a0277bdb3  0039-arm-dts-msm8974-add-the-adsp-audio-services.patch
 b183dee17c54c47c66e9de71e68cfeee2745dc33bca4f6c7b9ff976921f4dd209e4b0e0339286cd8ae539d19c6755ef7a346e66be7fdc9d1f077229725390da3  0040-arm-dts-amami-enable-the-vibrator.patch
 dd4d58a2c93e73fdaec23ad136a21c544a9eddb354c2c880379c6a30f2c73f84a55afa1bb0ecc2818e8680e62a5819272d85291c8e7ff2ee7c517f4f8cbb289e  0041-arm-dts-amami-add-the-q6asm-frontend-dais.patch

@@ -3536,6 +3536,11 @@ the quirk, settle in camss), then the IMX132.
 - Megapixels: config written, command-line capture works, the app hangs the GPU. The
   decoded hang is a GTK widget draw (instanced, 13 attributes, 242-instruction shader).
   Rules from here on: proper root-cause fixes only, and stock firmware first.
+- GPU IOMMU back in the build (`0034`-`0036` without the old `0018`/`0025`): the hang
+  stays and nothing faults. `FD_MESA_DEBUG=direct` removes it. A Mesa with kgsl's
+  HLSQ_FLUSH + wait-for-idle before shader loads did not, so it was dropped. Full
+  devcoredumps (`msm.rd_full=Y`) decode cleanly with `crashdec -v`.
+- `tools/camera/mkdcp.py`: a DCP for Megapixels from stock's colour matrix.
 
 ## Parked patches
 

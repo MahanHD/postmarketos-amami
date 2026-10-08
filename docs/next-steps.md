@@ -5,9 +5,10 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-07)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 202, with the boot
-image from 202 (`uname -v` prints `#203`), and libcamera from
-`recipe/libcamera` at r5. Install the package for module changes and
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 204, with the boot
+image from 204 (`uname -v` prints `#205`), and libcamera from
+`recipe/libcamera` at r7. The GPU runs behind its IOMMU since r204 (`0034`-`0036`);
+the display still uses the VRAM carveout. Install the package for module changes and
 rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
 device tree.
 
@@ -37,13 +38,17 @@ draw, not the camera code, so it can hit any GTK4 app. It blocks the proper came
 (GPU debayer, small preview, full-resolution photo). The cairo renderer forced on
 Snapshot by `userspace/snapshot` is a stopgap until this is fixed.
 
-1. Record the command stream of the hanging draw (Mesa's `FD_RD_DUMP`, decoded with
-   `cffdump`) and find what the a3xx chokes on.
-2. Check whether the GPU running without its IOMMU (VRAM carveout) is part of it. If it
-   is, the proper fix is a working GPU IOMMU, which also lets libcamera's GPU debayer
-   import buffers; the September attempt worked but cost about five times the
-   throughput, which itself needs explaining.
-3. Fix it at the root (Mesa or kernel), then move Megapixels and Snapshot onto the GPU.
+Established so far (`notes.md`, "The GPU hang, narrowed down"): not a memory fault (the
+GPU now runs behind its IOMMU and nothing faults), tied to indirect shader uploads
+(`FD_MESA_DEBUG=direct` removes it), timing dependent, and not cured by waiting for idle
+before the upload.
+
+1. Find out why an indirect shader upload stalls the pipeline when an inline one does
+   not: compare the two command streams for the same frame, and what kgsl and the stock
+   blob do around CP_LOAD_STATE (`libGLESv2_adreno.so` in the stock system image).
+2. Fix it in Mesa, then move Megapixels (with its new colour profile) and Snapshot onto
+   the GPU.
+3. Port kgsl's power-on shader-corruption fixup for a3xx to drm/msm.
 
 ## Camera, rear (IMX200)
 
