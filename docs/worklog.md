@@ -3527,6 +3527,9 @@ the quirk, settle in camss), then the IMX132.
   powers per write with a 3 s autosuspend.
 - Contrast AF in libcamera (`0007`): out of a window it settles at 326, the EEPROM's
   infinity.
+- First real use in Snapshot: the photo failed (no XDG pictures folder), the preview ran
+  at 4-5 fps, and the GPU hung once. WirePlumber had been aborting in the soft IPA when a
+  stream stopped (`0008`).
 
 ## Parked patches
 

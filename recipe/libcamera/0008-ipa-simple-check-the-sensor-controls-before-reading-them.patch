@@ -1,0 +1,34 @@
+--- a/src/ipa/simple/soft_simple.cpp
++++ b/src/ipa/simple/soft_simple.cpp
+@@ -301,6 +301,17 @@
+ 				 [[maybe_unused]] const uint32_t bufferId,
+ 				 const ControlList &sensorControls)
+ {
++	/*
++	 * Statistics can still arrive as the stream stops, with no sensor
++	 * controls to go with them; reading those would abort the process.
++	 */
++	if (!sensorControls.contains(V4L2_CID_EXPOSURE) ||
++	    !sensorControls.contains(V4L2_CID_ANALOGUE_GAIN)) {
++		LOG(IPASoft, Error) << "Control(s) missing";
++		metadataReady.emit(frame, ControlList(controls::controls));
++		return;
++	}
++
+ 	IPAFrameContext &frameContext = context_.frameContexts.get(frame);
+ 
+ 	frameContext.sensor.exposure =
+@@ -313,13 +324,6 @@
+ 		algo->process(context_, frame, frameContext, stats_, metadata);
+ 	metadataReady.emit(frame, metadata);
+ 
+-	/* Sanity check */
+-	if (!sensorControls.contains(V4L2_CID_EXPOSURE) ||
+-	    !sensorControls.contains(V4L2_CID_ANALOGUE_GAIN)) {
+-		LOG(IPASoft, Error) << "Control(s) missing";
+-		return;
+-	}
+-
+ 	ControlList ctrls(sensorInfoMap_);
+ 
+ 	auto &againNew = frameContext.sensor.gain;

@@ -1407,3 +1407,9 @@ and the coil at its position permanently. `0101` now powers the lens for each po
 write and switches it off 3 s after the last one (`power/autosuspend_delay_ms` in sysfs);
 the `Af` algorithm resends its position every few statistics frames while it holds.
 
+**WirePlumber aborted whenever a stream stopped mid-flight** (an app closing, or one
+renegotiating), which took the camera away from every app until the next login. The
+soft IPA read the exposure out of the sensor controls before checking they were there,
+and statistics arriving as the stream stops come with none. `0008` checks first. Two
+earlier WirePlumber crashes put down to a libcamera upgrade were this.
+

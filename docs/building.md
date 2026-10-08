@@ -99,10 +99,11 @@ The camera needs the patched libcamera from `recipe/libcamera` (copy it over
 
     sudo install -m 644 userspace/50-dma-heap.rules /etc/udev/rules.d/
     sudo install -D -m 644 userspace/libcamera-configuration.yaml /etc/libcamera/configuration.yaml
-    sudo apk add snapshot
+    sudo apk add snapshot xdg-user-dirs
+    xdg-user-dirs-update
 
-Reboot after upgrading libcamera: WirePlumber keeps the old one loaded and crashes when
-the IPA module on disk no longer matches it.
+Snapshot saves to the XDG pictures folder and refuses to take a photo without one, hence
+`xdg-user-dirs`. Reboot after upgrading libcamera, so WirePlumber loads the new one.
 
 Bluetooth needs the service from `userspace/`, which gives the controller the
 factory address out of the TA partition. Without it bluetoothd reports no
