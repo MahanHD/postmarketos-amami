@@ -3485,8 +3485,12 @@ the quirk, settle in camss), then the IMX132.
   correction was running with whatever the table holds after reset.
 - **0x0700 = 0 fixes it.** Written live first, then in `0098` (r193). From boot, the
   white sheet is clean: Gr/Gb 0.99-1.00, R/G 0.46-0.48 and B/G 0.66-0.72 across the frame.
-- Still open: which EEPROM block is which channel (all fit the measured falloff about
-  equally), and whether to correct shading in software or upload a table the way stock does.
+- **The EEPROM mapping does not matter much.** The white sheet was lit unevenly, so I
+  compared channel ratios instead, which cancel the lighting. R/G varies about 5% across the
+  frame and B/G about 10%; ratios of EEPROM block pairs fit that no better than a flat 1.0.
+  `raw10.py` now applies the average of the nine grids to every channel. The flat field
+  comes out even, and a window scene at 1200 lines (city, river, bridge) looks right.
+- Second and third streams in the same boot worked, after a successful first one.
 
 ## Parked patches
 

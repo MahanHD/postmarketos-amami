@@ -1299,10 +1299,12 @@ stream so the module is powered). It starts with the module, sensor and actuator
 (`SOI20BS0`, `IMX2000A`, `BU64296G`). From 0x100 come 64-byte blocks, each a 9x7 grid
 of relative brightness with 0x80 at the centre, plus one trailing byte. The corners sit
 around 0x24, so the lens loses about 70% of its light at the edges. `tools/camera/raw10.py`
-takes the first four blocks as R, Gr, Gb and B and corrects the preview with them. That
-mapping is a guess: on the white sheet all twelve blocks match the measured falloff about
-equally well, so which block is which channel is still open. The bytes around 0x60-0xdf
-(probably white-balance data) are not decoded.
+averages the nine grids and applies that to every channel. Which block is which channel
+is not known, and it barely matters: with the sensor's own correction off, the falloff on a
+white sheet is the same in all channels to within a few percent (R/G varies about 5% across
+the frame, B/G about 10%, partly from the light itself), and no pairing of blocks explains
+those ratios clearly better than no colour correction at all. Blocks 9-11 are flat 0x80.
+The bytes around 0x60-0xdf (probably white-balance data) are not decoded.
 
 **How stock clocks the sensor.** `libcammw.so` has the IMX200 parameters built in, in the
 same layout as the header of the `.dat` file, and its set-mode routine writes the clocks

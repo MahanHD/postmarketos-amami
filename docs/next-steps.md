@@ -23,12 +23,11 @@ so nothing camera-related loads at boot. `tools/camera/capture.sh` loads them wi
 
 ## Camera, rear (IMX200)
 
-1. **Lens shading.** The colour blotches are gone (`0098` turns the sensor's own LSC
-   off). What is left is ordinary vignetting, about 70% at the corners. Either work
-   out which EEPROM block is which channel and correct in software, or upload a
-   table to the sensor the way stock does (see `notes.md`). Then white balance:
-   decode the rest of the EEPROM and, if needed, stock's tuning in
-   `vendor/camera/SOI20BS0/` (Sony's `cacao` format).
+1. **White balance and colour.** Lens shading is handled in `raw10.py` (average EEPROM
+   grid, see `notes.md`). Next is decoding the rest of the EEPROM (white balance) and,
+   if needed, stock's tuning in `vendor/camera/SOI20BS0/` (Sony's `cacao` format).
+   Uploading a shading table to the sensor the way stock does is an option for a real
+   camera app later, not needed for raw capture.
 2. **Stock's clocks.** Found in `libcammw` (see `notes.md`), but stock needs an 8 MHz
    MCLK and the sensor ignores PLL writes made after CCS's. If it matters, try
    writing them before CCS's PLL setup, or in place of it.

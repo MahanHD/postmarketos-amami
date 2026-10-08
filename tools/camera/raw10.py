@@ -11,9 +11,11 @@ clipped pixels shown white, gamma 2.2, and rotated 90 degrees clockwise
 because the module is mounted sideways.
 
 Given a dump of the module EEPROM it also corrects lens shading. The module
-stores its factory calibration at 0x100: 64-byte blocks, each a 9x7 grid of
-relative brightness (0x80 = the centre) plus one trailing byte, taken here
-as R, Gr, Gb, B in that order.
+stores its factory calibration at 0x100: nine 64-byte blocks, each a 9x7 grid
+of relative brightness (0x80 = the centre) plus one trailing byte. Which block
+belongs to which channel is not known, and measured on a white sheet the
+falloff is the same in every channel to within a few percent, so the preview
+applies the average of the nine grids to all four channels.
 """
 import struct, sys, zlib
 import numpy as np
@@ -67,9 +69,11 @@ def preview(px, eeprom=None):
     ch = [p[0::2, 0::2], p[0::2, 1::2], p[1::2, 0::2], p[1::2, 1::2]]
     if eeprom is not None:
         e = np.fromfile(eeprom, dtype=np.uint8)
-        for i in range(4):
-            grid = e[0x100 + 64 * i:0x100 + 64 * i + 63].reshape(7, 9).astype(np.float32)
-            ch[i] = ch[i] * shading_gain(grid, *ch[i].shape)
+        grids = [e[0x100 + 64 * i:0x100 + 64 * i + 63].reshape(7, 9) for i in range(9)]
+        grid = np.mean(grids, axis=0).astype(np.float32)
+        grid *= 128.0 / grid[3, 4]
+        gain = shading_gain(grid, *ch[0].shape)
+        ch = [c * gain for c in ch]
     rgb = np.stack([ch[0], (ch[1] + ch[2]) / 2, ch[3]], -1)[::3, ::3]
     rgb = np.clip(rgb, 0, None)
     clipped = clipped[::3, ::3]
