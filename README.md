@@ -27,7 +27,7 @@ that makes mainline do the same.
 | GPU frequency scaling and throttling | Works |
 | CPU hotplug | Works |
 | Suspend | s2idle works; deep suspend works but saves nothing here |
-| Rear camera (Sony IMX200, 20.7 MP) | Works in GNOME Snapshot through libcamera: live preview, auto exposure and white balance; no autofocus yet |
+| Rear camera (Sony IMX200, 20.7 MP) | Works in GNOME Snapshot through libcamera: live preview, auto exposure, white balance and autofocus |
 | Front camera (Sony IMX132) | Identified, not started |
 | Audio | No sound yet: the codec probes and its registers work, but no data moves over SLIMbus |
 

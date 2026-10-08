@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=202
+pkgrel=203
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -238,7 +238,7 @@ fcaa804c0665860a8383f45d345753de9e9745217b64a8efbd058db93537faa52dbbc51649b500c3
 3c29c8e7912d3b249fc7275ea50904376b8238d8dc9874108978a3189badb2591d6e88852a74eee77f1949118106edda60347c3414006bcd113abb471ab9227a  0098-media-ccs-write-the-imx200-stock-init-and-window-tables.patch
 cfc3e9f7ad56d3af5f44b778f968f7df1361d7e7a0fa84555f712d716773a00ed084c952ebc60e53c114d53a3e93834fbdc9860d9804182aa1c3f68b500a3da4  0099-media-camss-size-the-msm8974-csid-and-vfe-clocks-for-16-bit-paths.patch
 138882dd979b7227def914bd80e9dd42e77442c6142983183466a76f8892bd543d065b783db32e767e9726bbee9b99cbae18ec39674490200047c497ce87bc1d  0100-arm-dts-amami-add-the-rear-camera.patch
-b8e022412155a08f85930ba900f8d6329d887b8ddb36e4c1b66c309539300897341f22282e651d768865096d5d55d0f82b467085978ab62c026fe0b553813395  0101-media-i2c-add-a-driver-for-the-rohm-bu64296-lens-actuator.patch
+ff6994392d5439350f85a962ebd0767bbfd239eb7addfb246f386959dba19e1f04e49449688fcbfa6147c7d1807629cfd9c58ccd642316e98d82e2a83ac6de16  0101-media-i2c-add-a-driver-for-the-rohm-bu64296-lens-actuator.patch
 078ea3499e898ce3b058332e8897415ba50d21049622a7733462ce3a56637d50f125fb1ea13843b8d41f4e9865b22861db56701166413cafd469fee96f4436ab  0102-arm-dts-amami-add-the-rear-camera-focus-actuator.patch
 cb576f77dfe883b4cf63a3ca855b90781e736d20f6959bb095fb3e93cdeb28aac1ce5a5114019748a454f8918fb32ba9e427f57055b5451496a9a64af95d19d9  0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
 6f2fbfa9942e3875dd89ee0ea4632c5693ea33997febcf4ab79269cd14ab1f1fe58831acd115f76e225972cc924f148a438ac5dea8ab6af9ef6a915cab79f560  0104-arm-dts-amami-drive-the-rear-camera-with-the-imx200-driver.patch

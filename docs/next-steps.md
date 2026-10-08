@@ -7,7 +7,7 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 202, with the boot
 image from 202 (`uname -v` prints `#203`), and libcamera from
-`recipe/libcamera` at r4. Install the package for module changes and
+`recipe/libcamera` at r5. Install the package for module changes and
 rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
 device tree.
 
@@ -23,9 +23,9 @@ works for raw frames.
 
 ## Camera, rear (IMX200)
 
-1. **Autofocus.** The lens rests at the EEPROM's near-infinity position. libcamera's soft
-   ISP has no autofocus; a contrast search over the lens control, with the EEPROM's
-   infinity and macro points as its range, is the next big step.
+1. **Autofocus tuning.** Continuous contrast AF works (`recipe/libcamera` `0007`). It
+   rescans on large sharpness changes only; tap to focus and the AF controls for apps
+   are not there yet, and a scan takes a few seconds.
 2. **Full-resolution photos from apps.** 2560x1920 works; 5248x3936 needs more CMA for
    the capture buffers (`CONFIG_CMA_SIZE_MBYTES`, now 256 MB, most of it taken by the GPU
    carveout).

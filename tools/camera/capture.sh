@@ -26,8 +26,9 @@ for i in $(seq 30); do [ -e /dev/media0 ] && break; sleep 1; done
 M=/dev/media0
 if [ -n "${FOCUS:-}" ]; then
 	LENS=$(media-ctl -d $M -e "bu64296 3-000c")
-	# the lens stays powered only while its node is open
-	exec 3<>"$LENS"
+	# the lens powers down a few seconds after the last position written;
+	# hold it for the whole capture
+	echo 120000 > /sys/bus/i2c/devices/3-000c/power/autosuspend_delay_ms
 	v4l2-ctl -d "$LENS" -c focus_absolute="$FOCUS"
 	sleep 0.2
 fi
@@ -45,4 +46,5 @@ v4l2-ctl -d "$S" -c exposure=$EXPO,analogue_gain=$AGAIN
 
 timeout 60 v4l2-ctl -d "$V" --stream-mmap=2 --stream-count="$CNT" --stream-to="$OUT" 2>>"$LOG"
 echo "size=$SIZE bytes=$(stat -c %s "$OUT")" >> "$LOG"
+[ -n "${FOCUS:-}" ] && echo 3000 > /sys/bus/i2c/devices/3-000c/power/autosuspend_delay_ms
 sync

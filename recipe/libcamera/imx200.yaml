@@ -16,4 +16,10 @@ algorithms:
                  0.0342, -0.3740,  1.3398 ]
   - Adjust:
   - Agc:
+  # Contrast autofocus over the range the module's EEPROM gives for infinity
+  # and macro (0xd0 in the EEPROM: 326 and 681 on the unit this was tuned on).
+  - Af:
+      infinity: 326
+      macro: 681
+      step: 32
 ...

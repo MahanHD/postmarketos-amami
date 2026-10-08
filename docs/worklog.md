@@ -3523,6 +3523,10 @@ the quirk, settle in camss), then the IMX132.
 - WirePlumber crashed once: it still had the old libcamera loaded while the IPA module on
   disk had changed. Reboot after upgrading libcamera.
 - Snapshot previews live, upright, with automatic exposure and white balance.
+- The lens stayed powered whenever PipeWire ran (libcamera keeps its subdev open); it now
+  powers per write with a 3 s autosuspend.
+- Contrast AF in libcamera (`0007`): out of a window it settles at 326, the EEPROM's
+  infinity.
 
 ## Parked patches
 

@@ -29,7 +29,7 @@
  obj-$(CONFIG_VIDEO_CCS) += ccs/
 --- /dev/null
 +++ b/drivers/media/i2c/bu64296.c
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,244 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * ROHM BU64296GWX lens voice coil driver
@@ -53,6 +53,13 @@
 +/* Move the lens to and from rest in steps this large, so it does not click */
 +#define BU64296_CTRL_STEPS	32
 +#define BU64296_CTRL_DELAY_US	1000
++/*
++ * The coil draws current for as long as it holds a position, so the lens is
++ * powered only while someone keeps setting it: from the first position written
++ * until this long after the last one. libcamera keeps the lens open for as long
++ * as it runs, which for PipeWire is always.
++ */
++#define BU64296_AUTOSUSPEND_MS	3000
 +
 +static const char * const bu64296_supply_names[] = {
 +	"vdd",	/* the coil and the chip */
@@ -93,39 +100,21 @@
 +	if (ctrl->id != V4L2_CID_FOCUS_ABSOLUTE)
 +		return -EINVAL;
 +
-+	/* Only write while powered; resume applies the value */
-+	if (!pm_runtime_get_if_in_use(&client->dev)) {
-+		bu->current_val = ctrl->val;
-+		return 0;
-+	}
++	/* If the lens is off, resume moves it to the new position */
++	bu->current_val = ctrl->val;
++	ret = pm_runtime_resume_and_get(&client->dev);
++	if (ret < 0)
++		return ret;
 +
 +	ret = bu64296_write_pos(client, ctrl->val);
-+	if (!ret)
-+		bu->current_val = ctrl->val;
-+	pm_runtime_put(&client->dev);
++	pm_runtime_mark_last_busy(&client->dev);
++	pm_runtime_put_autosuspend(&client->dev);
 +
 +	return ret;
 +}
 +
 +static const struct v4l2_ctrl_ops bu64296_ctrl_ops = {
 +	.s_ctrl = bu64296_set_ctrl,
-+};
-+
-+static int bu64296_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
-+{
-+	return pm_runtime_resume_and_get(sd->dev);
-+}
-+
-+static int bu64296_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
-+{
-+	pm_runtime_put(sd->dev);
-+
-+	return 0;
-+}
-+
-+static const struct v4l2_subdev_internal_ops bu64296_int_ops = {
-+	.open = bu64296_open,
-+	.close = bu64296_close,
 +};
 +
 +static const struct v4l2_subdev_core_ops bu64296_core_ops = {
@@ -205,7 +194,6 @@
 +
 +	v4l2_i2c_subdev_init(&bu->sd, client, &bu64296_ops);
 +	bu->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
-+	bu->sd.internal_ops = &bu64296_int_ops;
 +	bu->sd.entity.function = MEDIA_ENT_F_LENS;
 +
 +	/*
@@ -229,8 +217,10 @@
 +	if (ret)
 +		goto err_free;
 +
-+	/* The supplies stay off until someone opens the lens */
++	/* The supplies stay off until someone sets a position */
 +	pm_runtime_set_suspended(dev);
++	pm_runtime_set_autosuspend_delay(dev, BU64296_AUTOSUSPEND_MS);
++	pm_runtime_use_autosuspend(dev);
 +	pm_runtime_enable(dev);
 +
 +	ret = v4l2_async_register_subdev(&bu->sd);
@@ -253,6 +243,7 @@
 +	struct bu64296_device *bu = sd_to_bu64296(sd);
 +
 +	v4l2_async_unregister_subdev(sd);
++	pm_runtime_dont_use_autosuspend(&client->dev);
 +	pm_runtime_disable(&client->dev);
 +	if (!pm_runtime_status_suspended(&client->dev))
 +		bu64296_suspend(&client->dev);

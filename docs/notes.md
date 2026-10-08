@@ -1300,7 +1300,7 @@ in `libcammw` (`focus_bu64296gwx_vcm`, write helper around 0x10dd0): two-byte tr
 and a lens position is `0xc4 | pos[9:8]`, `pos[7:0]`. Stock also writes 0xcc (a mode, the
 low three bits of a `.dat` parameter) and 0xd4 (a timing value) at init; plain position
 writes work without them. `0101` is a driver in the style of `dw9714`
-(`V4L2_CID_FOCUS_ABSOLUTE`, 0-1023, powered while its subdev is open) and `0102` adds it
+(`V4L2_CID_FOCUS_ABSOLUTE`, 0-1023) and `0102` adds it
 to the device tree with `lens-focus` on the sensor. Higher values focus closer. Through a
 window, the city outside was sharpest at 256 and a board just in front at 512;
 768 and above is macro range. Sharpness changes by up to three times across the sweep.
@@ -1390,3 +1390,20 @@ Snapshot shows a live preview, upright thanks to the `rotation` property. What i
 - libcamera allocates from the DMA heaps (`CONFIG_DMABUF_HEAPS`). The CMA heap is left
   root-only by `userspace/50-dma-heap.rules`: the GPU's VRAM carveout takes most of CMA,
   and libcamera would try it first and fail on large frames.
+
+**Autofocus** (`recipe/libcamera` `0007`). libcamera's simple pipeline had no lens
+support at all. `0007` passes the lens controls through the soft IPA and the pipeline
+(as the IPU3 one does), adds a focus measure to the soft ISP statistics (differences
+between same-colour neighbours in the packed RAW10 bytes, over the centre half of the
+frame, divided by their sum) and an `Af` algorithm: a coarse sweep from just past
+infinity until the measure has fallen 15% below its best, a finer sweep around the best
+point, then hold, rescanning if the measure drifts 30% for three samples. Its range comes
+from `imx200.yaml`, set to the EEPROM's 326 and 681. Pointed out of a window it settles
+at 326, the EEPROM's own infinity.
+
+**The lens powers itself down.** libcamera opens the lens subdev when it enumerates
+cameras, and PipeWire keeps libcamera loaded, so a lens powered while open held l23 on
+and the coil at its position permanently. `0101` now powers the lens for each position
+write and switches it off 3 s after the last one (`power/autosuspend_delay_ms` in sysfs);
+the `Af` algorithm resends its position every few statistics frames while it holds.
+
