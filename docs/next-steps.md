@@ -3,24 +3,33 @@
 Where the port stands and what comes next, in order. The history behind every item
 is in `worklog.md`; the settled findings are in `notes.md`.
 
-## Current state (2026-10-08)
+## Current state (2026-10-09)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 204, with the boot
-image from 204 (`uname -v` prints `#205`), and libcamera from
-`recipe/libcamera` at r7 and Mesa from `recipe/mesa` at r4. The GPU runs behind its IOMMU since r204 (`0034`-`0036`);
-the display still uses the VRAM carveout. Install the package for module changes and
-rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
-device tree.
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 204, with the boot image
+from 204 (`uname -v` prints `#205`). r205 (`0105`, kgsl's power-on fixup) was tried and
+reverted; its boot image is in `boot-images/` but must not be flashed as is. Userspace
+from this repo: libcamera r7 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libmegapixels
+r1 and Megapixels r2 (`recipe/libmegapixels`, `recipe/megapixels`), with
+`userspace/megapixels/*` in `/usr/share/megapixels/config/`. The GPU runs behind its
+IOMMU since r204 (`0034`-`0036`); the display still uses the VRAM carveout, and so do all
+GPU buffers. Install the package for module changes and rebuild the boot image with
+`tools/mkbootimg.py` for anything built in or in the device tree.
 
-Working: display, touch, GPU, WiFi, Bluetooth, charging and battery reporting, all
-sensors, the notification LED, CPU and GPU frequency scaling with thermal limits,
-CPU hotplug, and suspend (s2idle). The rear camera produces real frames.
+Working: display, touch, GPU (GTK4's GL renderer included), WiFi, Bluetooth, charging and
+battery reporting, all sensors, the notification LED, CPU and GPU frequency scaling with
+thermal limits, CPU hotplug, and suspend (s2idle). The rear camera works in Snapshot and
+in Megapixels, with correct colour.
 
 Not working: audio (no sound, see `notes.md`) and the front camera (not started).
 
-The camera loads at boot and works in GNOME Snapshot through libcamera and PipeWire. The
-old bring-up blacklist (`/etc/modprobe.d/camss-bringup.conf`) is gone; `capture.sh` still
-works for raw frames.
+The camera loads at boot and works in GNOME Snapshot through libcamera and PipeWire, and
+in Megapixels. `capture.sh` still works for raw frames; at night it needs `VBLANK=30000`,
+a long exposure and gain 240, or the frame is black.
+
+**Where to pick up:** the GPU list below, item 3 (clear carveout buffers on allocation in
+`get_pages_vram()`), then re-measure the rare Xorg hangs and retry `0105`. Tests that
+run long on the phone go through `sudo systemd-run`; a `nohup` over SSH is killed when
+the session closes.
 
 ## How this port is done
 
