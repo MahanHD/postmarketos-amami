@@ -6,8 +6,9 @@
                                         last frame as a quick preview PNG
 
 The preview is deliberately crude: black level 64 subtracted, 2x2 Bayer
-quads averaged (RGGB), grey-world white balance, gamma 2.2, and rotated 90
-degrees clockwise because the module is mounted sideways.
+quads averaged (RGGB), grey-world white balance over the unclipped pixels,
+clipped pixels shown white, gamma 2.2, and rotated 90 degrees clockwise
+because the module is mounted sideways.
 
 Given a dump of the module EEPROM it also corrects lens shading. The module
 stores its factory calibration at 0x100: 64-byte blocks, each a 9x7 grid of
@@ -20,6 +21,7 @@ import numpy as np
 W, H = 5248, 3936
 STRIDE = W * 10 // 8
 BLACK = 64
+SAT = 1000
 
 
 def frames(path):
@@ -59,6 +61,8 @@ def shading_gain(grid, h, w):
 
 
 def preview(px, eeprom=None):
+    clipped = (px[0::2, 0::2] >= SAT) | (px[0::2, 1::2] >= SAT) | \
+              (px[1::2, 0::2] >= SAT) | (px[1::2, 1::2] >= SAT)
     p = px.astype(np.float32) - BLACK
     ch = [p[0::2, 0::2], p[0::2, 1::2], p[1::2, 0::2], p[1::2, 1::2]]
     if eeprom is not None:
@@ -68,9 +72,15 @@ def preview(px, eeprom=None):
             ch[i] = ch[i] * shading_gain(grid, *ch[i].shape)
     rgb = np.stack([ch[0], (ch[1] + ch[2]) / 2, ch[3]], -1)[::3, ::3]
     rgb = np.clip(rgb, 0, None)
+    clipped = clipped[::3, ::3]
+    ok = ~clipped
     for c in range(3):
-        rgb[..., c] *= rgb[..., 1].mean() / max(rgb[..., c].mean(), 1e-3)
-    rgb = np.clip(rgb / max(np.percentile(rgb, 99.5), 1e-3), 0, 1) ** (1 / 2.2)
+        rgb[..., c] *= rgb[..., 1][ok].mean() / max(rgb[..., c][ok].mean(), 1e-3)
+    top = max(np.percentile(rgb[ok], 99.5), 1e-3) if ok.any() else 1.0
+    rgb = np.clip(rgb / top, 0, 1)
+    # a pixel with any channel at full scale has lost its colour: show it white
+    rgb[clipped] = 1.0
+    rgb = rgb ** (1 / 2.2)
     return np.ascontiguousarray(np.rot90((rgb * 255).astype(np.uint8), -1))
 
 

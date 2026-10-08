@@ -5,7 +5,7 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-07)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 192, with the boot
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 193, with the boot
 image from 190 (`uname -v` prints `#191`). Install the package for module changes and
 rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
 device tree.
@@ -23,10 +23,11 @@ so nothing camera-related loads at boot. `tools/camera/capture.sh` loads them wi
 
 ## Camera, rear (IMX200)
 
-1. **A daylight capture.** Check whether full exposure fills the range in good light
-   (see `notes.md`, "Brightness is not settled yet"), then judge colour with the
-   EEPROM lens shading applied (`raw10.py ... png out.png eeprom.bin`). Decode the
-   rest of the EEPROM (white balance) and, if needed, stock's tuning in
+1. **Lens shading.** The colour blotches are gone (`0098` turns the sensor's own LSC
+   off). What is left is ordinary vignetting, about 70% at the corners. Either work
+   out which EEPROM block is which channel and correct in software, or upload a
+   table to the sensor the way stock does (see `notes.md`). Then white balance:
+   decode the rest of the EEPROM and, if needed, stock's tuning in
    `vendor/camera/SOI20BS0/` (Sony's `cacao` format).
 2. **Stock's clocks.** Found in `libcammw` (see `notes.md`), but stock needs an 8 MHz
    MCLK and the sensor ignores PLL writes made after CCS's. If it matters, try

@@ -1,15 +1,18 @@
 --- a/drivers/media/i2c/ccs/ccs-quirk.c
 +++ b/drivers/media/i2c/ccs/ccs-quirk.c
-@@ -237,6 +237,58 @@
+@@ -237,6 +237,61 @@
  	return 0;
  }
  
 +/*
 + * The stock firmware's tables for this module (SOI20BS0, in
 + * /system/vendor/camera/SOI20BS0_IMX200.dat): its manufacturer-specific init
-+ * table, and the readout window registers of its full-resolution mode. Without
-+ * the window registers the pixel array reads black; the test pattern, which is
-+ * generated after it, is unaffected.
++ * table, and from its full-resolution mode the readout window registers and
++ * 0x0700. Without the window registers the pixel array reads black; the test
++ * pattern, which is generated after it, is unaffected. 0x0700 enables the
++ * sensor's own lens-shading correction, which comes out of reset on with an
++ * empty table and paints colour blotches over every frame; stock only turns it
++ * on after uploading a table built from the module's EEPROM.
 + */
 +static int imx200_post_poweron(struct ccs_sensor *sensor)
 +{
@@ -44,7 +47,7 @@
 +		{ 0x13c3, 0x80 }, { 0x13c4, 0x00 }, { 0xad34, 0x14 }, { 0xad35, 0x7f },
 +		{ 0xad36, 0x00 }, { 0xad37, 0x00 }, { 0xad38, 0x0f }, { 0xad39, 0x5d },
 +		{ 0xad3a, 0x00 }, { 0xad3b, 0x00 }, { 0xad3c, 0x14 }, { 0xad3d, 0x7f },
-+		{ 0xad3e, 0x0f }, { 0xad3f, 0x5d },
++		{ 0xad3e, 0x0f }, { 0xad3f, 0x5d }, { 0x0700, 0x00 },
 +	};
 +	int rval;
 +

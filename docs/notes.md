@@ -1299,8 +1299,10 @@ stream so the module is powered). It starts with the module, sensor and actuator
 (`SOI20BS0`, `IMX2000A`, `BU64296G`). From 0x100 come 64-byte blocks, each a 9x7 grid
 of relative brightness with 0x80 at the centre, plus one trailing byte. The corners sit
 around 0x24, so the lens loses about 70% of its light at the edges. `tools/camera/raw10.py`
-takes the first four blocks as R, Gr, Gb and B and corrects the preview with them. The
-other blocks and the bytes around 0x60-0xdf (probably white-balance data) are not decoded.
+takes the first four blocks as R, Gr, Gb and B and corrects the preview with them. That
+mapping is a guess: on the white sheet all twelve blocks match the measured falloff about
+equally well, so which block is which channel is still open. The bytes around 0x60-0xdf
+(probably white-balance data) are not decoded.
 
 **How stock clocks the sensor.** `libcammw.so` has the IMX200 parameters built in, in the
 same layout as the header of the `.dat` file, and its set-mode routine writes the clocks
@@ -1318,9 +1320,16 @@ values and the frame rate stayed the same.
 file, v4l2-ctl reports about 1.7 fps, which is the phone's storage writing 26 MB frames.
 The sensor itself runs at about 6.7 fps at full resolution, against stock's 8.6.
 
-**Brightness is not settled yet.** In a room lit by one lamp at night, the longest
-exposure (3976 lines, about 0.15 s) at base gain fills only a few percent of the range,
-and the preview's stretching turns the noise into coloured blotches. Exposure does scale
-the signal. Whether this is simply dim light or a missing analogue setting needs a
-daylight capture.
+**Brightness is fine.** At night under one lamp the longest exposure filled only a few
+percent of the range, which looked like a missing analogue setting. In daylight the same
+exposure clips about a fifth of the frame, so it was only dim light.
+
+**The colour blotches were the sensor's own lens-shading correction.** The IMX200 comes
+out of reset with 0x0700 (its LSC enable) set to 1 and an uninitialised gain table, which
+paints large per-channel blobs over every frame. A white sheet over the lens showed it
+clearly. Stock (`libcammw`) only enables it after uploading a table: 0x0700 = 1,
+0x4500 = 0x1f, then 16-bit gains for the four channels at 0x4800, 0x4802, 0x48fc and
+0x48fe plus 4 x n for n up to 62, then 0x3a63 = 1. `0098` now writes 0x0700 = 0. On the
+same white sheet Gr/Gb is then 0.99-1.01 everywhere and R/G and B/G vary by a few percent
+across the frame, leaving only the lens's ordinary vignetting.
 

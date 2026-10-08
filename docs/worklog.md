@@ -3473,6 +3473,21 @@ analogue gain e.g. 128; rotate the result 90 degrees clockwise. Still to do: len
 colour, brightness/exposure units, folding all this into real patches (init + size tables in
 the quirk, settle in camss), then the IMX132.
 
+### Colour, 2026-10-08: the blotches were the sensor's own LSC, on with an empty table
+
+- **Daylight settles brightness.** Exposure 1000 and 3976 lines in daylight: the longer one
+  clips about 21% of the frame. Nothing analogue is missing.
+- **A flat field found the blotches.** With a white sheet over the lens, each Bayer plane
+  had its own large blobs, and Gr and Gb did not match. That is not optics.
+- **Stock's LSC upload, from `libcammw`** (around 0x17820): 0x0700 = 1, 0x4500 = 0x1f, a
+  loop writing four channels of 16-bit gains to 0x4800/0x4802/0x48fc/0x48fe + 4n, then
+  0x3a63 = 1. Reading the sensor mid-stream showed 0x0700 already 1 on mainline: the
+  correction was running with whatever the table holds after reset.
+- **0x0700 = 0 fixes it.** Written live first, then in `0098` (r193). From boot, the
+  white sheet is clean: Gr/Gb 0.99-1.00, R/G 0.46-0.48 and B/G 0.66-0.72 across the frame.
+- Still open: which EEPROM block is which channel (all fit the measured falloff about
+  equally), and whether to correct shading in software or upload a table the way stock does.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

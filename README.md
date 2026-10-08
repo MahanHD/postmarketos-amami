@@ -27,7 +27,7 @@ that makes mainline do the same.
 | GPU frequency scaling and throttling | Works |
 | CPU hotplug | Works |
 | Suspend | s2idle works; deep suspend works but saves nothing here |
-| Rear camera (Sony IMX200, 20.7 MP) | Delivers real frames; colour and lens shading still to do |
+| Rear camera (Sony IMX200, 20.7 MP) | Delivers real frames with clean colour; lens shading and white balance still to do |
 | Front camera (Sony IMX132) | Identified, not started |
 | Audio | No sound yet: the codec probes and its registers work, but no data moves over SLIMbus |
 
@@ -147,7 +147,9 @@ registers work, but no samples move over SLIMbus in either direction yet.
   the helper every quirk register table goes through.
 - `0097` lets the board set the CSIPHY settle time; the IMX200 needs far less than
   the D-PHY formula gives.
-- `0098` writes the IMX200's init and readout-window tables from the stock firmware.
+- `0098` writes the IMX200's init and readout-window tables from the stock firmware,
+  and turns off the sensor's own lens-shading correction, which starts enabled with an
+  empty table.
 - `0099` sizes the msm8974 CSID and VFE clocks for their 16-bit data paths; camss
   assumed wider ones, and four-lane frames came through corrupted or not at all.
 - `0100` adds the rear camera to amami's device tree.
@@ -183,8 +185,9 @@ That writes packed RAW10 frames. On the host:
 
     tools/camera/raw10.py capture.raw png photo.png
 
-The preview is crude (no lens shading, grey-world white balance) and rotated to
-account for the sideways module. `docs/notes.md` explains the settle count, the
+The preview is crude (grey-world white balance, lens shading only if you pass the
+module's EEPROM dump as a fourth argument) and rotated to account for the sideways
+module. `docs/notes.md` explains the settle count, the
 register tables and why RAW8 does not work.
 
 ## Credits and licence

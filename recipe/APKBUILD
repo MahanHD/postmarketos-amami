@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=192
+pkgrel=193
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -231,7 +231,7 @@ fcaa804c0665860a8383f45d345753de9e9745217b64a8efbd058db93537faa52dbbc51649b500c3
 17b35a2bcfa007503cb0f3fe846362f0b82464264dacc4b4660b9825731eea67ae4f843ee53def662e693a544ea1e90107c0578061003259c75716274dd0da71  0095-media-ccs-start-the-sensor-only-from-the-source-subdev.patch
 62bb2837c84ab1b04075f4a47ce4d7b735c4185b8207719e92442b43e7c308e622e40750b3d17d05845320f9b0e15058d41cf2aeea4362efd05c4976775f8979  0096-media-ccs-give-quirk-register-tables-their-width.patch
 3272f4e2450a1cda02ed465a351388e850be0493abcc092e9630a139d40e240272eac0df5e3eeb0b5eda27f8cbc6acdd06d96ff95fffdcdaf8729297048bb30b  0097-media-camss-let-the-board-set-the-csiphy-hs-settle-time.patch
-4a93c65b8e224fe715bb078f969425a67f9f921dbb135a29f6949c3897384289ca961ae24c173fbe0cdafd8b62d99f6836ba54ebadd8a8ce2a34a60a3e862c77  0098-media-ccs-write-the-imx200-stock-init-and-window-tables.patch
+3c29c8e7912d3b249fc7275ea50904376b8238d8dc9874108978a3189badb2591d6e88852a74eee77f1949118106edda60347c3414006bcd113abb471ab9227a  0098-media-ccs-write-the-imx200-stock-init-and-window-tables.patch
 cfc3e9f7ad56d3af5f44b778f968f7df1361d7e7a0fa84555f712d716773a00ed084c952ebc60e53c114d53a3e93834fbdc9860d9804182aa1c3f68b500a3da4  0099-media-camss-size-the-msm8974-csid-and-vfe-clocks-for-16-bit-paths.patch
 138882dd979b7227def914bd80e9dd42e77442c6142983183466a76f8892bd543d065b783db32e767e9726bbee9b99cbae18ec39674490200047c497ce87bc1d  0100-arm-dts-amami-add-the-rear-camera.patch
 33d0a8c71b69ccf92e17f7ddaf27baa00c6fb5045533847f87cd9d7a22cce83017388e4c409dd275c4a0ad1594db169791dff0c54b52fc92d46cad5b806960e4  9006-debug-camss-allow-arm32-bringup.patch
