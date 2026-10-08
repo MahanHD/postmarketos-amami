@@ -1446,8 +1446,9 @@ five minutes: trigger, then read `/sys/class/devcoredump/devcd*/data` at once.
 **Megapixels** finds `sony,xperia-amami.conf` by the device-tree compatible. Getting a
 frame with `megapixels-getframe` works at 1312x988 and 5248x3936; the 2624x1976 mode
 wedges camss (its first frames come out at full size, see the stream-on reset above).
-Without a colour profile its preview is green; it looks for `sony,xperia-amami,imx200.dcp`
-style DNG profiles next to the config.
+Without a colour profile its preview is green. It looks for a DNG profile named
+`<compatible>,<camera>.dcp`, where the camera is the config section name with its case
+kept: `sony,xperia-amami,Rear.dcp`.
 
 **The GPU hang, narrowed down (2026-10-08).**
 
@@ -1473,6 +1474,29 @@ style DNG profiles next to the config.
 Tools: `crashdec` and `cffdump` build from Mesa with `-Dtools=freedreno` inside
 pmbootstrap's native chroot; a strict `pmbootstrap build` zaps that chroot, so rebuild
 them after one. Command streams record with `FD_RD_DUMP=full FD_RD_DUMP_PATH=dir`.
+
+**Megapixels' colour, fixed (2026-10-08): three bugs between the profile and the
+preview.** With the GPU hang gone, the preview ran but was green-yellow. All three are in
+Megapixels 2.1.0 and still in upstream master; `recipe/megapixels` carries the fixes.
+
+- `dcp-search-each-path.patch`: the profile was never loaded. The search loop stepped
+  through the characters of its first path string instead of through the list of paths,
+  then ran on into other strings, and "found" whatever happened to exist in the working
+  directory (`.config` in the home folder). Without a forward matrix the preview shader
+  skips both the colour matrix and the white balance gains: raw camera colour.
+- `preview-colour-order.patch`: once loaded, the profile made things worse. The shader
+  computes `matrix * rgb`, and the matrix was built as WB, forward, D50 to D65, XYZ to
+  sRGB, multiplied in the wrong order. A white surface came out (0.70, 1.15, 0.56). With
+  the default calibration both orders give the identity, which is why nobody saw it.
+- `awb-stats-in-srgb.patch`: auto white balance averages the finished preview (already
+  sRGB) and then multiplied the averages by the profile's ColorMatrix1, which maps XYZ to
+  camera RGB. A white preview measured as (0.57, 1, 0.59), so AWB raised red and blue by
+  1.7x per step until the 4x limit: an orange preview. The statistics now use the
+  identity.
+
+With all three a white wall comes out white under a warm room lamp. The brightest
+highlights still turn slightly pink, clipped pixels getting white balance gain (the same
+thing libcamera's `0005` fixed by clipping after white balance).
 
 **The GPU hang, solved (2026-10-08): a register write after every direct load.**
 The stock driver's a3xx code (`libGLESv2_adreno.so`, functions `oxili_*`, symbols
@@ -1511,7 +1535,7 @@ Two leads checked on the way and dropped:
   source in `work/kgsl` is older than what Sony shipped; check the binary before trusting it.
 
 **A colour profile for Megapixels from stock's matrix.** `tools/camera/mkdcp.py` writes
-`userspace/megapixels/sony,xperia-amami,imx200.dcp`: ForwardMatrix1 is stock's colour
+`userspace/megapixels/sony,xperia-amami,Rear.dcp`: ForwardMatrix1 is stock's colour
 matrix chained with sRGB to XYZ (D50); ColorMatrix1 also needs the raw response to
 daylight white, measured on the white window frame in two daylight captures as R/G 0.485
 and B/G 0.62. Both check out: camera white maps to D50 white, D65 white to the measured

@@ -1,0 +1,50 @@
+# Contributor: Martijn Braam <martijn@brixit.nl>
+# Maintainer: Oliver Smith <ollieparanoid@postmarketos.org>
+# Alpine 3.24 community/megapixels with two colour fixes for the Xperia Z1 Compact
+pkgname=megapixels
+pkgver=2.1.0
+pkgrel=2
+pkgdesc="GTK+4 camera app for mobile devices"
+url="https://gitlab.com/megapixels-org/Megapixels"
+# s390x: doubt anyone would use a mainframe to take photosj
+arch="all !s390x"
+license="GPL-3.0-only"
+# Required by postprocess.sh
+# depends="cmd:dcraw_emu cmd:convert cmd:exiftool"
+depends="libraw-tools imagemagick exiftool"
+makedepends="
+	feedbackd-dev
+	glib-dev
+	gperf
+	gtk4.0-dev
+	libdng-dev
+	libmegapixels-dev
+	libxrandr-dev
+	meson
+	pulseaudio-dev
+	tiff-dev>=4.6.0t
+	zbar-dev
+	"
+source="https://gitlab.com/megapixels-org/Megapixels/-/archive/$pkgver/Megapixels-$pkgver.tar.bz2
+	dcp-search-each-path.patch
+	preview-colour-order.patch
+	awb-stats-in-srgb.patch
+	"
+options="!check" # There's no testsuite
+builddir="$srcdir/Megapixels-$pkgver"
+
+build() {
+	abuild-meson . output
+	meson compile -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+sha512sums="
+0269e3d119abe3ae9a2a69e6796329429a8b54e8bb3f4928c62a54cef5c665abb152d55f0d9d07ab53cd81b397b0d7e81b3a1dff0f6f1b15a2713d5c0e193c88  Megapixels-2.1.0.tar.bz2
+8de834129497be5be587676c634450f62e89abd01a549288a6ae18ff5137a917b0b5d48279bf65b1c12767d4f9892e4bbeb8130fcd46a3f63801a02d10887975  dcp-search-each-path.patch
+ff0ee3506daa8f3dc48c05c0709c6399da4ad1bd1035f3b0cee6caec1e05fba8560ac0adfeb71da4c06de9fe95d07d946738abe1ab5912e3a332816999ec2d42  preview-colour-order.patch
+9fa742ed224de1f302e90df69fb14a84a437953d76b761106d71699f23b8aa34c866d30750b2f23744272eccb470ff22b64a5e684140ae0b673be34773e45adb  awb-stats-in-srgb.patch
+"

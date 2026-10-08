@@ -48,10 +48,10 @@ Snapshot's cairo stopgap is gone.
 
 ## Camera, rear (IMX200)
 
-1. **Megapixels** (`userspace/megapixels/sony,xperia-amami.conf`): it previews live on
-   the GPU with no hangs. Its preview has a strong green-yellow cast (is the colour profile
-   `sony,xperia-amami,imx200.dcp` used for the preview at all?), and its auto exposure
-   never stretches the frame, so it tops out at about 10 ms and is dim indoors at night.
+1. **Megapixels** (`userspace/megapixels/sony,xperia-amami.conf`, `recipe/megapixels`):
+   it previews live on the GPU with no hangs, and with the colour fixes white is white. Its
+   auto exposure never stretches the frame, so it tops out at about 10 ms and is dim
+   indoors at night. Clipped highlights turn pink.
 2. **Autofocus tuning.** Continuous contrast AF works (`recipe/libcamera` `0007`). It
    rescans on large sharpness changes only; tap to focus and the AF controls for apps
    are not there yet, and a scan takes a few seconds.

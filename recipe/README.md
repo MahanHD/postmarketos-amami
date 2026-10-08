@@ -42,3 +42,12 @@ and clang, libclc and the SPIR-V translator are top-level makedepends, because
 pmbootstrap does not read the `case` blocks that add them. Build it from pmaports'
 `temp/mesa` with `pmbootstrap build mesa --arch armv7` (about 15 minutes) and install
 `mesa`, `mesa-dri-gallium`, `mesa-egl`, `mesa-gbm`, `mesa-gl` and `mesa-gles`.
+
+## megapixels
+
+`megapixels/` is Alpine 3.24's `community/megapixels` (2.1.0) with three fixes that make
+it use the colour profile correctly: it finds the profile (`dcp-search-each-path.patch`),
+applies the colour steps in the right order (`preview-colour-order.patch`), and measures
+white balance on the preview as it is (`awb-stats-in-srgb.patch`). See
+`../docs/notes.md`, "Megapixels' colour, fixed". Build it from pmaports' `temp/megapixels`
+and install it with `userspace/megapixels/*` copied to `/usr/share/megapixels/config/`.

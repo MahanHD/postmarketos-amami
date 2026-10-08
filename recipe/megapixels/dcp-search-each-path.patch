@@ -1,0 +1,76 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] dcp: look for the calibration file in each path, not each character
+
+find_calibration_by_model() stepped through the search paths with
+fmt++ on a char pointer, so it tried every suffix of the first format
+string and then ran on into whatever memory followed. On the Xperia Z1
+Compact it "found" .config in the working directory and never loaded the
+real profile, and the preview went without colour matrix and white
+balance. The per-user check also looked for <model>.conf instead of the
+.dcp. Walk the paths array by index and look for the .dcp everywhere.
+
+---
+--- a/src/dcp.c	2026-10-08 23:01:40.114458817 +0400
++++ b/src/dcp.c	2026-10-08 23:01:40.124769320 +0400
+@@ -65,38 +65,40 @@
+                           char *model,
+                           const char *sensor)
+ {
++        static const char *paths[] = { "config/%s,%s.dcp",
++                                       SYSCONFDIR "/megapixels/config/%s,%s.dcp",
++                                       DATADIR "/megapixels/config/%s,%s.dcp",
++                                       NULL };
+         const char *home = getenv("HOME");
+         char *config_home = getenv("XDG_CONFIG_HOME");
++        bool found = false;
+         int fch = 0;
+         if ((config_home == NULL || config_home[0] == '\0') && home != NULL) {
+                 config_home = mprintf("%s/.config", home);
+                 fch = 1;
+         }
+         // Check in XDG_CONFIG_HOME/megapixels/config
+-        snprintf(conffile,
+-                 maxlen,
+-                 "%s/megapixels/config/%s.conf",
+-                 config_home,
+-                 model);
+-        if (access(conffile, F_OK) != -1) {
+-                if (fch) {
+-                        free(config_home);
+-                }
+-                return true;
++        if (config_home != NULL) {
++                snprintf(conffile,
++                         maxlen,
++                         "%s/megapixels/config/%s,%s.dcp",
++                         config_home,
++                         model,
++                         sensor);
++                found = access(conffile, F_OK) != -1;
++        }
++        if (fch) {
++                free(config_home);
+         }
+ 
+-        static const char *paths[] = { "config/%s,%s.dcp",
+-                                       SYSCONFDIR "/megapixels/config/%s,%s.dcp",
+-                                       DATADIR "/megapixels/config/%s,%s.dcp",
+-                                       NULL };
+-        for (const char *fmt = paths[0]; fmt; fmt++) {
+-                snprintf(conffile, maxlen, fmt, model, sensor);
+-                if (access(conffile, F_OK) != -1) {
+-                        printf("Found calibration file at %s\n", conffile);
+-                        return true;
+-                }
++        for (int i = 0; !found && paths[i]; i++) {
++                snprintf(conffile, maxlen, paths[i], model, sensor);
++                found = access(conffile, F_OK) != -1;
++        }
++        if (found) {
++                printf("Found calibration file at %s\n", conffile);
+         }
+-        return false;
++        return found;
+ }
+ 
+ bool

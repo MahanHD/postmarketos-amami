@@ -1,0 +1,32 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] gles2_debayer: apply the colour steps in the right order
+
+The preview shader does "color *= color_matrix" with the row-major matrix
+uploaded untransposed, which works out to colormat * rgb, so
+the matrix has to be XYZ->sRGB * D50->D65 * ForwardMatrix * WB. It was
+built the other way round, WB * Forward * D50->D65 * XYZ->sRGB. With
+the default calibration both orders give the identity, which hid it; with
+a real DCP a white surface came out (0.70, 1.15, 0.56) instead of white,
+and auto white balance then pulled the whole preview orange.
+
+---
+--- a/src/gles2_debayer.c	2026-10-08 23:06:03.312934600 +0400
++++ b/src/gles2_debayer.c	2026-10-08 23:06:03.359331720 +0400
+@@ -177,9 +177,14 @@
+                 float colormat[9];
+                 float xyz[9];
+                 float xyzd65[9];
+-                multiply_matrices(wb, self->forward_matrix, xyz);
+-                multiply_matrices(xyz, XYZD50_to_D65, xyzd65);
+-                multiply_matrices(xyzd65, XYZD65_to_sRGB, colormat);
++                /*
++                 * The shader computes colormat * rgb, so the steps apply
++                 * right to left: white balance, then the forward matrix
++                 * (camera to XYZ D50), then D50 to D65, then XYZ to sRGB.
++                 */
++                multiply_matrices(self->forward_matrix, wb, xyz);
++                multiply_matrices(XYZD50_to_D65, xyz, xyzd65);
++                multiply_matrices(XYZD65_to_sRGB, xyzd65, colormat);
+                 glUniformMatrix3fv(
+                         self->uniform_color_matrix, 1, GL_FALSE, colormat);
+         } else if (self->shader == SHADER_YUV) {

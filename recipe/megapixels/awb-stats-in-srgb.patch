@@ -1,0 +1,31 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] process_pipeline: measure white balance on the preview as it is
+
+process_aaa() reads back the processed preview, which the colour matrix
+has already taken to sRGB, and then had libmegapixels multiply the
+averages by the DCP's ColorMatrix1. That matrix maps XYZ to camera RGB,
+so with a real profile a white preview measured as roughly the camera's
+raw neutral, (0.57, 1, 0.59) on the Xperia Z1 Compact, and auto white
+balance raised red and blue by about 1.7x every step until they hit the
+limit. With the default identity calibration this never showed. Use the
+identity for the statistics.
+
+---
+--- a/src/process_pipeline.c	2026-10-08 23:10:22.610525643 +0400
++++ b/src/process_pipeline.c	2026-10-08 23:10:22.622360507 +0400
+@@ -555,9 +555,12 @@
+         uint32_t *center = g_malloc_n(width * height * sizeof(uint32_t), 1);
+         glReadPixels(0, height, width, height, GL_RGBA, GL_UNSIGNED_BYTE, center);
+ 
+-        libmegapixels_aaa_set_matrix(&state_proc.stats,
+-                                     state_proc.calibration.color_matrix_1,
+-                                     state_proc.calibration.color_matrix_2);
++        /*
++         * The statistics come from the processed preview, which the
++         * calibration has already taken to sRGB. The DCP colour matrix maps
++         * XYZ to camera RGB and does not apply here.
++         */
++        libmegapixels_aaa_init(&state_proc.stats);
+         libmegapixels_aaa_software_statistics(
+                 &state_proc.stats, center, width, height);
+ 
