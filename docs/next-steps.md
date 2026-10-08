@@ -41,13 +41,17 @@ Snapshot's cairo stopgap is gone.
    affect the hang. They stay documented; port one only if a symptom points to it.
 2. Port kgsl's power-on shader-corruption fixup for a3xx to drm/msm. The stock kernel
    binary has it; nothing is known to need it yet.
-3. Offer the Mesa fix upstream once the port is clean.
+3. GPU recovery can fail for good: after one hang at 21:39 (Xorg, still on the old Mesa)
+   every reset left the GPU unable to finish anything until a reboot. Earlier the same day
+   it recovered from dozens of hangs. Decode `work/mesa/stuck.devcore` and find out why.
+4. Offer the Mesa fix upstream once the port is clean.
 
 ## Camera, rear (IMX200)
 
-1. **Megapixels** (`userspace/megapixels/sony,xperia-amami.conf`): the app now runs
-   without hanging the GPU. Next is checking its preview and photos, with the colour
-   profile from stock's matrix (`sony,xperia-amami,imx200.dcp`), on a lit scene.
+1. **Megapixels** (`userspace/megapixels/sony,xperia-amami.conf`): it previews live on
+   the GPU with no hangs. Its preview has a strong green-yellow cast (is the colour profile
+   `sony,xperia-amami,imx200.dcp` used for the preview at all?), and its auto exposure
+   never stretches the frame, so it tops out at about 10 ms and is dim indoors at night.
 2. **Autofocus tuning.** Continuous contrast AF works (`recipe/libcamera` `0007`). It
    rescans on large sharpness changes only; tap to focus and the AF controls for apps
    are not there yet, and a scan takes a few seconds.

@@ -3558,6 +3558,19 @@ the quirk, settle in camss), then the IMX132.
 - `recipe/mesa` r4: `freedreno-a3xx-end-direct-loads.patch`. Megapixels 120 s and
   Snapshot 90 s on the GL renderer, then three photos: no hangs, no faults. The cairo
   stopgap (`userspace/snapshot`) is removed.
+- A false alarm worth remembering: raw frames from `capture.sh` came out black all
+  evening and looked like a dead pixel array. They were underexposed. Its defaults (gain
+  128, exposure capped by the frame length, about 10 ms in 1312x988) are fine in daylight
+  and far too little in a lamp-lit room at night, where Snapshot's AE sits at gain 240 with
+  a stretched frame. `capture.sh` takes `VBLANK=` now; `VBLANK=30000`, exposure 30000 and
+  gain 240 gave a normal image of the same scene.
+- Megapixels on the GPU path: live preview, no hangs. Two things left: a strong
+  green-yellow cast, and its auto exposure stops at one frame length, so it is dim at
+  night.
+- One GPU hang still got through: the X server, which had kept the unpatched Mesa loaded
+  since boot, hung once at 21:39, and after that every GPU reset failed (even glxgears
+  could not finish a frame) until a reboot. Dump in `work/mesa/stuck.devcore`. A failed
+  recovery is its own bug, still to look at.
 
 ## Parked patches
 

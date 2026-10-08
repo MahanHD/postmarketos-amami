@@ -7,6 +7,9 @@
 #
 # SIZE picks the sensor mode: 5248x3936 (default), 2624x1976, 2624x1480 or
 # 1312x988. Writes OUT (default /home/mahan/capture.raw, packed RAW10) and a log.
+# VBLANK=lines stretches the frame, which raises the exposure ceiling (exposure
+# can be at most the frame length); indoors at night it takes about 30000 lines
+# and analogue gain 240 to see anything.
 # FOCUS=0..1023 sets the lens (higher is closer; about 256 for distant scenes,
 # 512 for near objects); without it the lens stays unpowered at rest.
 # The camera modules are loaded with --ignore-install, so this works with the
@@ -42,6 +45,7 @@ media-ctl -d $M -l '"msm_csiphy0":1->"msm_csid0":0[1],"msm_csid0":1->"msm_ispif0
 media-ctl -d $M -V "\"$SENSOR\":0[fmt:$F],\"msm_csiphy0\":0[fmt:$F],\"msm_csid0\":0[fmt:$F],\"msm_ispif0\":0[fmt:$F],\"msm_vfe0_rdi0\":0[fmt:$F]"
 v4l2-ctl -d "$V" --set-fmt-video=width=$W,height=$H,pixelformat=pRAA
 v4l2-ctl -d "$S" -c test_pattern=$TP
+[ -n "${VBLANK:-}" ] && v4l2-ctl -d "$S" -c vertical_blanking="$VBLANK"
 v4l2-ctl -d "$S" -c exposure=$EXPO,analogue_gain=$AGAIN
 
 timeout 60 v4l2-ctl -d "$V" --stream-mmap=2 --stream-count="$CNT" --stream-to="$OUT" 2>>"$LOG"
