@@ -3506,6 +3506,24 @@ the quirk, settle in camss), then the IMX132.
   railings that were mush at the rest position.
 - Six streams in one boot, all good. At exposure 1200 the sensor runs 16.8 fps.
 
+### A camera you can use, 2026-10-08: imx200 driver, libcamera, Snapshot
+
+- Stock's actuator code also led to a focus calibration in the EEPROM (0xd0: 326/359/681).
+- libcamera listed nothing: CCS has no `enum_frame_size` and three subdevs. Wrote
+  `imx200` (`0103`) from stock's tables and the CCS register dump of a working stream.
+- The binned modes came out striped, with every other row black. Read-backs inside the
+  driver showed stream-on resetting the readout registers; writing them after stream-on
+  fixed all four modes. Restarting the stream instead reset the phone.
+- Measured the real frame rates without disk writes (16.8 to 95.9 fps) and set per-mode
+  pixel rates from them.
+- Sensor-side lens shading from the EEPROM, like stock: the corners gain 3.3x.
+- libcamera: IMX200 helper and properties, stock's colour matrix, and three soft ISP
+  colour fixes (black level order, clip after white balance, saturated pixels out of the
+  white balance). The GPU debayer is out without the msm IOMMU; the CPU one runs.
+- WirePlumber crashed once: it still had the old libcamera loaded while the IPA module on
+  disk had changed. Reboot after upgrading libcamera.
+- Snapshot previews live, upright, with automatic exposure and white balance.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

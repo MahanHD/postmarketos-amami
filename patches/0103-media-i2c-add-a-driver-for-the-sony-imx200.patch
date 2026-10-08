@@ -1,0 +1,1127 @@
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -148,6 +148,16 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called imx214.
+ 
++config VIDEO_IMX200
++	tristate "Sony IMX200 sensor support"
++	select V4L2_CCI_I2C
++	help
++	  This is a Video4Linux2 sensor driver for the Sony
++	  IMX200 camera.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called imx200.
++
+ config VIDEO_IMX219
+ 	tristate "Sony IMX219 sensor support"
+ 	select V4L2_CCI_I2C
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -48,6 +48,7 @@
+ obj-$(CONFIG_VIDEO_I2C) += video-i2c.o
+ obj-$(CONFIG_VIDEO_IMX208) += imx208.o
+ obj-$(CONFIG_VIDEO_IMX214) += imx214.o
++obj-$(CONFIG_VIDEO_IMX200) += imx200.o
+ obj-$(CONFIG_VIDEO_IMX219) += imx219.o
+ obj-$(CONFIG_VIDEO_IMX258) += imx258.o
+ obj-$(CONFIG_VIDEO_IMX274) += imx274.o
+--- /dev/null
++++ b/drivers/media/i2c/imx200.c
+@@ -0,0 +1,1095 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Sony IMX200 camera sensor driver
++ *
++ * The IMX200 is a 20.7 MP SMIA++ sensor, used in the Xperia Z1 Compact's rear
++ * module SOI20BS0. Sony's own driver lives in userspace, so the register
++ * tables here come from the stock firmware's SOI20BS0_IMX200.dat, and the
++ * clock setup is the one the generic CCS driver arrives at from a 19.2 MHz
++ * clock: the phone cannot make the 8 MHz MCLK stock uses.
++ */
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/pm_runtime.h>
++#include <linux/regulator/consumer.h>
++
++#include <media/v4l2-cci.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++#include <media/v4l2-mediabus.h>
++
++#define IMX200_REG_MODE_SELECT		CCI_REG8(0x0100)
++#define IMX200_MODE_STANDBY		0x00
++#define IMX200_MODE_STREAMING		0x01
++
++#define IMX200_REG_CSI_SIG_MODE		CCI_REG8(0x0111)
++#define IMX200_REG_CSI_DATA_FORMAT	CCI_REG16(0x0112)
++#define IMX200_REG_CSI_LANE_MODE	CCI_REG8(0x0114)
++
++#define IMX200_REG_EXPOSURE		CCI_REG16(0x0202)
++#define IMX200_EXPOSURE_MIN		1
++#define IMX200_EXPOSURE_OFFSET		8
++#define IMX200_EXPOSURE_DEFAULT		1200
++
++/* gain = 256 / (256 - code), up to 16x */
++#define IMX200_REG_ANALOG_GAIN		CCI_REG16(0x0204)
++#define IMX200_ANA_GAIN_MIN		0
++#define IMX200_ANA_GAIN_MAX		240
++#define IMX200_ANA_GAIN_DEFAULT		0
++
++#define IMX200_REG_DIG_GAIN_GR		CCI_REG16(0x020e)
++#define IMX200_REG_DIG_GAIN_R		CCI_REG16(0x0210)
++#define IMX200_REG_DIG_GAIN_B		CCI_REG16(0x0212)
++#define IMX200_REG_DIG_GAIN_GB		CCI_REG16(0x0214)
++#define IMX200_DGTL_GAIN_MIN		0x0100
++#define IMX200_DGTL_GAIN_MAX		0x0fff
++#define IMX200_DGTL_GAIN_DEFAULT	0x0100
++
++#define IMX200_REG_FRM_LENGTH		CCI_REG16(0x0340)
++#define IMX200_FLL_MAX			0xffff
++#define IMX200_VBLANK_MIN		48
++#define IMX200_REG_LINE_LENGTH		CCI_REG16(0x0342)
++#define IMX200_LLP			5904
++
++#define IMX200_REG_X_ADD_STA		CCI_REG16(0x0344)
++#define IMX200_REG_Y_ADD_STA		CCI_REG16(0x0346)
++#define IMX200_REG_X_ADD_END		CCI_REG16(0x0348)
++#define IMX200_REG_Y_ADD_END		CCI_REG16(0x034a)
++#define IMX200_REG_X_OUTPUT_SIZE	CCI_REG16(0x034c)
++#define IMX200_REG_Y_OUTPUT_SIZE	CCI_REG16(0x034e)
++
++#define IMX200_REG_TEST_PATTERN		CCI_REG16(0x0600)
++
++/*
++ * The sensor's own lens shading correction: a 9x7 grid of 8.8 gains per
++ * colour channel, in two tables that interleave two channels each.
++ */
++#define IMX200_REG_LSC_ENABLE		CCI_REG8(0x0700)
++#define IMX200_REG_LSC_MODE		CCI_REG8(0x4500)
++#define IMX200_REG_LSC_TABLE_A		0x4800
++#define IMX200_REG_LSC_TABLE_B		0x48fc
++#define IMX200_REG_LSC_APPLY		CCI_REG8(0x3a63)
++#define IMX200_LSC_POINTS		63
++
++/*
++ * The module EEPROM (eight 256-byte pages at 0x50-0x57) holds the factory
++ * shading calibration from 0x100: nine 64-byte blocks, each a 9x7 grid of
++ * relative brightness with 0x80 at the centre. Which block is which channel is
++ * not known; on a white target the fall-off is the same in every channel to
++ * within a few percent, so the average of the nine is used for all four.
++ */
++#define IMX200_EEPROM_ADDR		0x50
++#define IMX200_EEPROM_LSC		0x100
++#define IMX200_EEPROM_LSC_BLOCKS	9
++#define IMX200_EEPROM_LSC_STRIDE	64
++
++#define IMX200_NATIVE_WIDTH		5248U
++#define IMX200_NATIVE_HEIGHT		3952U
++
++#define IMX200_LINK_FREQ		288000000ULL
++/*
++ * Measured: a line of IMX200_LLP takes 14.93 us at full resolution and
++ * 10.11 us in the binned modes, whatever the output width.
++ */
++#define IMX200_PIXEL_RATE_FULL		395500000
++#define IMX200_PIXEL_RATE_BINNED	583900000
++#define IMX200_EXT_CLK			19200000
++#define IMX200_BOOT_DELAY_US		20000
++
++static const char * const imx200_supply_names[] = {
++	"vcore",	/* digital core, 1.2 V */
++	"vio",		/* I/O, 1.8 V */
++	"vana",		/* analogue, 2.7 V */
++};
++
++#define IMX200_NUM_SUPPLIES ARRAY_SIZE(imx200_supply_names)
++
++/*
++ * Stock's manufacturer-specific init table, written before every stream.
++ */
++static const struct cci_reg_sequence imx200_init_regs[] = {
++	{ CCI_REG8(0x0105), 0x01 }, { CCI_REG8(0x0110), 0x00 }, { CCI_REG8(0x0220), 0x01 },
++	{ CCI_REG8(0x9431), 0x03 }, { CCI_REG8(0x943e), 0x05 }, { CCI_REG8(0x9278), 0x19 },
++	{ CCI_REG8(0x941b), 0x1b }, { CCI_REG8(0x9507), 0x1b }, { CCI_REG8(0x950b), 0x1b },
++	{ CCI_REG8(0x950f), 0x1b }, { CCI_REG8(0x9412), 0x29 }, { CCI_REG8(0x9631), 0x00 },
++	{ CCI_REG8(0x9633), 0x40 }, { CCI_REG8(0x960f), 0xca }, { CCI_REG8(0x93b4), 0x07 },
++	{ CCI_REG8(0x93b5), 0x07 }, { CCI_REG8(0x941f), 0x86 }, { CCI_REG8(0x9301), 0x01 },
++	{ CCI_REG8(0x3443), 0xff }, { CCI_REG8(0x3444), 0xff }, { CCI_REG8(0x3445), 0xff },
++	{ CCI_REG8(0x3446), 0xff }, { CCI_REG8(0x3447), 0xff }, { CCI_REG8(0x3448), 0xff },
++	{ CCI_REG8(0x3449), 0xff }, { CCI_REG8(0x344a), 0xff }, { CCI_REG8(0x344b), 0xff },
++	{ CCI_REG8(0x344c), 0xff }, { CCI_REG8(0x344d), 0xff }, { CCI_REG8(0x344e), 0xff },
++	{ CCI_REG8(0x3300), 0x08 }, { CCI_REG8(0x5501), 0x18 }, { CCI_REG8(0x5502), 0x33 },
++	{ CCI_REG8(0x5503), 0x1e }, { CCI_REG8(0x5504), 0x33 }, { CCI_REG8(0x5505), 0x1f },
++	{ CCI_REG8(0x5506), 0x33 }, { CCI_REG8(0x5507), 0x20 }, { CCI_REG8(0x5508), 0x33 },
++	{ CCI_REG8(0x5509), 0x21 }, { CCI_REG8(0x550a), 0x33 }, { CCI_REG8(0x550b), 0x22 },
++	{ CCI_REG8(0x550c), 0x33 }, { CCI_REG8(0x550d), 0x23 }, { CCI_REG8(0x550e), 0x33 },
++	{ CCI_REG8(0x550f), 0x24 }, { CCI_REG8(0x5510), 0x33 }, { CCI_REG8(0x5511), 0x25 },
++	{ CCI_REG8(0x5512), 0x33 }, { CCI_REG8(0x5513), 0x26 }, { CCI_REG8(0x5514), 0x33 },
++	{ CCI_REG8(0x5515), 0x27 }, { CCI_REG8(0x5516), 0x33 }, { CCI_REG8(0x5517), 0x28 },
++	{ CCI_REG8(0x5518), 0x33 }, { CCI_REG8(0x5519), 0x29 }, { CCI_REG8(0x551a), 0x33 },
++	{ CCI_REG8(0x551b), 0x2a }, { CCI_REG8(0x551c), 0x33 }, { CCI_REG8(0x551d), 0x2b },
++	{ CCI_REG8(0x551e), 0x33 }, { CCI_REG8(0x551f), 0x2c }, { CCI_REG8(0x5520), 0x33 },
++	{ CCI_REG8(0x5521), 0x2d }, { CCI_REG8(0x5522), 0x33 }, { CCI_REG8(0x5523), 0x2e },
++	{ CCI_REG8(0x5524), 0x33 }, { CCI_REG8(0x5525), 0x2f }, { CCI_REG8(0x5526), 0x33 },
++	{ CCI_REG8(0x5527), 0x30 }, { CCI_REG8(0x5528), 0x33 }, { CCI_REG8(0x5529), 0x31 },
++	{ CCI_REG8(0x552a), 0x13 }, { CCI_REG8(0x552b), 0xd4 }, { CCI_REG8(0x552c), 0x13 },
++	{ CCI_REG8(0x552d), 0xd5 }, { CCI_REG8(0x552e), 0x56 }, { CCI_REG8(0x552f), 0x2d },
++	{ CCI_REG8(0x5530), 0x56 }, { CCI_REG8(0x5531), 0x2f }, { CCI_REG8(0x562a), 0x02 },
++	{ CCI_REG8(0x562c), 0x55 }, { CCI_REG8(0x562d), 0x00 }, { CCI_REG8(0x562e), 0x55 },
++	{ CCI_REG8(0x562f), 0xff }, { CCI_REG8(0x9915), 0x00 }, { CCI_REG8(0x9931), 0x10 },
++};
++
++static const struct cci_reg_sequence imx200_mode_5248_3936_regs[] = {
++	{ CCI_REG8(0x0381), 0x01 }, { CCI_REG8(0x0383), 0x01 }, { CCI_REG8(0x0385), 0x01 },
++	{ CCI_REG8(0x0387), 0x01 }, { CCI_REG8(0x0390), 0x00 }, { CCI_REG8(0x0391), 0x11 },
++	{ CCI_REG8(0x0392), 0x00 }, { CCI_REG8(0x0401), 0x00 }, { CCI_REG8(0x0404), 0x01 },
++	{ CCI_REG8(0x0405), 0x00 }, { CCI_REG8(0x0406), 0x01 }, { CCI_REG8(0x0407), 0x00 },
++	{ CCI_REG8(0x0700), 0x00 }, { CCI_REG8(0x980a), 0x00 }, { CCI_REG8(0x991b), 0x01 },
++	{ CCI_REG8(0x9030), 0x48 }, { CCI_REG8(0x9034), 0x0f }, { CCI_REG8(0x9035), 0x90 },
++	{ CCI_REG8(0x9036), 0x0f }, { CCI_REG8(0x9037), 0x97 }, { CCI_REG8(0x9904), 0x07 },
++	{ CCI_REG8(0x991f), 0x71 }, { CCI_REG8(0x901d), 0x08 }, { CCI_REG8(0x9909), 0x00 },
++	{ CCI_REG8(0x991e), 0x00 }, { CCI_REG8(0x13c0), 0x00 }, { CCI_REG8(0x13c1), 0x00 },
++	{ CCI_REG8(0x13c2), 0x14 }, { CCI_REG8(0x13c3), 0x80 }, { CCI_REG8(0x13c4), 0x00 },
++	{ CCI_REG8(0x020e), 0x01 }, { CCI_REG8(0x020f), 0x00 }, { CCI_REG8(0x0210), 0x01 },
++	{ CCI_REG8(0x0211), 0x00 }, { CCI_REG8(0x0212), 0x01 }, { CCI_REG8(0x0213), 0x00 },
++	{ CCI_REG8(0x0214), 0x01 }, { CCI_REG8(0x0215), 0x00 }, { CCI_REG8(0x0230), 0x00 },
++	{ CCI_REG8(0x0231), 0x00 }, { CCI_REG8(0x0233), 0x00 }, { CCI_REG8(0x0234), 0x00 },
++	{ CCI_REG8(0x0235), 0x40 }, { CCI_REG8(0x0238), 0x01 }, { CCI_REG8(0x0239), 0x08 },
++	{ CCI_REG8(0xad34), 0x14 }, { CCI_REG8(0xad35), 0x7f }, { CCI_REG8(0xad36), 0x00 },
++	{ CCI_REG8(0xad37), 0x00 }, { CCI_REG8(0xad38), 0x0f }, { CCI_REG8(0xad39), 0x5d },
++	{ CCI_REG8(0xad3a), 0x00 }, { CCI_REG8(0xad3b), 0x00 }, { CCI_REG8(0xad3c), 0x14 },
++	{ CCI_REG8(0xad3d), 0x7f }, { CCI_REG8(0xad3e), 0x0f }, { CCI_REG8(0xad3f), 0x5d },
++	{ CCI_REG8(0xa303), 0x00 }, { CCI_REG8(0xa403), 0x00 }, { CCI_REG8(0xbb03), 0x00 },
++	{ CCI_REG8(0xa602), 0x00 }, { CCI_REG8(0xa703), 0x01 }, { CCI_REG8(0xa903), 0x01 },
++	{ CCI_REG8(0xaa03), 0x01 }, { CCI_REG8(0xab03), 0x01 }, { CCI_REG8(0xac03), 0x01 },
++	{ CCI_REG8(0xad03), 0x01 }, { CCI_REG8(0xae03), 0x01 }, { CCI_REG8(0xb803), 0x01 },
++	{ CCI_REG8(0xb903), 0x01 }, { CCI_REG8(0xa956), 0x01 }, { CCI_REG8(0x4003), 0x05 },
++	{ CCI_REG8(0x4004), 0x05 }, { CCI_REG8(0x4005), 0x05 }, { CCI_REG8(0x4006), 0x28 },
++	{ CCI_REG8(0x4007), 0x28 }, { CCI_REG8(0x4008), 0x28 }, { CCI_REG8(0x400c), 0x05 },
++	{ CCI_REG8(0x400d), 0x05 }, { CCI_REG8(0x400e), 0x05 }, { CCI_REG8(0x400f), 0x28 },
++	{ CCI_REG8(0x4010), 0x28 }, { CCI_REG8(0x4011), 0x28 }, { CCI_REG8(0xa913), 0x00 },
++	{ CCI_REG8(0xae8b), 0x30 }, { CCI_REG8(0xac13), 0x00 }, { CCI_REG8(0xac3f), 0x00 },
++	{ CCI_REG8(0xb812), 0x00 }, { CCI_REG8(0x3506), 0x00 }, { CCI_REG8(0x3507), 0x01 },
++	{ CCI_REG8(0x3508), 0x00 }, { CCI_REG8(0x3509), 0x01 }, { CCI_REG8(0x3008), 0x01 },
++	{ CCI_REG8(0x3009), 0x71 }, { CCI_REG8(0x300a), 0x71 }, { CCI_REG8(0x3d11), 0x40 },
++	{ CCI_REG8(0x9915), 0x00 }, { CCI_REG8(0x9931), 0x10 },
++};
++
++static const struct cci_reg_sequence imx200_mode_2624_1976_regs[] = {
++	{ CCI_REG8(0x0381), 0x01 }, { CCI_REG8(0x0383), 0x01 }, { CCI_REG8(0x0385), 0x01 },
++	{ CCI_REG8(0x0387), 0x01 }, { CCI_REG8(0x0390), 0x01 }, { CCI_REG8(0x0391), 0x22 },
++	{ CCI_REG8(0x0392), 0x00 }, { CCI_REG8(0x0401), 0x00 }, { CCI_REG8(0x0404), 0x01 },
++	{ CCI_REG8(0x0405), 0x00 }, { CCI_REG8(0x0406), 0x01 }, { CCI_REG8(0x0407), 0x00 },
++	{ CCI_REG8(0x0700), 0x00 }, { CCI_REG8(0x980a), 0x00 }, { CCI_REG8(0x991b), 0x01 },
++	{ CCI_REG8(0x9030), 0x44 }, { CCI_REG8(0x9034), 0x0f }, { CCI_REG8(0x9035), 0x88 },
++	{ CCI_REG8(0x9036), 0x0f }, { CCI_REG8(0x9037), 0x8f }, { CCI_REG8(0x9904), 0x01 },
++	{ CCI_REG8(0x991f), 0x11 }, { CCI_REG8(0x901d), 0x00 }, { CCI_REG8(0x9909), 0x00 },
++	{ CCI_REG8(0x991e), 0x00 }, { CCI_REG8(0x13c0), 0x00 }, { CCI_REG8(0x13c1), 0x00 },
++	{ CCI_REG8(0x13c2), 0x0a }, { CCI_REG8(0x13c3), 0x40 }, { CCI_REG8(0x13c4), 0x00 },
++	{ CCI_REG8(0x020e), 0x01 }, { CCI_REG8(0x020f), 0x00 }, { CCI_REG8(0x0210), 0x01 },
++	{ CCI_REG8(0x0211), 0x00 }, { CCI_REG8(0x0212), 0x01 }, { CCI_REG8(0x0213), 0x00 },
++	{ CCI_REG8(0x0214), 0x01 }, { CCI_REG8(0x0215), 0x00 }, { CCI_REG8(0x0230), 0x00 },
++	{ CCI_REG8(0x0231), 0x00 }, { CCI_REG8(0x0233), 0x00 }, { CCI_REG8(0x0234), 0x00 },
++	{ CCI_REG8(0x0235), 0x40 }, { CCI_REG8(0x0238), 0x01 }, { CCI_REG8(0x0239), 0x08 },
++	{ CCI_REG8(0xad34), 0x14 }, { CCI_REG8(0xad35), 0x7f }, { CCI_REG8(0xad36), 0x00 },
++	{ CCI_REG8(0xad37), 0x00 }, { CCI_REG8(0xad38), 0x0f }, { CCI_REG8(0xad39), 0x5d },
++	{ CCI_REG8(0xad3a), 0x00 }, { CCI_REG8(0xad3b), 0x00 }, { CCI_REG8(0xad3c), 0x14 },
++	{ CCI_REG8(0xad3d), 0x7f }, { CCI_REG8(0xad3e), 0x0f }, { CCI_REG8(0xad3f), 0x5d },
++	{ CCI_REG8(0xa303), 0x00 }, { CCI_REG8(0xa403), 0x00 }, { CCI_REG8(0xbb03), 0x00 },
++	{ CCI_REG8(0xa602), 0x00 }, { CCI_REG8(0xa703), 0x01 }, { CCI_REG8(0xa903), 0x01 },
++	{ CCI_REG8(0xaa03), 0x01 }, { CCI_REG8(0xab03), 0x00 }, { CCI_REG8(0xac03), 0x01 },
++	{ CCI_REG8(0xad03), 0x01 }, { CCI_REG8(0xae03), 0x01 }, { CCI_REG8(0xb803), 0x01 },
++	{ CCI_REG8(0xb903), 0x01 }, { CCI_REG8(0xa956), 0x01 }, { CCI_REG8(0x4003), 0x05 },
++	{ CCI_REG8(0x4004), 0x05 }, { CCI_REG8(0x4005), 0x05 }, { CCI_REG8(0x4006), 0x28 },
++	{ CCI_REG8(0x4007), 0x28 }, { CCI_REG8(0x4008), 0x28 }, { CCI_REG8(0x400c), 0x05 },
++	{ CCI_REG8(0x400d), 0x05 }, { CCI_REG8(0x400e), 0x05 }, { CCI_REG8(0x400f), 0x28 },
++	{ CCI_REG8(0x4010), 0x28 }, { CCI_REG8(0x4011), 0x28 }, { CCI_REG8(0xa913), 0x00 },
++	{ CCI_REG8(0xae8b), 0x30 }, { CCI_REG8(0xac13), 0x00 }, { CCI_REG8(0xac3f), 0x00 },
++	{ CCI_REG8(0xb812), 0x00 }, { CCI_REG8(0x3506), 0x00 }, { CCI_REG8(0x3507), 0x01 },
++	{ CCI_REG8(0x3508), 0x00 }, { CCI_REG8(0x3509), 0x01 }, { CCI_REG8(0x3008), 0x01 },
++	{ CCI_REG8(0x3009), 0x71 }, { CCI_REG8(0x300a), 0x71 }, { CCI_REG8(0x3d11), 0x40 },
++	{ CCI_REG8(0x9915), 0x00 }, { CCI_REG8(0x9931), 0x10 },
++};
++
++static const struct cci_reg_sequence imx200_mode_2624_1480_regs[] = {
++	{ CCI_REG8(0x0381), 0x01 }, { CCI_REG8(0x0383), 0x01 }, { CCI_REG8(0x0385), 0x01 },
++	{ CCI_REG8(0x0387), 0x01 }, { CCI_REG8(0x0390), 0x01 }, { CCI_REG8(0x0391), 0x22 },
++	{ CCI_REG8(0x0392), 0x00 }, { CCI_REG8(0x0401), 0x00 }, { CCI_REG8(0x0404), 0x01 },
++	{ CCI_REG8(0x0405), 0x00 }, { CCI_REG8(0x0406), 0x01 }, { CCI_REG8(0x0407), 0x00 },
++	{ CCI_REG8(0x0700), 0x00 }, { CCI_REG8(0x980a), 0x00 }, { CCI_REG8(0x991b), 0x01 },
++	{ CCI_REG8(0x9030), 0x44 }, { CCI_REG8(0x9034), 0x0f }, { CCI_REG8(0x9035), 0x88 },
++	{ CCI_REG8(0x9036), 0x0f }, { CCI_REG8(0x9037), 0x8f }, { CCI_REG8(0x9904), 0x01 },
++	{ CCI_REG8(0x991f), 0x11 }, { CCI_REG8(0x901d), 0x08 }, { CCI_REG8(0x9909), 0x00 },
++	{ CCI_REG8(0x991e), 0x00 }, { CCI_REG8(0x13c0), 0x00 }, { CCI_REG8(0x13c1), 0x00 },
++	{ CCI_REG8(0x13c2), 0x0a }, { CCI_REG8(0x13c3), 0x40 }, { CCI_REG8(0x13c4), 0x00 },
++	{ CCI_REG8(0x020e), 0x01 }, { CCI_REG8(0x020f), 0x00 }, { CCI_REG8(0x0210), 0x01 },
++	{ CCI_REG8(0x0211), 0x00 }, { CCI_REG8(0x0212), 0x01 }, { CCI_REG8(0x0213), 0x00 },
++	{ CCI_REG8(0x0214), 0x01 }, { CCI_REG8(0x0215), 0x00 }, { CCI_REG8(0x0230), 0x00 },
++	{ CCI_REG8(0x0231), 0x00 }, { CCI_REG8(0x0233), 0x00 }, { CCI_REG8(0x0234), 0x00 },
++	{ CCI_REG8(0x0235), 0x40 }, { CCI_REG8(0x0238), 0x01 }, { CCI_REG8(0x0239), 0x08 },
++	{ CCI_REG8(0xad34), 0x14 }, { CCI_REG8(0xad35), 0x7f }, { CCI_REG8(0xad36), 0x00 },
++	{ CCI_REG8(0xad37), 0x00 }, { CCI_REG8(0xad38), 0x0f }, { CCI_REG8(0xad39), 0x5d },
++	{ CCI_REG8(0xad3a), 0x00 }, { CCI_REG8(0xad3b), 0x00 }, { CCI_REG8(0xad3c), 0x14 },
++	{ CCI_REG8(0xad3d), 0x7f }, { CCI_REG8(0xad3e), 0x0f }, { CCI_REG8(0xad3f), 0x5d },
++	{ CCI_REG8(0xa303), 0x00 }, { CCI_REG8(0xa403), 0x00 }, { CCI_REG8(0xbb03), 0x00 },
++	{ CCI_REG8(0xa602), 0x00 }, { CCI_REG8(0xa703), 0x01 }, { CCI_REG8(0xa903), 0x01 },
++	{ CCI_REG8(0xaa03), 0x01 }, { CCI_REG8(0xab03), 0x00 }, { CCI_REG8(0xac03), 0x01 },
++	{ CCI_REG8(0xad03), 0x01 }, { CCI_REG8(0xae03), 0x01 }, { CCI_REG8(0xb803), 0x01 },
++	{ CCI_REG8(0xb903), 0x01 }, { CCI_REG8(0xa956), 0x01 }, { CCI_REG8(0x4003), 0x05 },
++	{ CCI_REG8(0x4004), 0x05 }, { CCI_REG8(0x4005), 0x05 }, { CCI_REG8(0x4006), 0x28 },
++	{ CCI_REG8(0x4007), 0x28 }, { CCI_REG8(0x4008), 0x28 }, { CCI_REG8(0x400c), 0x05 },
++	{ CCI_REG8(0x400d), 0x05 }, { CCI_REG8(0x400e), 0x05 }, { CCI_REG8(0x400f), 0x28 },
++	{ CCI_REG8(0x4010), 0x28 }, { CCI_REG8(0x4011), 0x28 }, { CCI_REG8(0xa913), 0x00 },
++	{ CCI_REG8(0xae8b), 0x30 }, { CCI_REG8(0xac13), 0x00 }, { CCI_REG8(0xac3f), 0x00 },
++	{ CCI_REG8(0xb812), 0x00 }, { CCI_REG8(0x3506), 0x00 }, { CCI_REG8(0x3507), 0x01 },
++	{ CCI_REG8(0x3508), 0x00 }, { CCI_REG8(0x3509), 0x01 }, { CCI_REG8(0x3008), 0x01 },
++	{ CCI_REG8(0x3009), 0x71 }, { CCI_REG8(0x300a), 0x71 }, { CCI_REG8(0x3d11), 0x40 },
++	{ CCI_REG8(0x9915), 0x00 }, { CCI_REG8(0x9931), 0x10 },
++};
++
++static const struct cci_reg_sequence imx200_mode_1312_988_regs[] = {
++	{ CCI_REG8(0x0381), 0x01 }, { CCI_REG8(0x0383), 0x01 }, { CCI_REG8(0x0385), 0x01 },
++	{ CCI_REG8(0x0387), 0x03 }, { CCI_REG8(0x0390), 0x01 }, { CCI_REG8(0x0391), 0x42 },
++	{ CCI_REG8(0x0392), 0x00 }, { CCI_REG8(0x0401), 0x00 }, { CCI_REG8(0x0404), 0x01 },
++	{ CCI_REG8(0x0405), 0x00 }, { CCI_REG8(0x0406), 0x01 }, { CCI_REG8(0x0407), 0x00 },
++	{ CCI_REG8(0x0700), 0x00 }, { CCI_REG8(0x980a), 0x00 }, { CCI_REG8(0x991b), 0x01 },
++	{ CCI_REG8(0x9030), 0x44 }, { CCI_REG8(0x9034), 0x0f }, { CCI_REG8(0x9035), 0x88 },
++	{ CCI_REG8(0x9036), 0x0f }, { CCI_REG8(0x9037), 0x8f }, { CCI_REG8(0x9904), 0x01 },
++	{ CCI_REG8(0x991f), 0x11 }, { CCI_REG8(0x901d), 0x00 }, { CCI_REG8(0x9909), 0x00 },
++	{ CCI_REG8(0x991e), 0x00 }, { CCI_REG8(0x13c0), 0x00 }, { CCI_REG8(0x13c1), 0x00 },
++	{ CCI_REG8(0x13c2), 0x05 }, { CCI_REG8(0x13c3), 0x20 }, { CCI_REG8(0x13c4), 0x00 },
++	{ CCI_REG8(0x020e), 0x01 }, { CCI_REG8(0x020f), 0x00 }, { CCI_REG8(0x0210), 0x01 },
++	{ CCI_REG8(0x0211), 0x00 }, { CCI_REG8(0x0212), 0x01 }, { CCI_REG8(0x0213), 0x00 },
++	{ CCI_REG8(0x0214), 0x01 }, { CCI_REG8(0x0215), 0x00 }, { CCI_REG8(0x0230), 0x00 },
++	{ CCI_REG8(0x0231), 0x00 }, { CCI_REG8(0x0233), 0x00 }, { CCI_REG8(0x0234), 0x00 },
++	{ CCI_REG8(0x0235), 0x40 }, { CCI_REG8(0x0238), 0x01 }, { CCI_REG8(0x0239), 0x08 },
++	{ CCI_REG8(0xad34), 0x14 }, { CCI_REG8(0xad35), 0x7f }, { CCI_REG8(0xad36), 0x00 },
++	{ CCI_REG8(0xad37), 0x00 }, { CCI_REG8(0xad38), 0x0f }, { CCI_REG8(0xad39), 0x5d },
++	{ CCI_REG8(0xad3a), 0x00 }, { CCI_REG8(0xad3b), 0x00 }, { CCI_REG8(0xad3c), 0x14 },
++	{ CCI_REG8(0xad3d), 0x7f }, { CCI_REG8(0xad3e), 0x0f }, { CCI_REG8(0xad3f), 0x5d },
++	{ CCI_REG8(0xa303), 0x00 }, { CCI_REG8(0xa403), 0x00 }, { CCI_REG8(0xbb03), 0x00 },
++	{ CCI_REG8(0xa602), 0x00 }, { CCI_REG8(0xa703), 0x01 }, { CCI_REG8(0xa903), 0x01 },
++	{ CCI_REG8(0xaa03), 0x01 }, { CCI_REG8(0xab03), 0x00 }, { CCI_REG8(0xac03), 0x01 },
++	{ CCI_REG8(0xad03), 0x01 }, { CCI_REG8(0xae03), 0x01 }, { CCI_REG8(0xb803), 0x00 },
++	{ CCI_REG8(0xb903), 0x01 }, { CCI_REG8(0xa956), 0x01 }, { CCI_REG8(0x4003), 0x05 },
++	{ CCI_REG8(0x4004), 0x05 }, { CCI_REG8(0x4005), 0x05 }, { CCI_REG8(0x4006), 0x28 },
++	{ CCI_REG8(0x4007), 0x28 }, { CCI_REG8(0x4008), 0x28 }, { CCI_REG8(0x400c), 0x05 },
++	{ CCI_REG8(0x400d), 0x05 }, { CCI_REG8(0x400e), 0x05 }, { CCI_REG8(0x400f), 0x28 },
++	{ CCI_REG8(0x4010), 0x28 }, { CCI_REG8(0x4011), 0x28 }, { CCI_REG8(0xa913), 0x00 },
++	{ CCI_REG8(0xae8b), 0x30 }, { CCI_REG8(0xac13), 0x00 }, { CCI_REG8(0xac3f), 0x00 },
++	{ CCI_REG8(0xb812), 0x01 }, { CCI_REG8(0x3506), 0x00 }, { CCI_REG8(0x3507), 0x01 },
++	{ CCI_REG8(0x3508), 0x00 }, { CCI_REG8(0x3509), 0x01 }, { CCI_REG8(0x3008), 0x01 },
++	{ CCI_REG8(0x3009), 0x71 }, { CCI_REG8(0x300a), 0x51 }, { CCI_REG8(0x3d11), 0x40 },
++	{ CCI_REG8(0x9915), 0x00 }, { CCI_REG8(0x9931), 0x10 },
++};
++
++/*
++ * Clocks for a 19.2 MHz external clock and a 288 MHz link, as the CCS driver
++ * computes them, plus the link rate request it writes. 0x0304 is left at its
++ * reset value of 1.
++ */
++static const struct cci_reg_sequence imx200_pll_regs[] = {
++	{ CCI_REG8(0x0301), 0x07 }, { CCI_REG8(0x0303), 0x02 },
++	{ CCI_REG8(0x0305), 0x06 }, { CCI_REG16(0x0306), 0x006c },
++	{ CCI_REG8(0x0309), 0x0a }, { CCI_REG8(0x030b), 0x01 },
++	{ CCI_REG32(0x0820), 0x0927c000 },
++};
++
++struct imx200_mode {
++	unsigned int width;
++	unsigned int height;
++	/* the area of the pixel array it reads */
++	struct v4l2_rect crop;
++	/* default frame length, from stock */
++	unsigned int fll_def;
++	u32 pixel_rate;
++	const struct cci_reg_sequence *regs;
++	unsigned int num_regs;
++};
++
++#define IMX200_MODE(w, h, l, t, cw, ch, fll, rate, r) {		\
++	.width = w, .height = h,					\
++	.crop = { .left = l, .top = t, .width = cw, .height = ch },	\
++	.fll_def = fll, .pixel_rate = rate,				\
++	.regs = r, .num_regs = ARRAY_SIZE(r),				\
++}
++
++/*
++ * Stock modes 0, 5, 2 and 1: full resolution, 2x2 binned, 2x2 binned and
++ * cropped to 16:9, and 4x4 (binned and skipped) for previews.
++ */
++static const struct imx200_mode imx200_modes[] = {
++	IMX200_MODE(5248, 3936, 0, 0, 5248, 3936, 3992,
++		    IMX200_PIXEL_RATE_FULL, imx200_mode_5248_3936_regs),
++	IMX200_MODE(2624, 1976, 0, 0, 5248, 3952, 2024,
++		    IMX200_PIXEL_RATE_BINNED, imx200_mode_2624_1976_regs),
++	IMX200_MODE(2624, 1480, 0, 488, 5248, 2960, 1528,
++		    IMX200_PIXEL_RATE_BINNED, imx200_mode_2624_1480_regs),
++	IMX200_MODE(1312, 988, 0, 0, 5248, 3952, 1036,
++		    IMX200_PIXEL_RATE_BINNED, imx200_mode_1312_988_regs),
++};
++
++static const s64 imx200_link_freq_menu[] = {
++	IMX200_LINK_FREQ,
++};
++
++static const char * const imx200_test_pattern_menu[] = {
++	"Disabled",
++	"Solid Colour",
++	"Eight Vertical Colour Bars",
++	"Colour Bars With Fade to Grey",
++	"Pseudorandom Sequence (PN9)",
++};
++
++struct imx200 {
++	struct device *dev;
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++	struct regmap *regmap;
++
++	struct clk *xclk;
++	struct gpio_desc *reset_gpio;
++	struct regulator_bulk_data supplies[IMX200_NUM_SUPPLIES];
++
++	/* lens shading gains from the module EEPROM, if it could be read */
++	u16 lsc[IMX200_LSC_POINTS];
++	bool lsc_valid;
++
++	struct v4l2_ctrl_handler ctrl_handler;
++	struct v4l2_ctrl *pixel_rate;
++	struct v4l2_ctrl *exposure;
++	struct v4l2_ctrl *vblank;
++	struct v4l2_ctrl *hblank;
++};
++
++static inline struct imx200 *to_imx200(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct imx200, sd);
++}
++
++static const struct imx200_mode *imx200_find_mode(unsigned int width,
++						  unsigned int height)
++{
++	return v4l2_find_nearest_size(imx200_modes, ARRAY_SIZE(imx200_modes),
++				      width, height, width, height);
++}
++
++/* -----------------------------------------------------------------------------
++ * Controls
++ */
++
++static int imx200_set_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct imx200 *imx200 = container_of(ctrl->handler, struct imx200,
++					     ctrl_handler);
++	const struct v4l2_mbus_framefmt *format;
++	struct v4l2_subdev_state *state;
++	int ret = 0;
++
++	state = v4l2_subdev_get_locked_active_state(&imx200->sd);
++	format = v4l2_subdev_state_get_format(state, 0);
++
++	if (ctrl->id == V4L2_CID_VBLANK) {
++		int exposure_max = format->height + ctrl->val -
++				   IMX200_EXPOSURE_OFFSET;
++
++		__v4l2_ctrl_modify_range(imx200->exposure,
++					 imx200->exposure->minimum,
++					 exposure_max, imx200->exposure->step,
++					 min(exposure_max,
++					     IMX200_EXPOSURE_DEFAULT));
++	}
++
++	if (!pm_runtime_get_if_in_use(imx200->dev))
++		return 0;
++
++	switch (ctrl->id) {
++	case V4L2_CID_EXPOSURE:
++		cci_write(imx200->regmap, IMX200_REG_EXPOSURE, ctrl->val, &ret);
++		break;
++	case V4L2_CID_ANALOGUE_GAIN:
++		cci_write(imx200->regmap, IMX200_REG_ANALOG_GAIN, ctrl->val,
++			  &ret);
++		break;
++	case V4L2_CID_DIGITAL_GAIN:
++		cci_write(imx200->regmap, IMX200_REG_DIG_GAIN_GR, ctrl->val, &ret);
++		cci_write(imx200->regmap, IMX200_REG_DIG_GAIN_R, ctrl->val, &ret);
++		cci_write(imx200->regmap, IMX200_REG_DIG_GAIN_B, ctrl->val, &ret);
++		cci_write(imx200->regmap, IMX200_REG_DIG_GAIN_GB, ctrl->val, &ret);
++		break;
++	case V4L2_CID_VBLANK:
++		cci_write(imx200->regmap, IMX200_REG_FRM_LENGTH,
++			  format->height + ctrl->val, &ret);
++		break;
++	case V4L2_CID_TEST_PATTERN:
++		cci_write(imx200->regmap, IMX200_REG_TEST_PATTERN, ctrl->val,
++			  &ret);
++		break;
++	case V4L2_CID_HBLANK:
++		/* read only */
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	pm_runtime_put(imx200->dev);
++
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops imx200_ctrl_ops = {
++	.s_ctrl = imx200_set_ctrl,
++};
++
++static int imx200_init_controls(struct imx200 *imx200)
++{
++	const struct imx200_mode *mode = &imx200_modes[0];
++	struct v4l2_ctrl_handler *hdl = &imx200->ctrl_handler;
++	struct v4l2_fwnode_device_properties props;
++	struct v4l2_ctrl *ctrl;
++	int ret;
++
++	v4l2_ctrl_handler_init(hdl, 11);
++
++	imx200->pixel_rate = v4l2_ctrl_new_std(hdl, &imx200_ctrl_ops,
++					       V4L2_CID_PIXEL_RATE,
++					 mode->pixel_rate,
++					 mode->pixel_rate, 1,
++					 mode->pixel_rate);
++
++	ctrl = v4l2_ctrl_new_int_menu(hdl, &imx200_ctrl_ops, V4L2_CID_LINK_FREQ,
++				      0, 0, imx200_link_freq_menu);
++	if (ctrl)
++		ctrl->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	imx200->vblank = v4l2_ctrl_new_std(hdl, &imx200_ctrl_ops,
++					   V4L2_CID_VBLANK, IMX200_VBLANK_MIN,
++					   IMX200_FLL_MAX - mode->height, 1,
++					   mode->fll_def - mode->height);
++
++	imx200->hblank = v4l2_ctrl_new_std(hdl, &imx200_ctrl_ops,
++					   V4L2_CID_HBLANK,
++					   IMX200_LLP - mode->width,
++					   IMX200_LLP - mode->width, 1,
++					   IMX200_LLP - mode->width);
++	if (imx200->hblank)
++		imx200->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	imx200->exposure = v4l2_ctrl_new_std(hdl, &imx200_ctrl_ops,
++					     V4L2_CID_EXPOSURE,
++					     IMX200_EXPOSURE_MIN,
++					     mode->fll_def - IMX200_EXPOSURE_OFFSET,
++					     1, IMX200_EXPOSURE_DEFAULT);
++
++	v4l2_ctrl_new_std(hdl, &imx200_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
++			  IMX200_ANA_GAIN_MIN, IMX200_ANA_GAIN_MAX, 1,
++			  IMX200_ANA_GAIN_DEFAULT);
++
++	v4l2_ctrl_new_std(hdl, &imx200_ctrl_ops, V4L2_CID_DIGITAL_GAIN,
++			  IMX200_DGTL_GAIN_MIN, IMX200_DGTL_GAIN_MAX, 1,
++			  IMX200_DGTL_GAIN_DEFAULT);
++
++	v4l2_ctrl_new_std_menu_items(hdl, &imx200_ctrl_ops,
++				     V4L2_CID_TEST_PATTERN,
++				     ARRAY_SIZE(imx200_test_pattern_menu) - 1,
++				     0, 0, imx200_test_pattern_menu);
++
++	if (hdl->error) {
++		ret = hdl->error;
++		goto error;
++	}
++
++	ret = v4l2_fwnode_device_parse(imx200->dev, &props);
++	if (ret)
++		goto error;
++
++	ret = v4l2_ctrl_new_fwnode_properties(hdl, &imx200_ctrl_ops, &props);
++	if (ret)
++		goto error;
++
++	imx200->sd.ctrl_handler = hdl;
++
++	return 0;
++
++error:
++	v4l2_ctrl_handler_free(hdl);
++	return ret;
++}
++
++/* -----------------------------------------------------------------------------
++ * Subdev operations
++ */
++
++static void imx200_write_lsc(struct imx200 *imx200, int *err)
++{
++	unsigned int i;
++
++	for (i = 0; i < IMX200_LSC_POINTS; i++) {
++		u16 gain = imx200->lsc[i];
++
++		cci_write(imx200->regmap, CCI_REG16(IMX200_REG_LSC_TABLE_A + 4 * i),
++			  gain, err);
++		cci_write(imx200->regmap,
++			  CCI_REG16(IMX200_REG_LSC_TABLE_A + 4 * i + 2), gain, err);
++		cci_write(imx200->regmap, CCI_REG16(IMX200_REG_LSC_TABLE_B + 4 * i),
++			  gain, err);
++		cci_write(imx200->regmap,
++			  CCI_REG16(IMX200_REG_LSC_TABLE_B + 4 * i + 2), gain, err);
++	}
++}
++
++/*
++ * The readout mode: binning, window and output size. Starting the stream
++ * resets these to the full-resolution defaults, so they are written once the
++ * sensor is streaming; the first frame or two still come out at full size.
++ */
++static int imx200_set_mode(struct imx200 *imx200,
++			   const struct imx200_mode *mode)
++{
++	int ret = 0;
++
++	cci_multi_reg_write(imx200->regmap, mode->regs, mode->num_regs, &ret);
++
++	cci_write(imx200->regmap, IMX200_REG_LINE_LENGTH, IMX200_LLP, &ret);
++	cci_write(imx200->regmap, IMX200_REG_X_ADD_STA, mode->crop.left, &ret);
++	cci_write(imx200->regmap, IMX200_REG_Y_ADD_STA, mode->crop.top, &ret);
++	cci_write(imx200->regmap, IMX200_REG_X_ADD_END,
++		  mode->crop.left + mode->crop.width - 1, &ret);
++	cci_write(imx200->regmap, IMX200_REG_Y_ADD_END,
++		  mode->crop.top + mode->crop.height - 1, &ret);
++	cci_write(imx200->regmap, IMX200_REG_X_OUTPUT_SIZE, mode->width, &ret);
++	cci_write(imx200->regmap, IMX200_REG_Y_OUTPUT_SIZE, mode->height, &ret);
++
++	/*
++	 * The sensor's lens shading correction comes out of reset enabled with
++	 * an uninitialised table, which paints colour blotches over the frame.
++	 * Like stock, only enable it with the module's own calibration.
++	 */
++	if (imx200->lsc_valid) {
++		cci_write(imx200->regmap, IMX200_REG_LSC_ENABLE, 1, &ret);
++		cci_write(imx200->regmap, IMX200_REG_LSC_MODE, 0x1f, &ret);
++		imx200_write_lsc(imx200, &ret);
++		cci_write(imx200->regmap, IMX200_REG_LSC_APPLY, 1, &ret);
++	} else {
++		cci_write(imx200->regmap, IMX200_REG_LSC_ENABLE, 0, &ret);
++	}
++
++	return ret;
++}
++
++static int imx200_enable_streams(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state, u32 pad,
++				 u64 streams_mask)
++{
++	struct imx200 *imx200 = to_imx200(sd);
++	const struct v4l2_mbus_framefmt *format;
++	const struct imx200_mode *mode;
++	int ret;
++
++	format = v4l2_subdev_state_get_format(state, 0);
++	mode = imx200_find_mode(format->width, format->height);
++
++	ret = pm_runtime_resume_and_get(imx200->dev);
++	if (ret < 0)
++		return ret;
++
++	cci_multi_reg_write(imx200->regmap, imx200_init_regs,
++			    ARRAY_SIZE(imx200_init_regs), &ret);
++	cci_write(imx200->regmap, IMX200_REG_CSI_SIG_MODE, 2, &ret);
++	cci_write(imx200->regmap, IMX200_REG_CSI_DATA_FORMAT, 0x0a0a, &ret);
++	cci_write(imx200->regmap, IMX200_REG_CSI_LANE_MODE, 3, &ret);
++	cci_multi_reg_write(imx200->regmap, imx200_pll_regs,
++			    ARRAY_SIZE(imx200_pll_regs), &ret);
++	if (ret)
++		goto err_rpm_put;
++
++	ret = __v4l2_ctrl_handler_setup(imx200->sd.ctrl_handler);
++	if (ret)
++		goto err_rpm_put;
++
++	ret = cci_write(imx200->regmap, IMX200_REG_MODE_SELECT,
++			IMX200_MODE_STREAMING, NULL);
++	if (ret)
++		goto err_rpm_put;
++
++	ret = imx200_set_mode(imx200, mode);
++	if (ret)
++		goto err_rpm_put;
++
++	return 0;
++
++err_rpm_put:
++	dev_err(imx200->dev, "failed to start streaming: %d\n", ret);
++	pm_runtime_put_autosuspend(imx200->dev);
++	return ret;
++}
++
++static int imx200_disable_streams(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state, u32 pad,
++				  u64 streams_mask)
++{
++	struct imx200 *imx200 = to_imx200(sd);
++	int ret;
++
++	ret = cci_write(imx200->regmap, IMX200_REG_MODE_SELECT,
++			IMX200_MODE_STANDBY, NULL);
++	if (ret)
++		dev_err(imx200->dev, "failed to stop streaming: %d\n", ret);
++
++	pm_runtime_put_autosuspend(imx200->dev);
++
++	return ret;
++}
++
++static void imx200_update_pad_format(const struct imx200_mode *mode,
++				     struct v4l2_mbus_framefmt *fmt)
++{
++	fmt->code = MEDIA_BUS_FMT_SRGGB10_1X10;
++	fmt->width = mode->width;
++	fmt->height = mode->height;
++	fmt->field = V4L2_FIELD_NONE;
++	fmt->colorspace = V4L2_COLORSPACE_RAW;
++	fmt->ycbcr_enc = V4L2_YCBCR_ENC_601;
++	fmt->quantization = V4L2_QUANTIZATION_FULL_RANGE;
++	fmt->xfer_func = V4L2_XFER_FUNC_NONE;
++}
++
++static int imx200_enum_mbus_code(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index > 0)
++		return -EINVAL;
++
++	code->code = MEDIA_BUS_FMT_SRGGB10_1X10;
++
++	return 0;
++}
++
++static int imx200_enum_frame_size(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state,
++				  struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index >= ARRAY_SIZE(imx200_modes) ||
++	    fse->code != MEDIA_BUS_FMT_SRGGB10_1X10)
++		return -EINVAL;
++
++	fse->min_width = imx200_modes[fse->index].width;
++	fse->max_width = fse->min_width;
++	fse->min_height = imx200_modes[fse->index].height;
++	fse->max_height = fse->min_height;
++
++	return 0;
++}
++
++static int imx200_set_pad_format(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_format *fmt)
++{
++	struct imx200 *imx200 = to_imx200(sd);
++	const struct imx200_mode *mode;
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
++	    v4l2_subdev_is_streaming(sd))
++		return -EBUSY;
++
++	mode = imx200_find_mode(fmt->format.width, fmt->format.height);
++	imx200_update_pad_format(mode, &fmt->format);
++	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
++	*v4l2_subdev_state_get_crop(state, 0) = mode->crop;
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
++		int exposure_max = mode->fll_def - IMX200_EXPOSURE_OFFSET;
++		int hblank = IMX200_LLP - mode->width;
++
++		__v4l2_ctrl_modify_range(imx200->vblank, IMX200_VBLANK_MIN,
++					 IMX200_FLL_MAX - mode->height, 1,
++					 mode->fll_def - mode->height);
++		__v4l2_ctrl_s_ctrl(imx200->vblank,
++				   mode->fll_def - mode->height);
++		__v4l2_ctrl_modify_range(imx200->exposure,
++					 imx200->exposure->minimum,
++					 exposure_max, 1,
++					 min(exposure_max,
++					     IMX200_EXPOSURE_DEFAULT));
++		__v4l2_ctrl_modify_range(imx200->hblank, hblank, hblank, 1,
++					 hblank);
++		__v4l2_ctrl_modify_range(imx200->pixel_rate,
++					 mode->pixel_rate,
++					 mode->pixel_rate, 1,
++					 mode->pixel_rate);
++	}
++
++	return 0;
++}
++
++static int imx200_get_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *state,
++				struct v4l2_subdev_selection *sel)
++{
++	switch (sel->target) {
++	case V4L2_SEL_TGT_CROP:
++		sel->r = *v4l2_subdev_state_get_crop(state, 0);
++		return 0;
++
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++		sel->r.left = 0;
++		sel->r.top = 0;
++		sel->r.width = IMX200_NATIVE_WIDTH;
++		sel->r.height = IMX200_NATIVE_HEIGHT;
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static int imx200_init_state(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_state *state)
++{
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_TRY,
++		.format = {
++			.width = imx200_modes[0].width,
++			.height = imx200_modes[0].height,
++		},
++	};
++
++	return imx200_set_pad_format(sd, state, &fmt);
++}
++
++static const struct v4l2_subdev_video_ops imx200_video_ops = {
++	.s_stream = v4l2_subdev_s_stream_helper,
++};
++
++static const struct v4l2_subdev_pad_ops imx200_pad_ops = {
++	.enum_mbus_code = imx200_enum_mbus_code,
++	.get_fmt = v4l2_subdev_get_fmt,
++	.set_fmt = imx200_set_pad_format,
++	.get_selection = imx200_get_selection,
++	.enum_frame_size = imx200_enum_frame_size,
++	.enable_streams = imx200_enable_streams,
++	.disable_streams = imx200_disable_streams,
++};
++
++static const struct v4l2_subdev_ops imx200_subdev_ops = {
++	.video = &imx200_video_ops,
++	.pad = &imx200_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops imx200_internal_ops = {
++	.init_state = imx200_init_state,
++};
++
++/* -----------------------------------------------------------------------------
++ * Power management
++ */
++
++static int imx200_power_on(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct imx200 *imx200 = to_imx200(sd);
++	int ret;
++
++	ret = regulator_bulk_enable(IMX200_NUM_SUPPLIES, imx200->supplies);
++	if (ret) {
++		dev_err(dev, "failed to enable regulators: %d\n", ret);
++		return ret;
++	}
++
++	ret = clk_prepare_enable(imx200->xclk);
++	if (ret) {
++		dev_err(dev, "failed to enable clock: %d\n", ret);
++		regulator_bulk_disable(IMX200_NUM_SUPPLIES, imx200->supplies);
++		return ret;
++	}
++
++	/*
++	 * Release XCLR. SMIA allows the first access after 8192 clocks, but the
++	 * sensor goes on initialising its registers well after that: writes made
++	 * within a few milliseconds of reset are silently replaced by defaults.
++	 */
++	gpiod_set_value_cansleep(imx200->reset_gpio, 0);
++	usleep_range(IMX200_BOOT_DELAY_US, IMX200_BOOT_DELAY_US + 1000);
++
++	return 0;
++}
++
++static int imx200_power_off(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct imx200 *imx200 = to_imx200(sd);
++
++	gpiod_set_value_cansleep(imx200->reset_gpio, 1);
++	clk_disable_unprepare(imx200->xclk);
++	regulator_bulk_disable(IMX200_NUM_SUPPLIES, imx200->supplies);
++
++	return 0;
++}
++
++/* -----------------------------------------------------------------------------
++ * Probe and remove
++ */
++
++static int imx200_check_hwcfg(struct imx200 *imx200)
++{
++	struct v4l2_fwnode_endpoint ep = { .bus_type = V4L2_MBUS_CSI2_DPHY };
++	struct fwnode_handle *endpoint;
++	unsigned long link_freq_bitmap;
++	int ret;
++
++	endpoint = fwnode_graph_get_next_endpoint(dev_fwnode(imx200->dev),
++						  NULL);
++	if (!endpoint)
++		return dev_err_probe(imx200->dev, -EINVAL,
++				     "endpoint node not found\n");
++
++	ret = v4l2_fwnode_endpoint_alloc_parse(endpoint, &ep);
++	fwnode_handle_put(endpoint);
++	if (ret)
++		return dev_err_probe(imx200->dev, ret,
++				     "could not parse endpoint\n");
++
++	if (ep.bus.mipi_csi2.num_data_lanes != 4) {
++		ret = dev_err_probe(imx200->dev, -EINVAL,
++				    "only four data lanes are supported\n");
++		goto out;
++	}
++
++	ret = v4l2_link_freq_to_bitmap(imx200->dev, ep.link_frequencies,
++				       ep.nr_of_link_frequencies,
++				       imx200_link_freq_menu,
++				       ARRAY_SIZE(imx200_link_freq_menu),
++				       &link_freq_bitmap);
++out:
++	v4l2_fwnode_endpoint_free(&ep);
++	return ret;
++}
++
++static int imx200_eeprom_read(struct imx200 *imx200, unsigned int offset,
++			      u8 *buf, unsigned int len)
++{
++	struct i2c_client *client = v4l2_get_subdevdata(&imx200->sd);
++	unsigned int done;
++
++	/* msm8974's CCI takes at most 12 bytes in a read */
++	for (done = 0; done < len; done += 8) {
++		unsigned int pos = offset + done;
++		u8 addr = pos & 0xff;
++		struct i2c_msg msg[2] = {
++			{
++				.addr = IMX200_EEPROM_ADDR + (pos >> 8),
++				.len = 1,
++				.buf = &addr,
++			}, {
++				.addr = IMX200_EEPROM_ADDR + (pos >> 8),
++				.flags = I2C_M_RD,
++				.len = min(8U, len - done),
++				.buf = buf + done,
++			},
++		};
++		int ret = i2c_transfer(client->adapter, msg, 2);
++
++		if (ret != 2)
++			return ret < 0 ? ret : -EIO;
++	}
++
++	return 0;
++}
++
++/* Must be called with the sensor powered: the EEPROM shares its supplies */
++static void imx200_load_lsc(struct imx200 *imx200)
++{
++	unsigned int sum[IMX200_LSC_POINTS] = { };
++	u8 block[IMX200_EEPROM_LSC_STRIDE];
++	unsigned int b, i, centre;
++	u8 name[8];
++
++	if (imx200_eeprom_read(imx200, 0, name, sizeof(name)) ||
++	    memcmp(name, "SOI20BS0", sizeof(name))) {
++		dev_info(imx200->dev,
++			 "no SOI20BS0 EEPROM, lens shading stays off\n");
++		return;
++	}
++
++	for (b = 0; b < IMX200_EEPROM_LSC_BLOCKS; b++) {
++		if (imx200_eeprom_read(imx200, IMX200_EEPROM_LSC +
++				       b * IMX200_EEPROM_LSC_STRIDE,
++				       block, sizeof(block)))
++			return;
++		for (i = 0; i < IMX200_LSC_POINTS; i++) {
++			if (!block[i])
++				return;
++			sum[i] += block[i];
++		}
++	}
++
++	/* gain = centre / point, in 8.8 */
++	centre = sum[IMX200_LSC_POINTS / 2];
++	for (i = 0; i < IMX200_LSC_POINTS; i++)
++		imx200->lsc[i] = min(DIV_ROUND_CLOSEST(centre * 256, sum[i]),
++				     0xffffU);
++
++	imx200->lsc_valid = true;
++	dev_info(imx200->dev, "lens shading from the EEPROM, corner gain %u/256\n",
++		 imx200->lsc[0]);
++}
++
++static int imx200_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct imx200 *imx200;
++	unsigned long rate;
++	unsigned int i;
++	u64 val;
++	int ret;
++
++	imx200 = devm_kzalloc(dev, sizeof(*imx200), GFP_KERNEL);
++	if (!imx200)
++		return -ENOMEM;
++
++	imx200->dev = dev;
++	v4l2_i2c_subdev_init(&imx200->sd, client, &imx200_subdev_ops);
++	imx200->sd.internal_ops = &imx200_internal_ops;
++
++	ret = imx200_check_hwcfg(imx200);
++	if (ret)
++		return ret;
++
++	imx200->regmap = devm_cci_regmap_init_i2c(client, 16);
++	if (IS_ERR(imx200->regmap))
++		return dev_err_probe(dev, PTR_ERR(imx200->regmap),
++				     "failed to initialise CCI\n");
++
++	imx200->xclk = devm_clk_get(dev, NULL);
++	if (IS_ERR(imx200->xclk))
++		return dev_err_probe(dev, PTR_ERR(imx200->xclk),
++				     "failed to get the clock\n");
++
++	rate = clk_get_rate(imx200->xclk);
++	if (rate != IMX200_EXT_CLK)
++		return dev_err_probe(dev, -EINVAL,
++				     "unsupported clock rate %lu\n", rate);
++
++	for (i = 0; i < IMX200_NUM_SUPPLIES; i++)
++		imx200->supplies[i].supply = imx200_supply_names[i];
++	ret = devm_regulator_bulk_get(dev, IMX200_NUM_SUPPLIES,
++				      imx200->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get supplies\n");
++
++	imx200->reset_gpio = devm_gpiod_get_optional(dev, "reset",
++						     GPIOD_OUT_HIGH);
++	if (IS_ERR(imx200->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(imx200->reset_gpio),
++				     "failed to get the reset GPIO\n");
++
++	ret = imx200_power_on(dev);
++	if (ret)
++		return ret;
++
++	/* SMIA identification: model 0x0200 at 0x0016, revision at 0x0018 */
++	ret = cci_read(imx200->regmap, CCI_REG16(0x0016), &val, NULL);
++	if (ret) {
++		dev_err_probe(dev, ret, "failed to read the model ID\n");
++		goto error_power_off;
++	}
++	if (val != 0x0200) {
++		ret = dev_err_probe(dev, -ENODEV, "unknown model 0x%04llx\n",
++				    val);
++		goto error_power_off;
++	}
++
++	imx200_load_lsc(imx200);
++
++	ret = imx200_init_controls(imx200);
++	if (ret)
++		goto error_power_off;
++
++	imx200->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	imx200->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++	imx200->pad.flags = MEDIA_PAD_FL_SOURCE;
++
++	ret = media_entity_pads_init(&imx200->sd.entity, 1, &imx200->pad);
++	if (ret)
++		goto error_handler_free;
++
++	imx200->sd.state_lock = imx200->ctrl_handler.lock;
++	ret = v4l2_subdev_init_finalize(&imx200->sd);
++	if (ret)
++		goto error_media_entity;
++
++	pm_runtime_set_active(dev);
++	pm_runtime_enable(dev);
++
++	ret = v4l2_async_register_subdev_sensor(&imx200->sd);
++	if (ret) {
++		dev_err_probe(dev, ret, "failed to register the sensor\n");
++		goto error_subdev_cleanup;
++	}
++
++	pm_runtime_set_autosuspend_delay(dev, 1000);
++	pm_runtime_use_autosuspend(dev);
++	pm_runtime_idle(dev);
++
++	return 0;
++
++error_subdev_cleanup:
++	v4l2_subdev_cleanup(&imx200->sd);
++	pm_runtime_disable(dev);
++	pm_runtime_set_suspended(dev);
++error_media_entity:
++	media_entity_cleanup(&imx200->sd.entity);
++error_handler_free:
++	v4l2_ctrl_handler_free(&imx200->ctrl_handler);
++error_power_off:
++	imx200_power_off(dev);
++	return ret;
++}
++
++static void imx200_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct imx200 *imx200 = to_imx200(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	v4l2_subdev_cleanup(sd);
++	media_entity_cleanup(&sd->entity);
++	v4l2_ctrl_handler_free(&imx200->ctrl_handler);
++
++	pm_runtime_disable(&client->dev);
++	if (!pm_runtime_status_suspended(&client->dev)) {
++		imx200_power_off(&client->dev);
++		pm_runtime_set_suspended(&client->dev);
++	}
++}
++
++static const struct of_device_id imx200_of_match[] = {
++	{ .compatible = "sony,imx200" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, imx200_of_match);
++
++static DEFINE_RUNTIME_DEV_PM_OPS(imx200_pm_ops, imx200_power_off,
++				 imx200_power_on, NULL);
++
++static struct i2c_driver imx200_i2c_driver = {
++	.driver = {
++		.name = "imx200",
++		.of_match_table = imx200_of_match,
++		.pm = pm_ptr(&imx200_pm_ops),
++	},
++	.probe = imx200_probe,
++	.remove = imx200_remove,
++};
++module_i2c_driver(imx200_i2c_driver);
++
++MODULE_DESCRIPTION("Sony IMX200 camera sensor driver");
++MODULE_LICENSE("GPL");

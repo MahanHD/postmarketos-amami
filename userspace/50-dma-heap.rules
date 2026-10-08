@@ -1,0 +1,4 @@
+# libcamera allocates its buffers from the DMA heaps; let the video group use
+# the system heap. The CMA heap stays root-only: the GPU's VRAM carveout takes
+# most of CMA, and libcamera would try it first and fail on large frames.
+SUBSYSTEM=="dma_heap", KERNEL=="system", GROUP="video", MODE="0660"

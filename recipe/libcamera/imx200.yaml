@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC0-1.0
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      blackLevel: 4096
+  - Awb:
+  # The colour matrix from the stock firmware's SOI20BS0/color_ctrl.dat (Q10),
+  # which uses it at every colour temperature.
+  - Ccm:
+      ccms:
+        - ct: 5000
+          ccm: [ 1.3545, -0.4512,  0.0967,
+                -0.1777,  1.2979, -0.1201,
+                 0.0342, -0.3740,  1.3398 ]
+  - Adjust:
+  - Agc:
+...

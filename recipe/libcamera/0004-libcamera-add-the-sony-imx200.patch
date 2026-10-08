@@ -1,0 +1,47 @@
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -530,6 +530,19 @@
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("hm1246", CameraSensorHelperHm1246)
+ 
++class CameraSensorHelperImx200 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperImx200()
++	{
++		/* 64 at 10 bits */
++		blackLevel_ = 4096;
++		/* SMIA gain model, read from the sensor's limit registers. */
++		gain_ = AnalogueGainLinear{ 0, 256, -1, 256 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("imx200", CameraSensorHelperImx200)
++
+ class CameraSensorHelperImx214 : public CameraSensorHelper
+ {
+ public:
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -183,6 +183,22 @@
+ 				.hblankDelay = 2
+ 			},
+ 		} },
++		{ "imx200", {
++			.unitCellSize = { 1200, 1200 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++				{ controls::draft::TestPatternModeSolidColor, 1 },
++				{ controls::draft::TestPatternModeColorBars, 2 },
++				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
++				{ controls::draft::TestPatternModePn9, 4 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 1,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "imx214", {
+ 			.unitCellSize = { 1120, 1120 },
+ 			.testPatternModes = {

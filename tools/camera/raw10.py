@@ -5,6 +5,8 @@
   raw10.py capture.raw png out.png [eeprom.bin]
                                         last frame as a quick preview PNG
 
+Set SIZE=WxH for captures from the smaller modes (capture.sh's SIZE).
+
 The preview is deliberately crude: black level 64 subtracted, 2x2 Bayer
 quads averaged (RGGB), grey-world white balance over the unclipped pixels,
 clipped pixels shown white, gamma 2.2, and rotated 90 degrees clockwise
@@ -17,10 +19,11 @@ belongs to which channel is not known, and measured on a white sheet the
 falloff is the same in every channel to within a few percent, so the preview
 applies the average of the nine grids to all four channels.
 """
-import struct, sys, zlib
+import os, struct, sys, zlib
 import numpy as np
 
-W, H = 5248, 3936
+# SIZE=WxH in the environment for the smaller sensor modes
+W, H = map(int, os.environ.get("SIZE", "5248x3936").split("x"))
 STRIDE = W * 10 // 8
 BLACK = 64
 SAT = 1000

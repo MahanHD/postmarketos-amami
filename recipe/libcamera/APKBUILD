@@ -1,0 +1,194 @@
+# Forked from Alpine for temporary downstream patches
+maintainer="Robert Mader <robert.mader@collabora.com>"
+pkgname=libcamera
+_pkgver=0.7.1
+pkgver=9999$_pkgver
+pkgrel=4
+pkgdesc="Linux camera framework"
+url="https://libcamera.org/"
+arch="all"
+license="LGPL-2.1-or-later AND GPL-2.0-or-later"
+# upstream calls 'date' with a non-POSIX option so we pull in coreutils
+makedepends="
+	coreutils
+	doxygen
+	eudev-dev
+	glib-dev
+	gnutls-dev
+	graphviz
+	gst-plugins-base-dev
+	gtest-dev
+	libevent-dev
+	libpisp-dev
+	libunwind-dev
+	libyuv-dev
+	linux-headers
+	meson
+	py3-jinja2
+	py3-ply
+	py3-pybind11-dev
+	py3-sphinx
+	py3-sphinxcontrib-doxylink
+	py3-yaml
+	python3-dev
+	qt6-qtbase-dev
+	qt6-qttools-dev
+	yaml-dev
+	"
+subpackages="
+	$pkgname-dbg
+	$pkgname-dev
+	qcam
+	$pkgname-gstreamer
+	$pkgname-v4l2
+	$pkgname-tools
+	py3-$pkgname:py3
+	"
+_tuning_files="
+	hi846.yaml
+	imx200.yaml
+	imx355.yaml
+	imx363.yaml
+	imx371.yaml
+	imx376.yaml
+	imx858.yaml
+	s5k3l6xx.yaml
+	s5kjn1.yaml
+	"
+source="https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$_pkgver/libcamera-v$_pkgver.tar.gz
+	0001-libcamera-simple-Enable-softISP-for-the-Pinephone.patch
+	0002-libcamera-simple-Skip-hwISP-formats-if-swISP-is-acti.patch
+	0003-RFC-egl-Implement-DMABuf-import-for-input-buffers.patch
+	0004-libcamera-add-the-sony-imx200.patch
+	0005-libcamera-software_isp-subtract-black-before-white-balance.patch
+	0006-libcamera-software_isp-leave-saturated-pixels-out-of-white-balance.patch
+	qcam.desktop
+	$_tuning_files
+	"
+builddir="$srcdir/$pkgname-v$_pkgver"
+# gstreamer tests fail
+# manual strip because ipa .sign files depend on the file contents- have to re-sign after strip
+options="!strip !check"
+
+case "$CARCH" in
+arm*|aarch64)
+	subpackages="$subpackages $pkgname-raspberrypi"
+	;;
+esac
+
+case "$CARCH" in
+ppc64le|s390x|riscv64|loongarch64)
+	# doesn't install any ipa
+	;;
+*)
+	depends="$pkgname-ipa=$pkgver-r$pkgrel"
+	subpackages="$subpackages $pkgname-ipa"
+	;;
+esac
+
+build() {
+	abuild-meson \
+		-Dpipelines=auto,virtual \
+		-Dv4l2=true \
+		-Dwerror=false \
+		-Ddocumentation=disabled \
+		. output
+	meson compile -C output
+}
+
+check() {
+	meson test -C output --print-errorlogs
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+	install -Dm644 -t "$pkgdir"/usr/share/applications "$srcdir"/qcam.desktop
+
+	# manual strip first..
+	scanelf --recursive \
+		--nobanner \
+		--etype "ET_DYN,ET_EXEC" \
+		--format "%F" \
+		"$pkgdir" \
+		| while read -r file; do
+			strip "$file"
+	done
+}
+
+ipa() {
+	depends=""
+	amove usr/lib/libcamera
+	amove usr/share/libcamera/ipa
+
+	for _tuning_file in $_tuning_files; do
+		install -Dm644 -t "$subpkgdir"/usr/share/libcamera/ipa/simple \
+			"$srcdir"/"$_tuning_file"
+	done
+
+	# then sign ipa's
+	local ipa
+	for ipa in "$subpkgdir"/usr/lib/libcamera/ipa/ipa*.so; do
+		msg "signing $ipa"
+		"$builddir"/src/ipa/ipa-sign.sh \
+			"$(find "$builddir"/output -type f -iname "*ipa-priv-key.pem")" \
+			"$ipa" \
+			"$ipa".sign
+	done
+}
+
+qcam() {
+	depends=""
+	amove usr/bin/qcam
+
+	amove usr/share/applications/qcam.desktop
+}
+
+gstreamer() {
+	depends=""
+	amove usr/lib/gstreamer-1.0
+}
+
+v4l2() {
+	depends=""
+	amove usr/libexec/libcamera/v4l2-compat.so
+}
+
+raspberrypi() {
+	depends=""
+	amove usr/share/libcamera/ipa/rpi
+	amove usr/libexec/libcamera/raspberrypi_ipa_proxy
+	amove usr/share/libcamera/pipeline/rpi/vc4
+}
+
+tools() {
+	depends=""
+	amove usr/bin/cam
+	amove usr/bin/lc-compliance
+}
+
+py3() {
+	pkgdesc="$pkgname (python bindings)"
+	depends="python3"
+
+	amove usr/lib/python*
+}
+
+sha512sums="
+0e886021a3bbd668184b581248b9d89a8e909360a7f138237a2c03b41b477cb255bd6daf4932fdebf86c3410b4deccc4c5db93264ed0c6c9969076cdbae8a77b  libcamera-v0.7.1.tar.gz
+aa24b1caab3d0e6bca413ff149aafa5233ba8141c2585b1b55c655759dd663612091222135ec5add402e60bf53d58c307f3f3127385efaa11b6cef866e03906e  0001-libcamera-simple-Enable-softISP-for-the-Pinephone.patch
+cd1559a70dabe8711bb2cc1a8c6dca114e9f5b83088000935845ad90e5d109e2b215f0810f709f5bf00dd76be76e937bad4db49a1c6662135ec1704809a9a62b  0002-libcamera-simple-Skip-hwISP-formats-if-swISP-is-acti.patch
+6bca235e430e7392f68c94742d1bc1cd19cffe12ac03c8890ffa27b756972df67f5a408f4c806149a6b4f52827881a73d14d7f6a00bab9d4692f5eb9b06478a5  0003-RFC-egl-Implement-DMABuf-import-for-input-buffers.patch
+e45197f33b894e4955a01fe4e3de9b394abc24b6e90efc73d01ff63702529830aa844efd19c796cad50b2d3149c141597f6fdf95f69023db6326e24d78f200b8  0004-libcamera-add-the-sony-imx200.patch
+2f057c2e829d53b13cb3c8a63f7366343a5793289b99239a9e7b3294bc0ce69987e11bbdb6e00a26f78317462c46bec3b543e5bbfab63e6425e7f985d2bc54d3  0005-libcamera-software_isp-subtract-black-before-white-balance.patch
+76cac28ef5af704135002e420fff9645212a1b2688446f0b17c6cd18f4109792b42b660ba3c340dd2b7a2daf5dae95b96d421191dec458c24d006d714c456546  0006-libcamera-software_isp-leave-saturated-pixels-out-of-white-balance.patch
+22167a4eceb6d1b40b0b7c45fdf116c71684f5340de7f767535cb8e160ad9d2ae0f00cb3d461f73a344520a48a4641cf46226841d78bee06bfbfd2a91337f754  qcam.desktop
+2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  hi846.yaml
+ed8976de6f9d1fa2b9be0e1c48cd0d9c17304f8ee3619ed7f4a4555bebc4e2b7c3d14e9939827beb0db79f4402439d9d832bc0eea67a4e685b6adafc4089fc6f  imx200.yaml
+2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  imx355.yaml
+2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  imx363.yaml
+2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  imx371.yaml
+2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  imx376.yaml
+2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  imx858.yaml
+2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  s5k3l6xx.yaml
+2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  s5kjn1.yaml
+"

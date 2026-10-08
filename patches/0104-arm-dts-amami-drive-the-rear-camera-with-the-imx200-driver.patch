@@ -1,0 +1,39 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -389,9 +389,9 @@
+ };
+ 
+ &cci_i2c0 {
+-	/* Rear camera: Sony IMX200 in module SOI20BS0, a SMIA++ sensor */
++	/* Rear camera: Sony IMX200 in module SOI20BS0 */
+ 	camera@10 {
+-		compatible = "nokia,smia";
++		compatible = "sony,imx200";
+ 		reg = <0x10>;
+ 
+ 		/*
+@@ -401,7 +401,6 @@
+ 		clocks = <&mmcc CAMSS_MCLK0_CLK>;
+ 		assigned-clocks = <&mmcc CAMSS_MCLK0_CLK>;
+ 		assigned-clock-rates = <19200000>;
+-		clock-frequency = <19200000>;
+ 
+ 		vana-supply = <&pm8941_l17>;
+ 		vio-supply = <&pm8941_lvs2>;
+@@ -415,11 +414,14 @@
+ 
+ 		lens-focus = <&rear_lens>;
+ 
++		/* On the back, and mounted so the picture needs a quarter turn clockwise */
++		orientation = <1>;
++		rotation = <270>;
++
+ 		port {
+ 			rear_cam_ep: endpoint {
+ 				data-lanes = <1 2 3 4>;
+-				link-frequencies = /bits/ 64 <288000000 312000000 384000000
+-							      416000000 456000000 480000000>;
++				link-frequencies = /bits/ 64 <288000000>;
+ 				remote-endpoint = <&csiphy0_ep>;
+ 			};
+ 		};

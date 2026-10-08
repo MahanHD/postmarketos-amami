@@ -94,6 +94,16 @@ now picks the software scan on its own. `CONFIG_WCN36XX_DEBUGFS=y` is worth addi
 kernel config too, since it exposes the firmware capability list that explains
 why `0006` is needed.
 
+The camera needs the patched libcamera from `recipe/libcamera` (copy it over
+`pmaports/temp/libcamera`, then `pmbootstrap checksum libcamera` and build), plus:
+
+    sudo install -m 644 userspace/50-dma-heap.rules /etc/udev/rules.d/
+    sudo install -D -m 644 userspace/libcamera-configuration.yaml /etc/libcamera/configuration.yaml
+    sudo apk add snapshot
+
+Reboot after upgrading libcamera: WirePlumber keeps the old one loaded and crashes when
+the IPA module on disk no longer matches it.
+
 Bluetooth needs the service from `userspace/`, which gives the controller the
 factory address out of the TA partition. Without it bluetoothd reports no
 default controller at all:

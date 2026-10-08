@@ -148,8 +148,8 @@ from.
 
 `camera/` holds the scripts used to bring up the rear camera:
 
-- `capture.sh` streams RAW10 frames from the IMX200 with the working settings. Run it
-  as root on the phone, once per boot.
+- `capture.sh` streams RAW10 frames from the IMX200 through the `imx200` driver. Run it
+  as root on the phone; `SIZE` picks the mode and `FOCUS` the lens position.
 - `setsettle.py` sets the CSIPHY settle count as soon as camss powers the PHY, for
   experiments; the working value is now in the device tree. It waits for the clock
   first, because touching those registers with the clock off can hang the bus.
@@ -160,8 +160,6 @@ from.
   when the picture was black.
 - `raw10.py` runs on the host: per-frame statistics, or a quick preview PNG of the last
   frame, corrected for lens shading when given a dump of the module EEPROM.
-- `capture.sh` passes `CCS_OPTS` to the ccs module and writes to `OUT`. `FOCUS=0..1023`
-  powers the lens and sets its position for the capture (about 256 for distant scenes). To measure the
-  real frame rate, set `OUT=/dev/null`: writing 26 MB frames to the phone's storage caps
-  it at about 1.7 fps.
+- To measure the real frame rate, stream without `--stream-to`: writing 26 MB frames to
+  the phone's storage caps it at about 1.7 fps. `raw10.py` takes the same `SIZE`.
 

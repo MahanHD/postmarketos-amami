@@ -1347,3 +1347,46 @@ clearly. Stock (`libcammw`) only enables it after uploading a table: 0x0700 = 1,
 same white sheet Gr/Gb is then 0.99-1.01 everywhere and R/G and B/G vary by a few percent
 across the frame, leaving only the lens's ordinary vignetting.
 
+**The camera now runs on its own driver, `imx200` (`0103`, `0104`).** CCS presents the
+sensor as three chained subdevs and cannot enumerate frame sizes, so libcamera could not
+use it. `imx200` is a plain single-subdev driver in the style of `imx219`: stock's init
+table, the PLL that CCS arrived at from 19.2 MHz, and four of stock's modes with their
+register tables. Things it had to learn:
+
+- Writes made within a few milliseconds of releasing reset are lost; it waits 20 ms.
+- **Starting the stream resets the readout registers** (binning, window, output size)
+  to full resolution. Read back 50 ms after `0x0100 = 1`, `0x0391` had gone from 0x22 to
+  0x11. Written after stream-on they hold, so the driver writes the mode then; the first
+  frame or two of a binned stream still come out at full size. Restarting the stream to
+  avoid that reset the phone.
+- Measured line times: 14.93 us at full resolution and 10.11 us in every binned mode, so
+  the pixel rate is 395.5 MHz or 583.9 MHz. Frame rates: 16.8 fps at 5248x3936, 48.8 at
+  2624x1976, 64.7 at 2624x1480 and 95.9 at 1312x988.
+- **Lens shading on the sensor, as stock does it.** `libcammw` uploads 63 16-bit gains
+  per channel (8.8 fixed point, so the 9x7 grid exactly) to 0x4800 and 0x48fc, two
+  channels interleaved in each, then sets 0x0700 = 1, 0x4500 = 0x1f and 0x3a63 = 1. The
+  driver reads the EEPROM at probe, averages its nine grids and does the same.
+- **The EEPROM also holds focus calibration**, big-endian at 0xd0: 326, 359 and 681,
+  which look like infinity, a middle distance and macro. `0102` rests the lens at 359
+  (`rohm,default-position`), because nothing autofocuses yet.
+
+**libcamera.** With `imx200`, libcamera's simple pipeline and software ISP take the
+camera, and PipeWire offers it to applications as "Built-in Back Camera". GNOME
+Snapshot shows a live preview, upright thanks to the `rotation` property. What it took
+(`recipe/libcamera`):
+
+- `0004` adds the IMX200 gain model (256 / (256 - code)), black level 64, pixel size and
+  control delays. `imx200.yaml` carries the colour matrix from stock's
+  `SOI20BS0/color_ctrl.dat`: int16 in Q10, the only non-identity matrix in the file.
+- `0005` fixes two colour bugs in the CPU debayer. The black level was subtracted after
+  the white balance gains and the colour matrix, which lifted red and blue and turned
+  every shadow magenta. And white balance was folded into the matrix with no clip in
+  between, so clipped highlights came out pink.
+- `0006` leaves saturated pixels out of the white balance sums. With a bright window in
+  the frame they pulled the gains towards none and left the room green.
+- The GPU debayer cannot work: msm refuses to import other drivers' buffers without its
+  IOMMU (`cannot import without IOMMU`). `/etc/libcamera/configuration.yaml` selects the
+  CPU one, which manages about 20 fps at 1280x960 on four cores.
+- libcamera allocates from the DMA heaps (`CONFIG_DMABUF_HEAPS`). The CMA heap is left
+  root-only by `userspace/50-dma-heap.rules`: the GPU's VRAM carveout takes most of CMA,
+  and libcamera would try it first and fail on large frames.

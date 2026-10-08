@@ -1,0 +1,102 @@
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -28,10 +28,15 @@
+ 	 */
+ 	bool valid;
+ 	/**
+-	 * \brief Sums of colour channels of all the sampled pixels
++	 * \brief Sums of colour channels of the sampled pixels that are not
++	 *        saturated in any channel
+ 	 */
+ 	RGB<uint64_t> sum_;
+ 	/**
++	 * \brief Number of pixels in sum_
++	 */
++	uint64_t sumCount;
++	/**
+ 	 * \brief Number of bins in the yHistogram
+ 	 */
+ 	static constexpr unsigned int kYHistogramSize = 64;
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -177,13 +177,24 @@
+                                           \
+ 	uint64_t sumR = 0;                \
+ 	uint64_t sumG = 0;                \
+-	uint64_t sumB = 0;
++	uint64_t sumB = 0;                \
++	uint64_t count = 0;
+ 
+-#define SWSTATS_ACCUMULATE_LINE_STATS(div) \
+-	sumR += r;                         \
+-	sumG += g;                         \
+-	sumB += b;                         \
+-                                           \
++/*
++ * Leave pixels with a saturated channel out of the colour sums: they are
++ * white whatever the light, and pull white balance towards no correction.
++ */
++static constexpr unsigned int kSatLimit = 248;
++
++#define SWSTATS_ACCUMULATE_LINE_STATS(div)          \
++	if (r < kSatLimit * (div) && g < kSatLimit * (div) && \
++	    b < kSatLimit * (div)) {                 \
++		sumR += r;                           \
++		sumG += g;                           \
++		sumB += b;                           \
++		count++;                             \
++	}                                            \
++                                                     \
+ 	yVal = r * kRedYMul;               \
+ 	yVal += g * kGreenYMul;            \
+ 	yVal += b * kBlueYMul;             \
+@@ -192,7 +203,8 @@
+ #define SWSTATS_FINISH_LINE_STATS() \
+ 	stats.sum_.r() += sumR;     \
+ 	stats.sum_.g() += sumG;     \
+-	stats.sum_.b() += sumB;
++	stats.sum_.b() += sumB;     \
++	stats.sumCount += count;
+ 
+ void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[], SwIspStats &stats)
+ {
+@@ -339,6 +351,7 @@
+ 
+ 	for (auto &s : stats_) {
+ 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
++		s.sumCount = 0;
+ 		s.yHistogram.fill(0);
+ 	}
+ }
+@@ -356,9 +369,11 @@
+ 
+ 	if (valid) {
+ 		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
++		sharedStats_->sumCount = 0;
+ 		sharedStats_->yHistogram.fill(0);
+ 		for (const auto &s : stats_) {
+ 			sharedStats_->sum_ += s.sum_;
++			sharedStats_->sumCount += s.sumCount;
+ 			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
+ 				sharedStats_->yHistogram[j] += s.yHistogram[j];
+ 		}
+--- a/src/ipa/simple/algorithms/awb.cpp
++++ b/src/ipa/simple/algorithms/awb.cpp
+@@ -56,7 +56,6 @@
+ 		  const SwIspStats *stats,
+ 		  ControlList &metadata)
+ {
+-	const SwIspStats::Histogram &histogram = stats->yHistogram;
+ 	const uint8_t blackLevel = context.activeState.blc.level;
+ 
+ 	const float mdGains[] = {
+@@ -73,8 +72,7 @@
+ 	 * would be off if they were computed from the whole brightness range
+ 	 * rather than from the sensor range.
+ 	 */
+-	const uint64_t nPixels = std::accumulate(
+-		histogram.begin(), histogram.end(), uint64_t(0));
++	const uint64_t nPixels = stats->sumCount;
+ 	const uint64_t offset = blackLevel * nPixels;
+ 	const uint64_t minValid = 1;
+ 	/*

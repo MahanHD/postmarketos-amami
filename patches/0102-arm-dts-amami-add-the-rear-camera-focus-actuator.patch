@@ -9,7 +9,7 @@
  		port {
  			rear_cam_ep: endpoint {
  				data-lanes = <1 2 3 4>;
-@@ -422,6 +424,14 @@
+@@ -422,6 +424,19 @@
  			};
  		};
  	};
@@ -20,6 +20,11 @@
 +		reg = <0x0c>;
 +		vdd-supply = <&pm8941_l23>;
 +		vio-supply = <&pm8941_lvs2>;
++		/*
++		 * The module's EEPROM puts infinity at 326 and macro at 681;
++		 * rest a little short of infinity.
++		 */
++		rohm,default-position = <359>;
 +	};
  };
  

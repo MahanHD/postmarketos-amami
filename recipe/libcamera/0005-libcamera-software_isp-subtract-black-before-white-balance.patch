@@ -1,0 +1,90 @@
+--- a/src/libcamera/software_isp/debayer_cpu.cpp
++++ b/src/libcamera/software_isp/debayer_cpu.cpp
+@@ -880,9 +880,13 @@
+ 
+ void DebayerCpu::updateGammaTable(const DebayerParams &params)
+ {
+-	const RGB<float> blackLevel = params.blackLevel;
+-	/* Take let's say the green channel black level */
+-	const unsigned int blackIndex = blackLevel[1] * gammaTable_.size();
++	/*
++	 * The black level is subtracted per channel before the gains and the
++	 * colour matrix, in updateLookupTables(). Subtracting it here instead,
++	 * after them, leaves red and blue lifted by their white balance gains,
++	 * and every shadow tinted magenta.
++	 */
++	const unsigned int blackIndex = 0;
+ 	const float gamma = params.gamma;
+ 	const float contrastExp = params.contrastExp;
+ 
+@@ -922,6 +926,15 @@
+ 	};
+ 	const unsigned int gammaTableSize = gammaTable_.size();
+ 	const double div = static_cast<double>(kRGBLookupSize) / gammaTableSize;
++
++	/* Input i, black level removed and rescaled to full scale again */
++	const float top = kRGBLookupSize - 1;
++	const RGB<float> black = params.blackLevel * kRGBLookupSize;
++	auto unblack = [&](unsigned int i, unsigned int c) -> float {
++		const float b = std::min(black[c], top - 1);
++		return std::max(i - b, 0.0f) * top / (top - b);
++	};
++
+ 	if (ccmEnabled_) {
+ 		if (gammaUpdateNeeded ||
+ 		    matrixChanged(params.combinedMatrix, params_.combinedMatrix)) {
+@@ -931,16 +944,32 @@
+ 			const unsigned int redIndex = swapRedBlueGains_ ? 2 : 0;
+ 			const unsigned int greenIndex = 1;
+ 			const unsigned int blueIndex = swapRedBlueGains_ ? 0 : 2;
++			/*
++			 * The combined matrix has the white balance gains folded
++			 * into its columns. Clip each input where its gain takes
++			 * it past full scale, as an ISP clips after white
++			 * balance: otherwise saturated areas, which are white,
++			 * leave the matrix as (gain R, 1, gain B) and turn pink.
++			 */
++			const RGB<float> limit = RGB<float>({
++				top / std::max(params.gains.r(), 1.0f),
++				top / std::max(params.gains.g(), 1.0f),
++				top / std::max(params.gains.b(), 1.0f),
++			});
+ 			for (unsigned int i = 0; i < kRGBLookupSize; i++) {
+-				red[i].r = std::round(i * params.combinedMatrix[redIndex][0]);
+-				red[i].g = std::round(i * params.combinedMatrix[greenIndex][0]);
+-				red[i].b = std::round(i * params.combinedMatrix[blueIndex][0]);
+-				green[i].r = std::round(i * params.combinedMatrix[redIndex][1]);
+-				green[i].g = std::round(i * params.combinedMatrix[greenIndex][1]);
+-				green[i].b = std::round(i * params.combinedMatrix[blueIndex][1]);
+-				blue[i].r = std::round(i * params.combinedMatrix[redIndex][2]);
+-				blue[i].g = std::round(i * params.combinedMatrix[greenIndex][2]);
+-				blue[i].b = std::round(i * params.combinedMatrix[blueIndex][2]);
++				const float ir = std::min(unblack(i, 0), limit.r());
++				const float ig = std::min(unblack(i, 1), limit.g());
++				const float ib = std::min(unblack(i, 2), limit.b());
++
++				red[i].r = std::round(ir * params.combinedMatrix[redIndex][0]);
++				red[i].g = std::round(ir * params.combinedMatrix[greenIndex][0]);
++				red[i].b = std::round(ir * params.combinedMatrix[blueIndex][0]);
++				green[i].r = std::round(ig * params.combinedMatrix[redIndex][1]);
++				green[i].g = std::round(ig * params.combinedMatrix[greenIndex][1]);
++				green[i].b = std::round(ig * params.combinedMatrix[blueIndex][1]);
++				blue[i].r = std::round(ib * params.combinedMatrix[redIndex][2]);
++				blue[i].g = std::round(ib * params.combinedMatrix[greenIndex][2]);
++				blue[i].b = std::round(ib * params.combinedMatrix[blueIndex][2]);
+ 				gammaLut_[i] = gammaTable_[i / div];
+ 			}
+ 		}
+@@ -951,8 +980,11 @@
+ 			auto &green = green_;
+ 			auto &blue = swapRedBlueGains_ ? red_ : blue_;
+ 			for (unsigned int i = 0; i < kRGBLookupSize; i++) {
++				const RGB<float> in = RGB<float>({
++					unblack(i, 0), unblack(i, 1), unblack(i, 2),
++				});
+ 				/* Apply gamma after gain! */
+-				const RGB<float> lutGains = (gains * i / div).min(gammaTableSize - 1);
++				const RGB<float> lutGains = (gains * in / div).min(gammaTableSize - 1);
+ 				red[i] = gammaTable_[static_cast<unsigned int>(lutGains.r())];
+ 				green[i] = gammaTable_[static_cast<unsigned int>(lutGains.g())];
+ 				blue[i] = gammaTable_[static_cast<unsigned int>(lutGains.b())];

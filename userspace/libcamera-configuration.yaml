@@ -1,0 +1,10 @@
+# /etc/libcamera/configuration.yaml
+#
+# The GPU debayer cannot work here: without its IOMMU, msm refuses to import
+# libcamera's output buffers. Use the CPU one, on all four cores.
+---
+version: 1
+configuration:
+  software_isp:
+    mode: cpu
+    threads: 4

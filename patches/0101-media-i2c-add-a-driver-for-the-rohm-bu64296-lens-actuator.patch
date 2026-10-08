@@ -29,7 +29,7 @@
  obj-$(CONFIG_VIDEO_CCS) += ccs/
 --- /dev/null
 +++ b/drivers/media/i2c/bu64296.c
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,253 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * ROHM BU64296GWX lens voice coil driver
@@ -189,6 +189,7 @@
 +	struct device *dev = &client->dev;
 +	struct bu64296_device *bu;
 +	unsigned int i;
++	u32 pos;
 +	int ret;
 +
 +	bu = devm_kzalloc(dev, sizeof(*bu), GFP_KERNEL);
@@ -207,9 +208,17 @@
 +	bu->sd.internal_ops = &bu64296_int_ops;
 +	bu->sd.entity.function = MEDIA_ENT_F_LENS;
 +
++	/*
++	 * Where the lens sits until someone focuses it. Without autofocus a
++	 * position just short of infinity keeps the most of a scene sharp.
++	 */
++	pos = 0;
++	device_property_read_u32(dev, "rohm,default-position", &pos);
++	bu->current_val = min_t(u32, pos, BU64296_MAX_FOCUS_POS);
++
 +	v4l2_ctrl_handler_init(&bu->ctrls, 1);
 +	v4l2_ctrl_new_std(&bu->ctrls, &bu64296_ctrl_ops, V4L2_CID_FOCUS_ABSOLUTE,
-+			  0, BU64296_MAX_FOCUS_POS, 1, 0);
++			  0, BU64296_MAX_FOCUS_POS, 1, bu->current_val);
 +	if (bu->ctrls.error) {
 +		ret = bu->ctrls.error;
 +		goto err_free;

@@ -21,3 +21,10 @@ the initramfs before `/lib/firmware` exists. They are not in this repository.
 The media/camera options must stay modular (`=m`); built in, the same symbols
 stop the kernel booting on this phone. See `../docs/building.md` for flashing
 and the boot image.
+
+## libcamera
+
+`libcamera/` holds what this port adds to pmaports' `temp/libcamera` (0.7.1):
+`0004` (IMX200 gain model and properties), `0005` and `0006` (soft ISP colour fixes)
+and `imx200.yaml`, the tuning file with stock's colour matrix. The `APKBUILD` there is
+the complete one, with all six patches and the tuning file in its source list.

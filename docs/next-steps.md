@@ -5,8 +5,9 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-07)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 194, with the boot
-image from 194 (`uname -v` prints `#195`). Install the package for module changes and
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 202, with the boot
+image from 202 (`uname -v` prints `#203`), and libcamera from
+`recipe/libcamera` at r4. Install the package for module changes and
 rebuild the boot image with `tools/mkbootimg.py` for anything built in or in the
 device tree.
 
@@ -16,27 +17,22 @@ CPU hotplug, and suspend (s2idle). The rear camera produces real frames.
 
 Not working: audio (no sound, see `notes.md`) and the front camera (not started).
 
-The camera modules are blacklisted on the phone by
-`/etc/modprobe.d/camss-bringup.conf` (`qcom_camss`, `i2c_qcom_cci`, `imx219`, `ccs`),
-so nothing camera-related loads at boot. `tools/camera/capture.sh` loads them with
-`--ignore-install`. Remove that file once capture is reliable.
+The camera loads at boot and works in GNOME Snapshot through libcamera and PipeWire. The
+old bring-up blacklist (`/etc/modprobe.d/camss-bringup.conf`) is gone; `capture.sh` still
+works for raw frames.
 
 ## Camera, rear (IMX200)
 
-1. **White balance and colour.** Lens shading is handled in `raw10.py` (average EEPROM
-   grid, see `notes.md`). Next is decoding the rest of the EEPROM (white balance) and,
-   if needed, stock's tuning in `vendor/camera/SOI20BS0/` (Sony's `cacao` format).
-   Uploading a shading table to the sensor the way stock does is an option for a real
-   camera app later, not needed for raw capture.
-2. **Stock's clocks.** Found in `libcammw` (see `notes.md`), but stock needs an 8 MHz
-   MCLK and the sensor ignores PLL writes made after CCS's. If it matters, try
-   writing them before CCS's PLL setup, or in place of it.
-3. **Stream reliability.** A stream after a failed one wedges camss. After good ones,
-   several streams per boot work.
-4. **Autofocus.** The lens moves (`0101`, `0102`, `FOCUS=` in `capture.sh`). What is
-   missing is choosing the position: a contrast sweep like the one in `notes.md`, and
-   the EEPROM's focus calibration (stock reads "focus posi" and "lens stroke" data from
-   it).
+1. **Autofocus.** The lens rests at the EEPROM's near-infinity position. libcamera's soft
+   ISP has no autofocus; a contrast search over the lens control, with the EEPROM's
+   infinity and macro points as its range, is the next big step.
+2. **Full-resolution photos from apps.** 2560x1920 works; 5248x3936 needs more CMA for
+   the capture buffers (`CONFIG_CMA_SIZE_MBYTES`, now 256 MB, most of it taken by the GPU
+   carveout).
+3. **Tuning.** White balance and exposure are libcamera's simple defaults. The EEPROM's
+   remaining bytes and stock's `exposure_ctrl.dat` may hold better starting points.
+4. **The first binned frames** come out at full size, because stream-on resets the mode.
+5. **Stream reliability.** A stream after a failed one can still wedge camss.
 
 ## Camera, front (IMX132)
 

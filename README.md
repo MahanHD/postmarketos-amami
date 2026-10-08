@@ -27,7 +27,7 @@ that makes mainline do the same.
 | GPU frequency scaling and throttling | Works |
 | CPU hotplug | Works |
 | Suspend | s2idle works; deep suspend works but saves nothing here |
-| Rear camera (Sony IMX200, 20.7 MP) | Real photos: clean colour, lens shading, manual focus; white balance and autofocus still to do |
+| Rear camera (Sony IMX200, 20.7 MP) | Works in GNOME Snapshot through libcamera: live preview, auto exposure and white balance; no autofocus yet |
 | Front camera (Sony IMX132) | Identified, not started |
 | Audio | No sound yet: the codec probes and its registers work, but no data moves over SLIMbus |
 
@@ -36,9 +36,11 @@ that makes mainline do the same.
     patches/          the kernel patch series, applied in number order
     patches/debug/    diagnostic patches, numbered from 9000 (see its README)
     recipe/           the kernel APKBUILD and config exactly as built
+    recipe/libcamera/ libcamera patches and the IMX200 tuning file
     tools/            helper scripts (boot image, firmware unpacking, probes)
     tools/camera/     capture and analysis scripts for the rear camera
-    userspace/        Bluetooth/WiFi MAC address service and a journald setting
+    userspace/        MAC address service, journald setting, camera udev rule and
+                      libcamera configuration
     docs/building.md  building, flashing and the first-boot setup
     docs/notes.md     what each part needed and why, with the measurements
     docs/next-steps.md  current state and what comes next
@@ -135,7 +137,7 @@ The ADSP audio services, a SLIMbus controller for msm8974, and a WCD9320 (Taiko)
 codec driver, which mainline did not have. The codec probes and all of its
 registers work, but no samples move over SLIMbus in either direction yet.
 
-**Camera** (`0085`-`0102`)
+**Camera** (`0085`-`0104`)
 
 - `0085`-`0087` add msm8974 support to CAMSS. The block matches msm8916's, which
   mainline already supports.
@@ -155,6 +157,10 @@ registers work, but no samples move over SLIMbus in either direction yet.
 - `0100` adds the rear camera to amami's device tree.
 - `0101` is a driver for the rear module's focus actuator, a ROHM BU64296GWX, with the
   protocol taken from Sony's camera library, and `0102` wires it up.
+- `0103` is a driver for the IMX200 itself, built from the stock firmware's tables. It
+  gives libcamera a normal sensor with four modes, from 1312x988 at 96 fps to 5248x3936
+  at 16.8 fps, and programs the lens shading from the module's EEPROM as stock does.
+  `0104` switches the device tree to it. `0091`-`0098` (CCS) stay for reference.
 
 The debug patches that matter right now are the camera ones: `9006` (CAMSS on
 arm32), `9007` (the front sensor, not yet working) and `9010` (contiguous buffers
@@ -179,19 +185,16 @@ None of Sony's files are in this repository.
 
 ## Camera quick start
 
-With the camera patches built, on the phone as root:
+With the kernel and `recipe/libcamera` installed (see `docs/building.md`), open GNOME
+Snapshot, or list the camera with `cam -l`. For raw frames, as root on the phone:
 
-    tools/camera/capture.sh 4 3976 128     # 4 frames, exposure 3976 lines, gain 128
-    FOCUS=256 tools/camera/capture.sh 2 1200 128   # focused for a distant scene
+    SIZE=2624x1976 FOCUS=330 tools/camera/capture.sh 4 1000 128
 
-That writes packed RAW10 frames. On the host:
+and on the host:
 
-    tools/camera/raw10.py capture.raw png photo.png
+    SIZE=2624x1976 tools/camera/raw10.py capture.raw png photo.png
 
-The preview is crude (grey-world white balance, lens shading only if you pass the
-module's EEPROM dump as a fourth argument) and rotated to account for the sideways
-module. `docs/notes.md` explains the settle count, the
-register tables and why RAW8 does not work.
+`docs/notes.md` explains the driver, the stock tables it uses and the libcamera fixes.
 
 ## Credits and licence
 
