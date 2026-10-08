@@ -1,0 +1,50 @@
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -1485,6 +1485,47 @@
+ 	setUpFormatSizes(rawFormats);
+ 
+ 	/*
++	 * The software ISP can produce any size in its range, which
++	 * StreamFormats expands into every standard resolution it contains:
++	 * about fifty per format. Applications that weigh each one, such as
++	 * GNOME Snapshot, then take seconds to start on a slow CPU. Offer the
++	 * full output of each sensor mode and a few common sizes instead;
++	 * other sizes still validate as before.
++	 */
++	if (data->swIsp_) {
++		static const std::array<Size, 3> commonSizes = {
++			Size(640, 480), Size(1280, 720), Size(1920, 1080),
++		};
++
++		for (auto &[format, ranges] : processedFormats) {
++			std::vector<Size> sizes;
++
++			for (const SimpleCameraData::Configuration &cfg : data->configs_) {
++				const auto &formats = cfg.outputFormats;
++				if (std::find(formats.begin(), formats.end(), format) != formats.end())
++					sizes.push_back(cfg.outputSizes.max);
++			}
++
++			for (const Size &size : commonSizes) {
++				for (const SizeRange &range : ranges) {
++					if (range.contains(size)) {
++						sizes.push_back(size);
++						break;
++					}
++				}
++			}
++
++			std::sort(sizes.begin(), sizes.end());
++			sizes.erase(std::unique(sizes.begin(), sizes.end()), sizes.end());
++
++			/* Largest first: the first entry is the default size. */
++			ranges.clear();
++			for (auto it = sizes.rbegin(); it != sizes.rend(); ++it)
++				ranges.emplace_back(*it);
++		}
++	}
++
++	/*
+ 	 * Create the stream configurations. Take the first entry in the formats
+ 	 * map as the default, for lack of a better option.
+ 	 *
