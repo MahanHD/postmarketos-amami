@@ -180,7 +180,16 @@ from.
 - `a3xx-stock-wa.py libGLESv2_adreno.so` runs stock's a3xx workaround code for this GPU
   and prints the commands it adds: the context preamble, and what goes before and after
   each draw. This is how the GPU hang fix was found (`docs/notes.md`).
+- `kgsl-fixup-emu.py vmlinux-stock.bin out.bin` runs the stock kernel's
+  `adreno_a3xx_pwron_fixup_init()` (found without symbols, through the address of its
+  shader) and writes the buffer it builds. It is how `0105` was checked against stock.
 
 `gpu-bo-reuse.py` runs on the phone and checks that new GPU buffers start zeroed:
 it fills one with a pattern, frees it, allocates again and counts what is left. Before
 `0106` the carveout handed back the old contents in full.
+
+`gpu-soak.sh [cycles]` is the long GPU test: Megapixels for 30 s, then glxgears for 20 s,
+repeated (60 cycles is about an hour), with the running hang count in `~/gpu-soak.log`.
+`gpu-pwron-stress.py [period_ms] [minutes]` makes Xorg draw once every period, longer
+than the GPU's 66 ms autosuspend, so nearly every draw is the first job after a power-on.
+Both run on the phone through `sudo systemd-run --uid=mahan`.

@@ -3615,16 +3615,51 @@ the quirk, settle in camss), then the IMX132.
   `CP_SET_CONSTANT`, and only on some power-ups. The same soak on r206: no timeouts, no
   hangs, no GPU errors. Back on r206; `0105` stays parked.
 
+### GPU hangs over an hour, and the fixup the kgsl way, 2026-10-11/12
+
+- The stock kernel has no symbols, but its `adreno_a3xx_pwron_fixup_init()` is the only
+  code that loads the fixup shader's address (0xc0a454b8, literal at 0xc0483d0c; the
+  function starts at 0xc04832f8). Run under Unicorn (`tools/re/kgsl-fixup-emu.py`), it
+  builds 491 dwords, identical to the kgsl source and to what `0105` emitted. The
+  microcode is not a difference either: stock's `a330_pm4.fw` and `a330_pfp.fw` are
+  byte-identical to linux-firmware's.
+- All three saved Xorg hang dumps hung within the first one to three jobs after a
+  power-on: rptr = wptr at 36, 50 and 54 dwords, right behind `CP_ME_INIT` (the ring
+  restarts at every hw_init, and the GPU autosuspends after 66 ms idle). In
+  `xorg-hang.devcore` the hung job is the very first one.
+- r206 baseline, `tools/gpu-soak.sh` for 60 cycles (an hour): **3 hangs**, one Xorg and
+  two Megapixels, all recovered. The ten-cycle soak had been too short to show them.
+- r206, `tools/gpu-pwron-stress.py` for 20 minutes: 5943 draws, the GPU suspended 74% of
+  the time (so almost every draw followed a power-on), **0 hangs**. A power-on alone does
+  not hang it.
+- `0105` rewritten to run as kgsl does: built once into a `MSM_BO_GPU_READONLY` buffer,
+  called with `CP_INDIRECT_BUFFER_PFD` between `CP_SET_PROTECTED_MODE` 0 and 1 from the
+  first submission after each hw_init, after ME_INIT has idled. The builder was checked
+  on the host against the stock dump first (identical). r207 (`uname -v` `#208`): the
+  `pwron_fixup` BO is there, and with the GPU busy `HLSQ_CL_NDRANGE_0` reads 0x00401101
+  and `HLSQ_CL_GLOBAL_WORK[0].SIZE` 0x400 through `/dev/mem`, the fixup's values; Mesa's
+  a3xx driver never writes those registers. The negative control (the same read on r206)
+  is still to do.
+- r207, the same hour-long soak: **10 hangs** (9 Xorg, 1 glxgears) and 17 `a3xx_hw_init:
+  timeout waiting for GPU to idle`, which r206 never shows. Those timeouts come at
+  ME_INIT, before the fixup runs again, so the fixup leaves something stuck that a
+  runtime suspend does not clear. No SMMU faults were logged, but this SMMU's fault
+  reporting is unreliable (see the IOMMU section).
+- A lead: the chip is an a330v2 (3.3.0.1). Its `RBBM_CLOCK_CTL` is 0xaaaaaaaa in both
+  kgsl and drm, so bits 17:16 are 10; the fixup ends with a `CP_REG_RMW` that sets them
+  to 00, the a330v1 value (v1's default is 0xbffcffff). kgsl rewrites the default only in
+  its GMEM save and restore IBs and in its start sequence. Back on r206.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:
 
-- `0105` - kgsl's a3xx power-on fixup, run after `CP_ME_INIT` on every hw_init. Its
-  commands are verified identical to what kgsl generates, and its shader to the stock
-  kernel's. Parked: on r207 (with `0106`) the CP intermittently stalls in its opening
-  wait for idle at power-up. kgsl runs it differently - from an IB, on the first
-  submission after power-on, after its own context setup - and the stock kernel's
-  generator has not been compared with the (older) kgsl source.
+- `0105` - kgsl's a3xx power-on fixup, now run the way kgsl runs it: from a read-only
+  IB with prefetch disabled, on the first submission after every hw_init. Its 491
+  dwords are identical to the buffer the stock kernel builds. Parked: an hour-long soak
+  gave 10 hangs and 17 hw_init idle timeouts against r206's 3 and none. The earlier
+  version (inline after `CP_ME_INIT`) stalled the CP at power-up. Lead: the fixup leaves
+  a330v2's `RBBM_CLOCK_CTL` bits 17:16 at the a330v1 value.
 - `0082` - the actual SoC collapse in `spm_suspend_enter()`. Correct-looking and
   **the phone does not wake from it** (r135, Phase 2). Parked rather than deleted
   because the sequence is probably right and the wakeup side is the suspect, so
