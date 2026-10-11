@@ -7,7 +7,7 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 204, with the boot image
 from 204 (`uname -v` prints `#205`). r205 (`0105`, kgsl's power-on fixup) was tried and
-reverted; its boot image is in `boot-images/` but must not be flashed as is. Userspace
+reverted; its image and package were deleted, rebuild from `0105` to retry it. Userspace
 from this repo: libcamera r7 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libmegapixels
 r1 and Megapixels r2 (`recipe/libmegapixels`, `recipe/megapixels`), with
 `userspace/megapixels/*` in `/usr/share/megapixels/config/`. The GPU runs behind its
