@@ -3,16 +3,16 @@
 Where the port stands and what comes next, in order. The history behind every item
 is in `worklog.md`; the settled findings are in `notes.md`.
 
-## Current state (2026-10-09)
+## Current state (2026-10-11)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 204, with the boot image
-from 204 (`uname -v` prints `#205`). r205 (`0105`, kgsl's power-on fixup) was tried and
-reverted; its image and package were deleted, rebuild from `0105` to retry it. Userspace
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 206, with the boot image
+from 206 (`uname -v` prints `#207`). r205 (`0105`, kgsl's power-on fixup) was tried and
+reverted; rebuild from `0105` to retry it. There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r7 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libmegapixels
 r1 and Megapixels r2 (`recipe/libmegapixels`, `recipe/megapixels`), with
 `userspace/megapixels/*` in `/usr/share/megapixels/config/`. The GPU runs behind its
 IOMMU since r204 (`0034`-`0036`); the display still uses the VRAM carveout, and so do all
-GPU buffers. Install the package for module changes and rebuild the boot image with
+GPU buffers, which are cleared on allocation since r206 (`0106`). Install the package for module changes and rebuild the boot image with
 `tools/mkbootimg.py` for anything built in or in the device tree.
 
 Working: display, touch, GPU (GTK4's GL renderer included), WiFi, Bluetooth, charging and
@@ -26,8 +26,8 @@ The camera loads at boot and works in GNOME Snapshot through libcamera and PipeW
 in Megapixels. `capture.sh` still works for raw frames; at night it needs `VBLANK=30000`,
 a long exposure and gain 240, or the frame is black.
 
-**Where to pick up:** the GPU list below, item 3 (clear carveout buffers on allocation in
-`get_pages_vram()`), then re-measure the rare Xorg hangs and retry `0105`. Tests that
+**Where to pick up:** the GPU list below: retry `0105` on top of `0106`, then measure
+the rare Xorg hangs over long sessions. Tests that
 run long on the phone go through `sudo systemd-run`; a `nohup` over SSH is killed when
 the session closes.
 
@@ -49,13 +49,11 @@ Snapshot's cairo stopgap is gone.
 1. The other a3xx workarounds stock applies on this chip (flag bits in `notes.md`) did not
    affect the hang. They stay documented; port one only if a symptom points to it.
 2. kgsl's power-on fixup is ported as `0105`, identical to kgsl's commands, and parked:
-   on r205 it came with many "Division by zero" warnings, hangs and a slow GPU. Retry it
-   once item 3 is done, since the warnings turned out to come from the carveout.
-3. **Clear VRAM carveout buffers on allocation.** Every GPU buffer comes from the
-   carveout uncleared (worklog, 2026-10-09): garbage per-submit stats cause
-   "Division by zero" in `retire_submits`, and user buffers start with stale data.
-   Fix that first, then measure the Xorg hangs and retry `0105` (kgsl's power-on
-   fixup, parked after it made things worse on r205).
+   on r205 it came with many "Division by zero" warnings, hangs and a slow GPU. The
+   warnings came from the carveout (item 3); retry `0105` on r206 to see whether the
+   hangs and the slowness were its own.
+3. Carveout buffers are cleared on allocation since r206 (`0106`); that removed the
+   "Division by zero" warnings and the cross-process data leak.
 4. Xorg can still hang the GPU on the fixed Mesa (twice in one Megapixels run). That
    dump (`work/mesa/xorg-hang.devcore`) is a different state: pipeline idle, both IBs
    read, the CP busy with a non-real-time memory operation, three fences unwritten.

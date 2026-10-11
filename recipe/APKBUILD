@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=204
+pkgrel=206
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -118,6 +118,7 @@ source="
 	0102-arm-dts-amami-add-the-rear-camera-focus-actuator.patch
 	0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
 	0104-arm-dts-amami-drive-the-rear-camera-with-the-imx200-driver.patch
+	0106-drm-msm-clear-carveout-buffers-when-they-are-allocated.patch
 	9006-debug-camss-allow-arm32-bringup.patch
 	9007-debug-amami-describe-the-front-camera.patch
 	9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
@@ -248,6 +249,7 @@ ff6994392d5439350f85a962ebd0767bbfd239eb7addfb246f386959dba19e1f04e49449688fcbfa
 078ea3499e898ce3b058332e8897415ba50d21049622a7733462ce3a56637d50f125fb1ea13843b8d41f4e9865b22861db56701166413cafd469fee96f4436ab  0102-arm-dts-amami-add-the-rear-camera-focus-actuator.patch
 cb576f77dfe883b4cf63a3ca855b90781e736d20f6959bb095fb3e93cdeb28aac1ce5a5114019748a454f8918fb32ba9e427f57055b5451496a9a64af95d19d9  0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
 6f2fbfa9942e3875dd89ee0ea4632c5693ea33997febcf4ab79269cd14ab1f1fe58831acd115f76e225972cc924f148a438ac5dea8ab6af9ef6a915cab79f560  0104-arm-dts-amami-drive-the-rear-camera-with-the-imx200-driver.patch
+593a9532010566e10595b58814f2b576e383a9b380fac1ac5a067e50c7cec5b2446ca5d630f83e1279badad1ab156472e2d85751d9129fbc63d71f23fc17d1fb  0106-drm-msm-clear-carveout-buffers-when-they-are-allocated.patch
 33d0a8c71b69ccf92e17f7ddaf27baa00c6fb5045533847f87cd9d7a22cce83017388e4c409dd275c4a0ad1594db169791dff0c54b52fc92d46cad5b806960e4  9006-debug-camss-allow-arm32-bringup.patch
 5ca89212cb516c0b6319e8bdfc2aecdce9f1fe5dd9cb8f1d04175530268990d87a7e8a5f38db5a623dd549012dc7d55c61bc87cab792b6bdb24279567a2dc469  9007-debug-amami-describe-the-front-camera.patch
 4c5f60e1629f4a8b84338ecc96ec35cb6588aaef916a2bc4c61dafcece1cc62c9e99e40bf33155188e89e27f60e30f7630e6317facac4aa69cc45a99ea9d0dcb  9008-debug-imx219-accept-19m2-xclk-for-id-only.patch

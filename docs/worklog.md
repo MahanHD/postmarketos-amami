@@ -3597,6 +3597,17 @@ the quirk, settle in camss), then the IMX132.
   data too, which Mesa does not expect. Upstream has dropped the carveout code, so the
   fix has to be ours.
 
+### Carveout buffers, 2026-10-11
+
+- Cleaned the workspace (26 GB to 6 GB) and the phone (5.0 GB to 1.5 GB used). `work/ktree`
+  turned out to predate r204; rebuilt it from the pristine tarball plus the APKBUILD's 92
+  patches.
+- `tools/gpu-bo-reuse.py` on r204: a freed and reallocated GPU buffer came back holding
+  every byte of its previous contents. `0106` clears carveout pages on allocation and
+  writes the zeroes back past the CPU cache.
+- r206 (`0106`, `uname -v` `#207`): the test reads zeroes, glxgears 60 fps, Megapixels
+  live, no "Division by zero", no hangs, no warnings.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

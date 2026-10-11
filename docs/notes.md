@@ -1510,6 +1510,25 @@ config now has a `Rate` command after the sensor's `Mode` in each mode. Vertical
 blanking comes out at 2308, exposure reaches 3288 lines, and the night preview is far
 less noisy.
 
+**Carveout buffers were handed out uncleared (fixed in `0106`, 2026-10-11).** With
+the display on the VRAM carveout, `msm_use_mmu()` is false, so every GEM buffer, the
+GPU's included, comes from the carveout. The DMA layer clears the carveout once, when
+msm allocates it at probe; after that `get_pages_vram()` handed out pages exactly as
+their previous owner left them, while shmem buffers always start zeroed. Measured with
+`tools/gpu-bo-reuse.py` on r204: fill a buffer with 0xa5, free it, allocate again, and
+the new buffer came back 100% 0xa5, write-combined and cached alike, at 4 KiB, 1 MiB
+and 4 MiB. With `renderD128` open to every user, any process could read what another
+had freed. It also explained the "Division by zero" in `retire_submits()`: a3xx never
+writes the per-submit stats in the ring's memptrs, so `retire_submit()` read leftovers
+and `do_div()` divided by the low half of a garbage elapsed time; boots differed (0 on
+one, 20 on the next) because the leftovers did.
+
+`0106` clears the pages in `get_pages_vram()` through the kernel's cached alias.
+Write-combined buffers already get `sync_for_device()` (a cache clean on ARMv7) before
+use; cached carveout buffers now get it too, followed by `sync_for_cpu()` so no cache
+line can be written back over the zeroes later. On r206 the same test reads all zeroes,
+glxgears holds 60 fps, Megapixels previews, and there are no warnings.
+
 **The GPU hang, solved (2026-10-08): a register write after every direct load.**
 The stock driver's a3xx code (`libGLESv2_adreno.so`, functions `oxili_*`, symbols
 exported) has a table of hardware workarounds. `oxili_detect_workarounds()` picks a set

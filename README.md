@@ -137,6 +137,11 @@ data for features that are not worth their cost yet.
   of the build.
 - GTK4's GL renderer hung the GPU until Mesa ended direct `CP_LOAD_STATE` packets with a
   register write, as the stock driver does (`recipe/mesa`).
+- `0106` clears carveout buffers when they are allocated. With the display on the
+  carveout, every buffer, the GPU's included, comes from it, and freed pages used to be
+  handed out with their old contents: garbage in the a3xx submit stats ("Division by
+  zero" in `retire_submits`), and data from one process readable by the next one to
+  allocate (`tools/gpu-bo-reuse.py`).
 
 **Audio** (`0039`-`0044`, `0049`-`0068`)
 

@@ -180,3 +180,7 @@ from.
 - `a3xx-stock-wa.py libGLESv2_adreno.so` runs stock's a3xx workaround code for this GPU
   and prints the commands it adds: the context preamble, and what goes before and after
   each draw. This is how the GPU hang fix was found (`docs/notes.md`).
+
+`gpu-bo-reuse.py` runs on the phone and checks that new GPU buffers start zeroed:
+it fills one with a pattern, frees it, allocates again and counts what is left. Before
+`0106` the carveout handed back the old contents in full.

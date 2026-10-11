@@ -1,0 +1,57 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] drm/msm: clear carveout buffers when they are allocated
+
+When the display has no IOMMU, msm_use_mmu() is false and every GEM
+buffer, the GPU's included, comes from the VRAM carveout. The carveout
+is cleared once when it is allocated, but get_pages_vram() hands out
+pages as their previous owner left them, while shmem buffers always
+start zeroed. On the Xperia Z1 Compact (a330, display on the carveout)
+that shows as "Division by zero" from retire_submits(): a3xx never
+writes the per-submit stats in the ring's memptrs, so retire_submit()
+reads leftovers, and do_div() divides by the low half of a garbage
+elapsed time. The count changed from boot to boot. User buffers
+started with stale data in the same way.
+
+Clear carveout pages in get_pages_vram(), through the kernel's cached
+alias, and write the zeroes back before the GPU or display can see the
+buffer: write-combined buffers already get sync_for_device(); cached
+carveout buffers now get it too, followed by sync_for_cpu() so that no
+cache line is written back over the zeroes later.
+
+---
+--- a/drivers/gpu/drm/msm/msm_gem.c	2026-10-11 19:57:55.831255851 +0400
++++ b/drivers/gpu/drm/msm/msm_gem.c	2026-10-11 19:57:55.847914114 +0400
+@@ -165,6 +165,14 @@
+ 		paddr += PAGE_SIZE;
+ 	}
+ 
++	/*
++	 * Unlike shmem pages, carveout pages come back exactly as their last
++	 * owner left them. Clear them here, through the kernel's cached alias;
++	 * get_pages() then writes the zeroes back to memory.
++	 */
++	for (i = 0; i < npages; i++)
++		clear_highpage(p[i]);
++
+ 	return p;
+ }
+ 
+@@ -206,8 +214,17 @@
+ 		/* For non-cached buffers, ensure the new pages are clean
+ 		 * because display controller, GPU, etc. are not coherent:
+ 		 */
+-		if (msm_obj->flags & MSM_BO_WC)
++		if (msm_obj->flags & MSM_BO_WC) {
++			sync_for_device(msm_obj);
++		} else if (!use_pages(obj)) {
++			/*
++			 * A cached carveout buffer: get the zeroes written
++			 * by get_pages_vram() to memory too, and drop the
++			 * cache lines so none is written back over them.
++			 */
+ 			sync_for_device(msm_obj);
++			sync_for_cpu(msm_obj);
++		}
+ 
+ 		update_lru(obj);
+ 	}
