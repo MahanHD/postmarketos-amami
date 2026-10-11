@@ -3607,6 +3607,13 @@ the quirk, settle in camss), then the IMX132.
   writes the zeroes back past the CPU cache.
 - r206 (`0106`, `uname -v` `#207`): the test reads zeroes, glxgears 60 fps, Megapixels
   live, no "Division by zero", no hangs, no warnings.
+- Retried `0105` on top of `0106` (r207, an experiment, never in the recipe). Short tests
+  were clean, 60 fps, so the r205 slowness had been the warning flood. But a soak of ten
+  Megapixels starts gave repeated `adreno_idle: timeout waiting to drain ringbuffer,
+  rptr/wptr = 40/201` and one hang: the CP stalls at dwords 38-39, the wait for idle after
+  the fixup's opening `CP_REG_RMW` of `RBBM_CLOCK_CTL`, `HLSQ_CONTROL_0` and
+  `CP_SET_CONSTANT`, and only on some power-ups. The same soak on r206: no timeouts, no
+  hangs, no GPU errors. Back on r206; `0105` stays parked.
 
 ## Parked patches
 
@@ -3614,8 +3621,10 @@ Out of the build, kept because the data in them was expensive to recover:
 
 - `0105` - kgsl's a3xx power-on fixup, run after `CP_ME_INIT` on every hw_init. Its
   commands are verified identical to what kgsl generates, and its shader to the stock
-  kernel's. Parked because r205 with it was slow and hung; that boot also had the
-  carveout's garbage-stats warnings, so retry it after the carveout is cleared.
+  kernel's. Parked: on r207 (with `0106`) the CP intermittently stalls in its opening
+  wait for idle at power-up. kgsl runs it differently - from an IB, on the first
+  submission after power-on, after its own context setup - and the stock kernel's
+  generator has not been compared with the (older) kgsl source.
 - `0082` - the actual SoC collapse in `spm_suspend_enter()`. Correct-looking and
   **the phone does not wake from it** (r135, Phase 2). Parked rather than deleted
   because the sequence is probably right and the wakeup side is the suspect, so

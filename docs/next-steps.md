@@ -26,8 +26,8 @@ The camera loads at boot and works in GNOME Snapshot through libcamera and PipeW
 in Megapixels. `capture.sh` still works for raw frames; at night it needs `VBLANK=30000`,
 a long exposure and gain 240, or the frame is black.
 
-**Where to pick up:** the GPU list below: retry `0105` on top of `0106`, then measure
-the rare Xorg hangs over long sessions. Tests that
+**Where to pick up:** the GPU list below: measure the rare Xorg hangs over long
+sessions on r206, and the stock kernel's power-on fixup (item 2). Tests that
 run long on the phone go through `sudo systemd-run`; a `nohup` over SSH is killed when
 the session closes.
 
@@ -48,10 +48,12 @@ Snapshot's cairo stopgap is gone.
 
 1. The other a3xx workarounds stock applies on this chip (flag bits in `notes.md`) did not
    affect the hang. They stay documented; port one only if a symptom points to it.
-2. kgsl's power-on fixup is ported as `0105`, identical to kgsl's commands, and parked:
-   on r205 it came with many "Division by zero" warnings, hangs and a slow GPU. The
-   warnings came from the carveout (item 3); retry `0105` on r206 to see whether the
-   hangs and the slowness were its own.
+2. kgsl's power-on fixup is ported as `0105` and parked: on r207 (with `0106`) the CP
+   sometimes stalls in its first wait for idle at power-up (`adreno_idle` timeouts at
+   rptr 40, then a hang); r206 under the same soak is clean. Before trying again, take
+   the fixup generator out of the stock kernel binary (the `work/kgsl` source is older)
+   and compare, and run it the way kgsl does: from an IB on the first submission after
+   power-on, not inline after `CP_ME_INIT`.
 3. Carveout buffers are cleared on allocation since r206 (`0106`); that removed the
    "Division by zero" warnings and the cross-process data leak.
 4. Xorg can still hang the GPU on the fixed Mesa (twice in one Megapixels run). That
