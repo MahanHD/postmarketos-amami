@@ -3835,8 +3835,8 @@ sees a white balanced channel to clip: a saturated pixel, (1, 1, 1) from the sen
 went through the matrix as (red, 1, blue) and came out pink. The same bug libcamera's
 software ISP had (`recipe/libcamera` `0005`). `clip-after-white-balance.patch` clips
 each channel before the matrix at `(1 - black) / gain`, where its gain reaches full
-scale. Megapixels r3, installed on the phone; it runs on the new shader. Not yet seen
-against a bright light.
+scale. Megapixels r3: pointed at a ceiling lamp, the saturated bulb is white and the
+glow around it neutral, where it used to be pink.
 
 ## Parked patches
 
