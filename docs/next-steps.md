@@ -27,7 +27,8 @@ in Megapixels. `capture.sh` still works for raw frames; at night it needs `VBLAN
 a long exposure and gain 240, or the frame is black.
 
 **Where to pick up:** the GPU list below. The hang after a GPU power-on has a fix,
-`0111` (item 4); confirm it with more soaks before calling it closed. Tests that
+`0111` (item 4): 0 hangs in an hour-long fresh-boot soak on r214, against 3 to 9
+before. One more soak on a later boot would close it. Tests that
 run long on the phone go through `sudo systemd-run`; a `nohup` over SSH is killed when
 the session closes.
 

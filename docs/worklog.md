@@ -3764,6 +3764,9 @@ every hang dump (they are under `work/devcore/` in the workspace).
   the reset and `msm_devfreq_suspend()` could still give one clamped sample; nothing
   else follows from it. r214 is r212 + `0111`. SMMU pinned from a fresh boot: **0
   hangs in 10 cycles**, no devfreq warnings.
+- r214 from a fresh boot, nothing pinned, 60 cycles: **0 hangs**, no idle timeouts, no
+  warnings, no dumps, with the GPU runtime suspended for 837 s of the hour. The same
+  test gave 3 to 9 on every kernel before it.
 
 ## Parked patches
 
