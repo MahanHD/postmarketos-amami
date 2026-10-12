@@ -3863,6 +3863,31 @@ writes one word, and whether that word lands.
     collapse drop the memories again; checked on the phone, CBCR 0x4028 reads
     0x80000ff0 suspended with N and 0x80006ff0 with Y.
 
+### Found: the shrinker emptied Xorg's buffers, 2026-10-12 late
+
+- It happened again on r217, during a photo at 22:54: an Xorg hang, then every job
+  hanging, 0xe1484003, the desktop gone. Caught with full dumps
+  (`work/devcore/stuck-r217/`); the note says CmaFree was 11MB. With `retain_mem` N the
+  GPU power collapsed once the queue drained, ran canaries, and a restarted desktop ran
+  glxgears with no hang.
+- The thread through all three: memory. 19:33 came 20 s after a `drop_caches`, 20:00
+  after `drop_caches` and compaction, 22:54 with two unprocessed 10-frame photo bursts
+  (20 x 26MB) in `/tmp`, which is RAM, and 464MB in swap. `drop_caches` and memory
+  pressure run every shrinker, msm's among them.
+- msm's shrinker evicts WILLNEED buffers when swap exists, and `is_unevictable()` did
+  not exclude VRAM carveout objects. `msm_gem_evict()` then `put_pages()` hands their
+  range back to the carveout with nothing to swap to; the next use gets a new, cleared
+  range. Xorg's buffers turned to zeros, and every job using them hung, after every
+  recovery, until Xorg restarted. The once-a-minute hangs were the panel clock's redraw.
+  So the earlier "cure" by power collapse was really the desktop restart.
+- Reproduced on demand on r217: `echo 2000 > /sys/kernel/debug/dri/0/shrink`, then Xorg
+  hangs every minute from 23:05; `systemctl restart lightdm` and they stop.
+- `0113` (r218) makes carveout objects unevictable and keeps the WILLNEED ones on the
+  pinned LRU so the shrinker does not count them; DONTNEED ones stay purgeable. The same
+  test on r218: two shrinks, 0 hangs in seven minutes.
+- So neither a kgsl style stop and start nor memory retention was the answer; `debug/9021`
+  stays for now as a test switch.
+
 ### Megapixels' pink highlights, 2026-10-12
 
 The preview folds the white balance gains into its colour matrix, so the shader never
@@ -3884,6 +3909,13 @@ Full-size frames are tight on memory: 5248x3936 RAW10 is 25.8MB, and camss gets 
 (`REQBUFS` 4 gives 2, also after `drop_caches` and compaction). CMA is 256MB and the
 display's 192MB VRAM carveout sits inside it (0x70100000-0x7c100000); without a display
 IOMMU that carveout has to stay. Megapixels accepts two buffers.
+
+r5 (`photo-keeps-white-balance.patch`): the photo's red cast was three bugs. The white
+balance gains and black level were reset on every mode change, and a photo switches to
+the capture mode, so it was taken with gains of 1; the DNG's AsShotNeutral was written
+with the gains instead of their inverse; and `postprocess.sh` ran `dcraw_emu` without
+`-w`. Converting the first photo's DNG with any white balance gives normal colour, so the
+matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug above.
 
 ## Parked patches
 
@@ -3928,6 +3960,10 @@ Check `glxinfo -B` reports `FD330` after touching any of this, not merely that t
 screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
 
 ## Smaller loose ends
+
+- Once, at boot on r218: `oxili_gfx3d_clk status stuck at 'off'` from
+  `clk_branch_toggle()`, when the RPM clock provider registered and the GPU clock was
+  reparented as an orphan before its GDSC was on. One occurrence in the whole journal.
 
 - The CPU wedge is fixed but only partly explained: the two observed failures had
   different signatures, so there may be a second bug behind the first.
