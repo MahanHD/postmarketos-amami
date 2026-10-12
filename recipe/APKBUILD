@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=216
+pkgrel=217
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -133,6 +133,7 @@ source="
 	9000-debug-regmap-allow-write-debugfs.patch
 	9001-debug-sns-reg-extra-group.patch
 	9002-debug-scan-offload-ie-trim.patch
+	9021-debug-gdsc-switch-retain-mem-at-runtime.patch
 	a330_pm4.fw
 	a330_pfp.fw
 "
@@ -270,6 +271,7 @@ a86fd4730caa19de47dea5e6d6c743d6de8a6a97b941f2cec648b144feee8bdaf4cf9fae5622371c
 bc846a809fa4aac7142d6b242f602e436109287c0176a3df9d3d6f2711d6d8d8c2d1a15e55c0f80c2dff719484b2d1c5bd3c09799bd91dd9ffd5a95e4795b0cf  9000-debug-regmap-allow-write-debugfs.patch
 ef932ace6d9144afd9cb89d97895a0a448f8e09d666b214ffdf87fb6b3e7d4d3874956c62431483daff46b0bce41682a8f69311c1446209e14a980c2d82bf271  9001-debug-sns-reg-extra-group.patch
 c5c81ae047103cff73fc74aee1bd27a5a212f3af60c98e6aece8867995325d3c3194c66ef44ddc0dd55620e4286b3744a99e5dbe645c7b20bfe227e23ee8864b  9002-debug-scan-offload-ie-trim.patch
+37ff38b50683e1ef56670d76bd1d52e130d3473e3ac890deb19306c6d6c4b4db6b23e507ad807f3a0a1028631f6b0b91d3d6074ac8caab6b4bf18f206889f664  9021-debug-gdsc-switch-retain-mem-at-runtime.patch
 999e3e0777b8dffc0e0d20b214c8217dab577a31753b6a29af2fae57293693196e992a905265e35a586a7978c04547aa8c88496dbe6f836b74ed39026eaa5f05  a330_pm4.fw
 a642584990333d62ba6a985eeaddc6898c37a8e80aabb61121f93a90d5076861eb698422101e7b00706b7d3dfc00f9f358ea5e44a70fda7369931eb58b455931  a330_pfp.fw
 "

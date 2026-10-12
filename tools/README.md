@@ -195,8 +195,10 @@ repeated (60 cycles is about an hour), with the running hang count in `~/gpu-soa
 `gpu-pwron-stress.py [period_ms] [minutes]` makes Xorg draw once every period, longer
 than the GPU's 66 ms autosuspend, so nearly every draw is the first job after a power-on.
 Both run on the phone through `sudo systemd-run --uid=mahan`.
-`devcore-collect.sh` runs next to them as root (`sudo systemd-run --unit=devcore`) and
-saves every GPU hang dump to `~/devcore` before the kernel drops it five minutes later.
+`devcore-collect.sh` saves every GPU hang dump before the kernel drops it five minutes
+later, with msm's `rd_full` on so each carries the hung job's buffers: the first 25 of a
+boot go to `~/devcore/<time>-<boot>/` with an uptime and CMA note each, the rest are
+counted. `devcore-collect.service` runs it from boot (install steps in the file).
 
 `gpu-hang-inject.py [wait|fault|none] [rounds]` hangs the GPU on purpose and checks the
 recovery: each round submits a job that cannot finish (`wait`: the CP waits for a value

@@ -5,8 +5,8 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-12)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 216, with the boot image
-from 216 (`uname -v` prints `#217`). `0105` (kgsl's power-on fixup) stays parked (GPU
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 217, with the boot image
+from 217 (`uname -v` prints `#218`). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r7 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libmegapixels
 r1 and Megapixels r2 (`recipe/libmegapixels`, `recipe/megapixels`), with
@@ -67,13 +67,16 @@ Snapshot's cairo stopgap is gone.
    and the GDSCs always collapsed. `0107`-`0110` (error IRQs, kgsl framing, memory
    retention, BFB) did not change the rate and stay because stock does the same.
    Worklog: "GPU hangs overnight".
-5. GPU recovery once failed for good (8 October, old Mesa, before `0111`).
-   `tools/gpu-hang-inject.py` now makes hangs on demand: 41 CP hangs (20 with the GDSCs
-   held on) and 21 IOMMU faults all recovered, and the faults do not even hang (the SMMU
-   terminates). Not reproduced, because those are CP hangs and the failure followed a
-   3D pipeline hang. Left: an injector for pipeline hangs (a crafted draw), and kgsl's
-   escalation, a full stop and start when a soft reset does not bring the ring back,
-   which drm lacks.
+5. GPU recovery can fail for good: seen 8 October and twice on 12 October (worklog, "The
+   GPU that does not come back"). Trigger unknown, not reproducible on demand; every
+   injected CP hang and 206 real pipeline hangs recovered. The phone is set up to catch
+   it: `devcore-collect` runs from boot with full dumps in `~/devcore/<boot>/`. **When
+   it happens:** keep the dumps, then `echo N > /sys/module/clk_qcom/parameters/retain_mem`
+   (r217, `debug/9021`), stop Xorg (`sudo systemctl stop lightdm`) and see whether the
+   GPU comes back once it has power collapsed (`tools/gpu-hang-inject.py none`). If it
+   does only without retention, the fix is about `0109`; if it never does, the dumps'
+   buffers show whether the hung job's data is bad. A kgsl style stop and start in
+   recovery (force-suspending GPU and SMMU) waits on that answer.
 6. Offer the Mesa fix upstream once the port is clean.
 
 ## Camera, rear (IMX200)

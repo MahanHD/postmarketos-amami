@@ -1,0 +1,14 @@
+# Keeps tools/devcore-collect.sh running from boot, so a GPU hang is caught
+# with its full dump whenever it happens. Install on the phone with:
+#   sudo cp devcore-collect.sh /usr/local/bin/
+#   sudo cp devcore-collect.service /etc/systemd/system/
+#   sudo systemctl enable --now devcore-collect
+[Unit]
+Description=Save GPU hang dumps (devcoredumps) with every buffer
+
+[Service]
+ExecStart=/usr/local/bin/devcore-collect.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

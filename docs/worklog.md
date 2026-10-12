@@ -3828,6 +3828,41 @@ writes one word, and whether that word lands.
 - r216, one core for three minutes: held at **1497.6MHz the whole time**, 218 sums, 0
   wrong, 69C. That is the case the voltage matters for, and it holds.
 
+### The GPU that does not come back, 2026-10-12 evening
+
+- On r216 the GPU went into the 8 October state twice: one Xorg hang, and from then on
+  every job hangs. Same `RBBM_STATUS` 0xe1484003 as the dump of 8 October (HLSQ and
+  others still busy). hw_init succeeds after each recovery (no "hw init failed", no
+  idle timeouts); the first real job then hangs again. With Xorg stopped it went on
+  ("offending task: unknown") as the scheduler fed Xorg's backlog, and a canary never
+  ran. Unbinding the GPU to force a power cycle oopsed in `msm_rd_dump_submit()` (the
+  teardown raced the recovery worker) and the phone rebooted. Dump in
+  `work/devcore/stuck-r216/`.
+- On the next boot the GPU hung once, recovered, then hung once a minute, on the panel
+  clock's redraw, about 7000 good jobs apart; after glxgears ended it went on across
+  runtime power cycles, the last one with 0xe1484003 again.
+- Both onsets came seconds after CMA work (`drop_caches` plus `compact_memory`, and
+  camss allocating full-size buffers), but none of it reproduces: three rounds of
+  compaction and failing camss allocations under glxgears over 27 minutes, no hang.
+  It cannot corrupt GPU buffers either: without a display IOMMU every GPU buffer lives
+  in the 192MB VRAM carveout, pinned (`msm_use_mmu()` is false).
+- Pipeline hangs on purpose: the stock Alpine `libgallium` (without
+  `freedreno-a3xx-end-direct-loads.patch`), loaded into Megapixels alone with
+  `LD_LIBRARY_PATH`, gives about 30 real HLSQ hangs a minute. 206 of them, all
+  recovered, canary fine after each round. An injected CP hang on r216 also recovers.
+- So the stuck state is rare and its trigger unknown. kgsl's answer to a soft reset
+  that does not take is a full stop and start (GDSCs off); here the GDSCs are shared
+  with the SMMU and recovery holds runtime PM, so that needs force-suspending both
+  devices. Not written: the once-a-minute boot shows the bad state surviving runtime
+  power collapses, and since `0109` the GPU's memories are retained through them, so a
+  power cycle may not clear it. Set up to catch the next one instead:
+  - `tools/devcore-collect.sh` + `tools/devcore-collect.service` run from boot, set
+    msm's `rd_full` so every dump carries the hung job's buffers, keep the first 25
+    dumps of a boot with an uptime/CMA note each, and count the rest.
+  - `debug/9021` (r217): `/sys/module/clk_qcom/parameters/retain_mem`. N makes a
+    collapse drop the memories again; checked on the phone, CBCR 0x4028 reads
+    0x80000ff0 suspended with N and 0x80006ff0 with Y.
+
 ### Megapixels' pink highlights, 2026-10-12
 
 The preview folds the white balance gains into its colour matrix, so the shader never
@@ -3837,6 +3872,18 @@ software ISP had (`recipe/libcamera` `0005`). `clip-after-white-balance.patch` c
 each channel before the matrix at `(1 - black) / gain`, where its gain reaches full
 scale. Megapixels r3: pointed at a ceiling lamp, the saturated bulb is white and the
 glow around it neutral, where it used to be pink.
+
+Taking a photo then aborted Megapixels: `Assertion failed: thumb (process_pipeline.c:
+process_image: 1413)`, still in upstream master. The burst's thumbnail is read back from
+the preview buffer its last frame renders into, and `process_image_for_preview()` gives
+up when all four are still referenced by the main thread, which falls behind around the
+switch to the capture mode. `thumbnail-without-a-free-preview.patch` (r4) renders that
+last frame into a texture of its own when no buffer is free. Not yet tried with a photo.
+
+Full-size frames are tight on memory: 5248x3936 RAW10 is 25.8MB, and camss gets only two
+(`REQBUFS` 4 gives 2, also after `drop_caches` and compaction). CMA is 256MB and the
+display's 192MB VRAM carveout sits inside it (0x70100000-0x7c100000); without a display
+IOMMU that carveout has to stay. Megapixels accepts two buffers.
 
 ## Parked patches
 

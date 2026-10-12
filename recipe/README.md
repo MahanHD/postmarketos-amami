@@ -50,7 +50,8 @@ it use the colour profile correctly: it finds the profile (`dcp-search-each-path
 applies the colour steps in the right order (`preview-colour-order.patch`), measures
 white balance on the preview as it is (`awb-stats-in-srgb.patch`), and clips after white
 balance so overexposed areas stay white instead of turning pink
-(`clip-after-white-balance.patch`). See
+(`clip-after-white-balance.patch`). A fifth stops a photo from aborting it when no
+preview buffer is free for the thumbnail (`thumbnail-without-a-free-preview.patch`). See
 `../docs/notes.md`, "Megapixels' colour, fixed". Build it from pmaports' `temp/megapixels`
 and install it with `userspace/megapixels/*` copied to `/usr/share/megapixels/config/`.
 
