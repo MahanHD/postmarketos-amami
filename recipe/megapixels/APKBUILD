@@ -3,7 +3,7 @@
 # Alpine 3.24 community/megapixels with colour fixes for the Xperia Z1 Compact
 pkgname=megapixels
 pkgver=2.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc="GTK+4 camera app for mobile devices"
 url="https://gitlab.com/megapixels-org/Megapixels"
 # s390x: doubt anyone would use a mainframe to take photosj
@@ -31,6 +31,7 @@ source="https://gitlab.com/megapixels-org/Megapixels/-/archive/$pkgver/Megapixel
 	awb-stats-in-srgb.patch
 	clip-after-white-balance.patch
 	thumbnail-without-a-free-preview.patch
+	photo-keeps-white-balance.patch
 	"
 options="!check" # There's no testsuite
 builddir="$srcdir/Megapixels-$pkgver"
@@ -51,4 +52,5 @@ ff0ee3506daa8f3dc48c05c0709c6399da4ad1bd1035f3b0cee6caec1e05fba8560ac0adfeb71da4
 9fa742ed224de1f302e90df69fb14a84a437953d76b761106d71699f23b8aa34c866d30750b2f23744272eccb470ff22b64a5e684140ae0b673be34773e45adb  awb-stats-in-srgb.patch
 ea4e0bb4f708e7c300f12e9f942061c40053101e3d2e04a0b88db93d4562ba47e7ac1d5213e338e3e6b6e20392dd2f4b8500f42df68d259e34c8c454ff2a5cc5  clip-after-white-balance.patch
 5ac71105eb8005d19cdfb9afad7e12c19c365a9304b236eb9497594b189c69e7c26260502529994828c52ce4367929d45bb07d48e2ce2066865a68315fe6d4f9  thumbnail-without-a-free-preview.patch
+d2216fcaebae9d292fe47147ce971b46cbfe966f95a1b05fd22eaf6fe7f6c48d691e6a97b8769707efb2c7fae76103615b534048ae695b6affd8a53d87e34e60  photo-keeps-white-balance.patch
 "

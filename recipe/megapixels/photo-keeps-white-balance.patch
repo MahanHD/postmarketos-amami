@@ -1,0 +1,77 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] give photos the preview's white balance
+
+Photos came out with a strong colour cast (red under a warm lamp) while
+the preview was right. Three things between them:
+
+- on_output_changed() reset the white balance gains and black level on
+  every mode change, and taking a photo switches to the capture mode, so
+  the burst was processed and saved with gains of 1. They belong to the
+  sensor and the scene: reset them only when the camera changes.
+- The DNG's AsShotNeutral was written with the gains themselves. It is
+  the camera's value for white, the inverse of the gains.
+- postprocess.sh ran dcraw_emu without -w, so the JPEG ignored the DNG's
+  white balance anyway; its plain dcraw branch already had it.
+
+Converting the same DNG with any white balance gives normal colour, so
+the colour matrix is right and this was all of the cast.
+
+---
+--- a/data/postprocess.sh	2026-10-12 22:24:38.581737317 +0400
++++ b/data/postprocess.sh	2026-10-12 22:24:43.260060316 +0400
+@@ -50,11 +50,11 @@
+ then
+ 	DCRAW=dcraw_emu
+ 	# -fbdd 1	Raw denoising with FBDD
+-	set -- -fbdd 1
++	set -- -fbdd 1 -w
+ elif [ -x "/usr/lib/libraw/dcraw_emu" ]; then
+ 	DCRAW=/usr/lib/libraw/dcraw_emu
+ 	# -fbdd 1	Raw denoising with FBDD
+-	set -- -fbdd 1
++	set -- -fbdd 1 -w
+ elif command -v "dcraw" > /dev/null
+ then
+ 	DCRAW=dcraw
+--- a/src/process_pipeline.c	2026-10-12 22:24:38.583192593 +0400
++++ b/src/process_pipeline.c	2026-10-12 22:24:38.598427256 +0400
+@@ -1152,7 +1152,11 @@
+         }
+         libdng_set_orientation(&dng, orientation);
+         libdng_set_software(&dng, "Megapixels");
+-        libdng_set_neutral(&dng, state_proc.red, 1.0f, state_proc.blue);
++        /*
++         * AsShotNeutral is the camera's value for white, so the inverse of the
++         * gains that make it white
++         */
++        libdng_set_neutral(&dng, 1.0f / state_proc.red, 1.0f, 1.0f / state_proc.blue);
+         libdng_set_analog_balance(&dng,
+                                   state_proc.balance[0],
+                                   state_proc.balance[1],
+@@ -1553,9 +1557,6 @@
+                 gles2_debayer_use(gles2_debayer);
+         }
+ 
+-        state_proc.blacklevel = 0.0f;
+-        state_proc.red = 1.0f;
+-        state_proc.blue = 1.0f;
+         gles2_debayer_configure(gles2_debayer,
+                                 output_buffer_width,
+                                 output_buffer_height,
+@@ -1641,6 +1642,16 @@
+         state_proc.flash_enabled = new_state->flash_enabled;
+ 
+         if (camera_changed) {
++                /*
++                 * White balance and the black level belong to the sensor and
++                 * the scene, not to a mode: they used to be reset on every
++                 * mode change too, so a photo, which switches to the capture
++                 * mode, was taken with no white balance at all.
++                 */
++                state_proc.blacklevel = 0.0f;
++                state_proc.red = 1.0f;
++                state_proc.blue = 1.0f;
++
+                 char cf[PATH_MAX];
+                 if (find_calibration(sizeof(cf), cf, state_proc.camera->name)) {
+                         state_proc.calibration = parse_calibration_file(cf);
