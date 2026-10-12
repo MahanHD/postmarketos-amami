@@ -180,6 +180,8 @@ from.
 - `a3xx-stock-wa.py libGLESv2_adreno.so` runs stock's a3xx workaround code for this GPU
   and prints the commands it adds: the context preamble, and what goes before and after
   each draw. This is how the GPU hang fix was found (`docs/notes.md`).
+- `devcore-ring.py dump.devcore [dwords]` prints a devcoredump's summary and decodes
+  its ringbuffer with `pm4dec.py` (set `MESA_REGS` as for that).
 - `kgsl-fixup-emu.py vmlinux-stock.bin out.bin` runs the stock kernel's
   `adreno_a3xx_pwron_fixup_init()` (found without symbols, through the address of its
   shader) and writes the buffer it builds. It is how `0105` was checked against stock.
@@ -193,3 +195,5 @@ repeated (60 cycles is about an hour), with the running hang count in `~/gpu-soa
 `gpu-pwron-stress.py [period_ms] [minutes]` makes Xorg draw once every period, longer
 than the GPU's 66 ms autosuspend, so nearly every draw is the first job after a power-on.
 Both run on the phone through `sudo systemd-run --uid=mahan`.
+`devcore-collect.sh` runs next to them as root (`sudo systemd-run --unit=devcore`) and
+saves every GPU hang dump to `~/devcore` before the kernel drops it five minutes later.

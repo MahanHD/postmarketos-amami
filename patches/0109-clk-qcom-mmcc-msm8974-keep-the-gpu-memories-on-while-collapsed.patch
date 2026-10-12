@@ -1,0 +1,68 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] clk: qcom: mmcc-msm8974: keep the GPU's memories on while collapsed
+
+gdsc_disable() clears FORCE_MEM_CORE_ON and FORCE_MEM_PERIPH_ON (bits 14
+and 13) on the domain's core clock before every collapse, so the GPU's
+internal memories lose power each time runtime PM switches it off.
+
+Sony's stock device tree marks the oxili GX GDSC (fd8c4024)
+qcom,retain-mem and qcom,retain-periph. With those the downstream gdsc
+driver sets both bits on oxili_gfx3d_clk once at probe and never clears
+them, so the memories are retained across every collapse.
+
+Add a RETAIN_MEM_OFF gdsc flag that does the same, and set it on
+oxili_gdsc.
+
+---
+--- a/drivers/clk/qcom/gdsc.c	2026-10-12 06:25:02.315114173 +0400
++++ b/drivers/clk/qcom/gdsc.c	2026-10-12 06:25:02.429947932 +0400
+@@ -340,7 +340,7 @@
+ 			return ret;
+ 	}
+ 
+-	if (sc->pwrsts & PWRSTS_OFF)
++	if ((sc->pwrsts & PWRSTS_OFF) && !(sc->flags & RETAIN_MEM_OFF))
+ 		gdsc_clear_mem_on(sc);
+ 
+ 	/*
+@@ -478,7 +478,7 @@
+ 		on = true;
+ 	}
+ 
+-	if (on || (sc->pwrsts & PWRSTS_RET))
++	if (on || (sc->pwrsts & PWRSTS_RET) || (sc->flags & RETAIN_MEM_OFF))
+ 		gdsc_force_mem_on(sc);
+ 	else
+ 		gdsc_clear_mem_on(sc);
+--- a/drivers/clk/qcom/gdsc.h	2026-10-12 06:25:02.315114173 +0400
++++ b/drivers/clk/qcom/gdsc.h	2026-10-12 06:25:02.393466544 +0400
+@@ -68,6 +68,8 @@
+ #define RETAIN_FF_ENABLE	BIT(7)
+ #define NO_RET_PERIPH	BIT(8)
+ #define HW_CTRL_TRIGGER	BIT(9)
++/* Keep the memories powered while the domain is collapsed */
++#define RETAIN_MEM_OFF	BIT(10)
+ 	struct reset_controller_dev	*rcdev;
+ 	unsigned int			*resets;
+ 	unsigned int			reset_count;
+--- a/drivers/clk/qcom/mmcc-msm8974.c	2026-10-12 06:25:02.315114173 +0400
++++ b/drivers/clk/qcom/mmcc-msm8974.c	2026-10-12 09:39:16.931858637 +0400
+@@ -2397,6 +2397,10 @@
+ 	.pwrsts = PWRSTS_OFF_ON,
+ };
+ 
++/*
++ * Stock marks this GDSC qcom,retain-mem and qcom,retain-periph, so the GPU's
++ * memories stay powered while it is collapsed. Do the same.
++ */
+ static struct gdsc oxili_gdsc = {
+ 	.gdscr = 0x4024,
+ 	.cxcs = (unsigned int []){ 0x4028 },
+@@ -2405,6 +2409,7 @@
+ 		.name = "oxili",
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
++	.flags = RETAIN_MEM_OFF,
+ };
+ 
+ static struct gdsc oxilicx_gdsc = {

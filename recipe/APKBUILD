@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=206
+pkgrel=214
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -119,6 +119,11 @@ source="
 	0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
 	0104-arm-dts-amami-drive-the-rear-camera-with-the-imx200-driver.patch
 	0106-drm-msm-clear-carveout-buffers-when-they-are-allocated.patch
+	0107-drm-msm-a3xx-report-the-gpu-s-error-interrupts.patch
+	0108-drm-msm-a3xx-frame-submissions-the-way-kgsl-does.patch
+	0109-clk-qcom-mmcc-msm8974-keep-the-gpu-memories-on-while-collapsed.patch
+	0110-iommu-arm-smmu-qcom-write-the-msm8974-bfb-settings-on-every-reset.patch
+	0111-drm-msm-a3xx-soft-reset-the-gpu-before-runtime-suspend.patch
 	9006-debug-camss-allow-arm32-bringup.patch
 	9007-debug-amami-describe-the-front-camera.patch
 	9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
@@ -250,6 +255,11 @@ ff6994392d5439350f85a962ebd0767bbfd239eb7addfb246f386959dba19e1f04e49449688fcbfa
 cb576f77dfe883b4cf63a3ca855b90781e736d20f6959bb095fb3e93cdeb28aac1ce5a5114019748a454f8918fb32ba9e427f57055b5451496a9a64af95d19d9  0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
 6f2fbfa9942e3875dd89ee0ea4632c5693ea33997febcf4ab79269cd14ab1f1fe58831acd115f76e225972cc924f148a438ac5dea8ab6af9ef6a915cab79f560  0104-arm-dts-amami-drive-the-rear-camera-with-the-imx200-driver.patch
 593a9532010566e10595b58814f2b576e383a9b380fac1ac5a067e50c7cec5b2446ca5d630f83e1279badad1ab156472e2d85751d9129fbc63d71f23fc17d1fb  0106-drm-msm-clear-carveout-buffers-when-they-are-allocated.patch
+6ab5f2ecd5ed3dcc8c0722369bd8427d58773d42648d50b4a2916bf573e7b47313293d27f7277774485443a0047cfa12202d129c5a1d00c06fcabe2384af4f9f  0107-drm-msm-a3xx-report-the-gpu-s-error-interrupts.patch
+b90caef3e37ea08cb66ebdffa3fbc91f8f30ba5082dde6c2742182fa5d94b9087bd920d7a15e9631999f8c2ef6338e44c91fcbb8074e9f7ffd57ff5ec85d7cdc  0108-drm-msm-a3xx-frame-submissions-the-way-kgsl-does.patch
+a86fd4730caa19de47dea5e6d6c743d6de8a6a97b941f2cec648b144feee8bdaf4cf9fae5622371c6c06eb61b54d273b6927f1d8d0ecc804c53b5079d9ec26e0  0109-clk-qcom-mmcc-msm8974-keep-the-gpu-memories-on-while-collapsed.patch
+4a4c1790da7b104fdadbc2567d6bbe270c2223cdd268c1056a420f82947dd68d3ee80b3ffdd35aae6565c41f66db409c99fb693d5a0a3617592de988b1392bb7  0110-iommu-arm-smmu-qcom-write-the-msm8974-bfb-settings-on-every-reset.patch
+5424bc41f65fb2c6ae2c98ec8fc80f5f372cbe66374e169a1159347a9b43293a19d8bfbd6fc22568b6fbef8322ed0c6b491cd9ce2013d34d5c08409a1f7b8243  0111-drm-msm-a3xx-soft-reset-the-gpu-before-runtime-suspend.patch
 33d0a8c71b69ccf92e17f7ddaf27baa00c6fb5045533847f87cd9d7a22cce83017388e4c409dd275c4a0ad1594db169791dff0c54b52fc92d46cad5b806960e4  9006-debug-camss-allow-arm32-bringup.patch
 5ca89212cb516c0b6319e8bdfc2aecdce9f1fe5dd9cb8f1d04175530268990d87a7e8a5f38db5a623dd549012dc7d55c61bc87cab792b6bdb24279567a2dc469  9007-debug-amami-describe-the-front-camera.patch
 4c5f60e1629f4a8b84338ecc96ec35cb6588aaef916a2bc4c61dafcece1cc62c9e99e40bf33155188e89e27f60e30f7630e6317facac4aa69cc45a99ea9d0dcb  9008-debug-imx219-accept-19m2-xclk-for-id-only.patch

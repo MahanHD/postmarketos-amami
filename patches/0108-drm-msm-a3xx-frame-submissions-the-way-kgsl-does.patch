@@ -1,0 +1,64 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] drm/msm/a3xx: frame submissions the way kgsl does
+
+Two things the downstream kgsl driver does around every a3xx
+submission, and drm/msm does not:
+
+- On a context switch, adreno_context_restore() invalidates UCHE
+  (UCHE_INVALIDATE0/1 = 0, 0x90000000) before the context's commands.
+  After a power-on kgsl has no current context, so the first submission
+  always gets it.
+- After the end-of-pipe timestamp it writes a dummy CP_SET_CONSTANT to
+  HLSQ_CL_KERNEL_GROUP_X_REG (0x2215) "to trigger context rollover". a3xx_submit()
+  has the same lines, disabled with #if 0.
+
+Do both, and forget the current context in hw_init, since the GPU has
+lost all state by then; that also makes a CTX_RESTORE_BUF run again
+after a power-on, which is what it is for.
+
+---
+--- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 03:26:43.959335313 +0400
++++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 03:27:35.691839942 +0400
+@@ -33,6 +33,17 @@
+ 	struct msm_ringbuffer *ring = submit->ring;
+ 	unsigned int i;
+ 
++	/*
++	 * Like kgsl's context restore (adreno_context_restore()), invalidate
++	 * UCHE when the context changes, which includes the first submission
++	 * after every hw_init.
++	 */
++	if (ring->cur_ctx_seqno != submit->queue->ctx->seqno) {
++		OUT_PKT0(ring, REG_A3XX_UCHE_CACHE_INVALIDATE0_REG, 2);
++		OUT_RING(ring, 0x00000000);
++		OUT_RING(ring, 0x90000000);
++	}
++
+ 	for (i = 0; i < submit->nr_cmds; i++) {
+ 		switch (submit->cmd[i].type) {
+ 		case MSM_SUBMIT_CMD_IB_TARGET_BUF:
+@@ -72,12 +83,10 @@
+ 	OUT_RING(ring, rbmemptr(ring, fence));
+ 	OUT_RING(ring, submit->seqno);
+ 
+-#if 0
+-	/* Dummy set-constant to trigger context rollover */
++	/* Dummy set-constant to trigger context rollover, as kgsl does */
+ 	OUT_PKT3(ring, CP_SET_CONSTANT, 2);
+-	OUT_RING(ring, CP_REG(REG_A3XX_HLSQ_CL_KERNEL_GROUP_X_REG));
++	OUT_RING(ring, 0x00040000 | (REG_A3XX_HLSQ_CL_KERNEL_GROUP_RATIO(0) - 0x2000));
+ 	OUT_RING(ring, 0x00000000);
+-#endif
+ 
+ 	adreno_flush(gpu, ring, REG_AXXX_CP_RB_WPTR);
+ }
+@@ -360,6 +369,9 @@
+ 	/* clear ME_HALT to start micro engine */
+ 	gpu_write(gpu, REG_AXXX_CP_ME_CNTL, 0);
+ 
++	/* The GPU has lost every context's state */
++	gpu->rb[0]->cur_ctx_seqno = 0;
++
+ 	return a3xx_me_init(gpu) ? 0 : -EINVAL;
+ }
+ 

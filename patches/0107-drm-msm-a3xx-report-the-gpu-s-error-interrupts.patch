@@ -1,0 +1,87 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] drm/msm/a3xx: report the GPU's error interrupts
+
+a3xx_irq() clears every interrupt without looking at it ("TODO"), so a
+protected register access, an illegal opcode, an AHB bus error or a CP
+hardware fault, all of which are in A3XX_INT0_MASK, leave no trace. The
+CP stops, and the only thing logged is the hangcheck timeout seconds
+later, by which time the cause is gone.
+
+Report them the way the downstream kgsl driver does in
+a3xx_err_callback(), with the same decoding of RBBM_AHB_ERROR_STATUS,
+CP_PROTECT_STATUS and CP_HW_FAULT, and clear the AHB error as it does.
+Recovery is left to hangcheck, as before.
+
+---
+--- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 02:47:05.185861838 +0400
++++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 02:47:05.271402514 +0400
+@@ -416,6 +416,60 @@
+ 	return true;
+ }
+ 
++/*
++ * Report the error interrupts, as the downstream kgsl driver does
++ * (a3xx_err_callback()). Without this an error that stops the CP only shows
++ * up later as a hangcheck timeout, with its cause gone.
++ */
++static void a3xx_report_errors(struct msm_gpu *gpu, u32 status)
++{
++	struct device *dev = &gpu->pdev->dev;
++	u32 reg;
++
++	if (status & A3XX_INT0_RBBM_AHB_ERROR) {
++		reg = gpu_read(gpu, REG_A3XX_RBBM_AHB_ERROR_STATUS);
++		dev_err_ratelimited(dev,
++			"RBBM | AHB bus error | %s | addr=%x | ports=%x:%x\n",
++			reg & BIT(28) ? "WRITE" : "READ",
++			(reg & 0xfffff) >> 2, (reg >> 20) & 0x3,
++			(reg >> 24) & 0x3);
++		/* Clear the error */
++		gpu_write(gpu, REG_A3XX_RBBM_AHB_CMD, BIT(3));
++	}
++	if (status & A3XX_INT0_RBBM_REG_TIMEOUT)
++		dev_err_ratelimited(dev, "RBBM: AHB register timeout\n");
++	if (status & A3XX_INT0_RBBM_ME_MS_TIMEOUT)
++		dev_err_ratelimited(dev, "RBBM: ME master split timeout\n");
++	if (status & A3XX_INT0_RBBM_PFP_MS_TIMEOUT)
++		dev_err_ratelimited(dev, "RBBM: PFP master split timeout\n");
++	if (status & A3XX_INT0_RBBM_ATB_BUS_OVERFLOW)
++		dev_err_ratelimited(dev, "RBBM: ATB bus overflow\n");
++	if (status & A3XX_INT0_VFD_ERROR)
++		dev_err_ratelimited(dev, "VFD: out of bounds access\n");
++	if (status & A3XX_INT0_CP_T0_PACKET_IN_IB)
++		dev_err_ratelimited(dev, "CP: type 0 packet in IB\n");
++	if (status & A3XX_INT0_CP_OPCODE_ERROR)
++		dev_err_ratelimited(dev, "CP: opcode error\n");
++	if (status & A3XX_INT0_CP_RESERVED_BIT_ERROR)
++		dev_err_ratelimited(dev, "CP: reserved bit error\n");
++	if (status & A3XX_INT0_CP_HW_FAULT) {
++		reg = gpu_read(gpu, REG_A3XX_CP_HW_FAULT);
++		dev_err_ratelimited(dev, "CP | ringbuffer HW fault | status=%x\n",
++			reg);
++	}
++	if (status & A3XX_INT0_CP_REG_PROTECT_FAULT) {
++		reg = gpu_read(gpu, REG_A3XX_CP_PROTECT_STATUS);
++		dev_err_ratelimited(dev,
++			"CP | protected mode error | %s | addr=%x\n",
++			reg & BIT(24) ? "WRITE" : "READ",
++			(reg & 0x1ffff) >> 2);
++	}
++	if (status & A3XX_INT0_CP_AHB_ERROR_HALT)
++		dev_err_ratelimited(dev, "CP: AHB error halt\n");
++	if (status & A3XX_INT0_UCHE_OOB_ACCESS)
++		dev_err_ratelimited(dev, "UCHE: out of bounds access\n");
++}
++
+ static irqreturn_t a3xx_irq(struct msm_gpu *gpu)
+ {
+ 	uint32_t status;
+@@ -423,7 +477,7 @@
+ 	status = gpu_read(gpu, REG_A3XX_RBBM_INT_0_STATUS);
+ 	DBG("%s: %08x", gpu->name, status);
+ 
+-	// TODO
++	a3xx_report_errors(gpu, status);
+ 
+ 	gpu_write(gpu, REG_A3XX_RBBM_INT_CLEAR_CMD, status);
+ 

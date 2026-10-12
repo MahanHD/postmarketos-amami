@@ -3650,6 +3650,121 @@ the quirk, settle in camss), then the IMX132.
   to 00, the a330v1 value (v1's default is 0xbffcffff). kgsl rewrites the default only in
   its GMEM save and restore IBs and in its start sequence. Back on r206.
 
+### GPU hangs overnight: what the dumps share, 2026-10-12
+
+All runs are `tools/gpu-soak.sh` for 60 cycles, with `tools/devcore-collect.sh` saving
+every hang dump (they are under `work/devcore/` in the workspace).
+
+- The `HLSQ_CL_*` readback is validated: on r206 those registers read 0, on the fixup
+  kernels 0x00401101 and 0x400.
+- `0105` v3: the final `CP_REG_RMW` restores the chip's own `RBBM_CLOCK_CTL` bits
+  (`a3xx_rbbm_clock_ctl()`), and with the GPU busy it reads 0xaaaaaaaa again. Soak:
+  7 hangs and 13 hw_init idle timeouts (v2: 10 and 17).
+- v3 dumps fall into two groups. Three have `RBBM_CLOCK_CTL` 0xaaa9aaaa and
+  `RBBM_STATUS` 0xe1004003 (SP and HLSQ busy): the CP stopped inside the fixup,
+  between its first clock step and the restore. Three have 0x80004001 (only
+  `CP_NRT_BUSY`), a ring that is `CP_ME_INIT` plus one job with no fixup in front: the
+  hw_init whose ME_INIT timed out returned before arming it. These come right after a
+  recovery, which resets the GPU without cycling its GDSC, so registers such as
+  `HLSQ_CL_NDRANGE_0` keep their values.
+- Stock's device tree gives the oxili GX GDSC `qcom,retain-mem` and
+  `qcom,retain-periph`. Mainline's `gdsc_force_mem_on()` sets the same two CBCR bits
+  on `oxili_gfx3d_clk` while the GDSC is on and clears them before it goes off, so the
+  difference is only that stock keeps the GPU's memories through power collapse.
+- kgsl's CP_ME_INIT enables protected mode (`0x20000000` in its fifteenth dword); drm's
+  sends 0, so drm runs unprotected. The fixup wrapper copied from kgsl therefore
+  switched protection on for the rest of each power cycle. A v4 without the toggle is
+  prepared but not run.
+- `a3xx_irq()` ignored every error interrupt (`// TODO`). `0107` reports them the way
+  kgsl's `a3xx_err_callback()` does. Across a whole soak it reported nothing: no
+  protect fault, opcode error, AHB error or CP fault comes with any of these hangs.
+- r208 (r206 + `0107`, no fixup), soak started a minute after boot: **9 hangs** and 18
+  hw_init idle timeouts, at 1, 6, 8, 8, 16, 17, 19, 57 and 57 minutes. The v3 boot hung
+  at 1, 6, 10, 31, 42, 42 and 49. The r206 baseline (3 hangs) started almost two hours
+  after boot, so the earlier comparisons mixed conditions; hangs cluster in the first
+  twenty minutes. Kernels must be compared from the same point after boot.
+- What the hangs share: `HLSQ_BUSY` in every hang that is not a post-recovery chain,
+  on every kernel, with the CP in a wait for idle (`CP_WFI_PEND_CTR` 1) after reading
+  the whole IB. On r208 the Megapixels hangs are the first job after a power-on; the
+  Xorg ones are `CP_NRT_BUSY` chains after a recovery.
+- kgsl frames each a3xx submission with two things drm lacks: a UCHE invalidate on
+  every context switch (so on the first job after every power-on), and a dummy
+  `CP_SET_CONSTANT` "to trigger context rollover" after the timestamp, which
+  `a3xx_submit()` has under `#if 0`. `0108` adds both and forgets the current context
+  in hw_init.
+- r209 (r208 + `0108`), soak from a fresh boot: **6 hangs** and no hw_init idle
+  timeouts, at 16, 32, 32, 33, 37 and 52 minutes (four Xorg, two glxgears). No
+  Megapixels hang and no HLSQ type: every dump is `CP_NRT_BUSY` or VPC busy on the
+  first job after a power-on.
+- The same kernel from a fresh boot with GPU runtime PM pinned on
+  (`echo on > /sys/bus/platform/devices/fdb00000.gpu/power/control`), so the GPU never
+  powers down: **0 hangs** in 60 cycles, no dumps. Rendering itself is fine; what is
+  left is the power-up path.
+- Stock's gdsc driver (msm-3.4 `arch/arm/mach-msm/gdsc.c`) reads `qcom,retain-mem` as
+  "do not toggle memory": it sets bits 14 and 13 of `oxili_gfx3d_clk`'s CBCR at probe
+  and never clears them, so the GPU's memories are kept through every collapse. The
+  property is in Sony's stock tree only, not Lineage's. Read on the phone, CBCR
+  0x4028 is 0x6ff1 with the GPU on and 0x80000ff0 suspended: mainline drops both bits
+  on every runtime suspend. `0109` adds a `RETAIN_MEM_OFF` gdsc flag that leaves them
+  set and puts it on `oxili_gdsc`. r210 is r209 + `0109`. On the phone CBCR 0x4028 now
+  reads 0x80006ff0 with the GPU suspended.
+- r210 from a fresh boot: **4 hangs** (10, 28, 48, 57 min; two Xorg, one glxgears, one
+  Megapixels), no idle timeouts, no error interrupts. Within the noise of r209's 6, so
+  memory retention is not the cause, though it is what stock does and stays.
+- What the r210 dumps show: every one is the first job after a power-on (rptr 80). In
+  the glxgears one the job's first draw (a clear) finished, then a gear draw whose
+  vertex and fragment shaders had just been loaded with indirect `CP_LOAD_STATE` never
+  did; the CP sits in the wait for idle after it.
+- kgsl enables its power-on fixup "for all A3XX targets" and calls it "the power on
+  shader corruption fix", which is this symptom. Stock also collapses the GPU after 80
+  ms of idle (`qcom,strtstp-sleepwake`, so SLUMBER and a full `adreno_start` each
+  time), so it is exposed as often as we are.
+- r211 = r210 + `0105` v4 (the fixup without the protection toggle): **5 hangs** (3,
+  23, 28, 34, 54). All five dumps stop at the same place inside the fixup:
+  `RBBM_CLOCK_CTL` after its first step, every register the fixup writes before its
+  `CP_EXEC_CL` landed, the `SET_CONSTANT` after it did not, `CP_WFI_PEND_CTR` 4 and
+  `RBBM_STATUS` 0x80004001 (only the CP's non-real-time side busy). So with the fixup
+  the hang moves into the fixup's own compute dispatch, which never reaches HLSQ.
+- Stock's kgsl detaches the GPU's IOMMU in every stop and attaches it in every start,
+  and each attach reprograms the SMMU and writes twelve implementation defined BFB
+  registers (`qcom,iommu-bfb-regs`/`-data` in the `kgsl_iommu` node). Since the GPU
+  moved to arm-smmu (`0034`/`0035`) nothing writes them at all: the table only existed
+  for the old qcom_iommu path (`0025`/`0027`), and `0038` is not built. Sony's stock
+  values also differ from the Lineage ones `0025` copied (0x215c = 0, 0x220c = 0x20).
+  `0110` writes stock's table from the msm8974 reset hook, which arm-smmu runs at probe
+  and on every runtime resume. On r212 (r210 + `0110`) the twelve registers read back
+  stock's values after a resume.
+- r212 from a fresh boot: **3 hangs** (28, 32, 48 min; two Xorg, one Megapixels), all
+  three the first job after a power-on (rptr 80 or 96). Not a clear change from r210's
+  4. `0110` stays because it is what stock does, but it is not the fix.
+- The GPU and its SMMU are both in the `oxilicx` domain, so pinning only the SMMU
+  (`echo on > /sys/bus/platform/devices/fdb10000.iommu/power/control`) keeps both
+  GDSCs on while the GPU still runtime suspends: clocks off, then hw_init on the next
+  job. r212 from a fresh boot like that: **22 hangs in 5 cycles**, stopped there. The
+  dumps are the same kind as before: the first IB after hw_init (rptr 80), or the ring
+  stopped just after `CP_ME_INIT`. So the hang is not the power collapse. It is
+  coming back *without* one: the GPU keeps its state, and drm reloads the microcode
+  and sends `CP_ME_INIT` to a core that was never reset. Normally the SMMU suspends
+  20 ms after its last use and the GDSC collapses, but a GPU suspend and resume
+  that falls inside a burst of SMMU activity (buffer maps, as Megapixels and Xorg
+  do) skips the collapse, which matches how rarely and irregularly it happens and why
+  pinning the GPU itself gave none.
+- kgsl's `_adreno_start()` checks for exactly this: if the GX or CX GDSC is still
+  enabled at start it runs `a3xx_soft_reset()` (`RBBM_SW_RESET_CMD` 1, a read, 0)
+  before `a3xx_start()`. drm only resets in `a3xx_recover()`.
+- r213 (r212 + a reset at the start of every hw_init), SMMU pinned from a fresh boot:
+  **0 hangs in 10 cycles**, with the GPU runtime suspended for 183 s of it. It also
+  printed a devfreq `WARN_ON(busy_time > ~0LU)` a hundred times: the reset clears the
+  RBBM power counter `a3xx_gpu_busy()` reads, and devfreq takes its baseline in
+  `msm_gpu_pm_resume()`, before hw_init, so busy time ran backwards.
+- `0111` therefore resets in a3xx's own `pm_suspend`, before `msm_gpu_pm_suspend()`
+  gates the clocks (the shape upstream a5xx uses for its VBIF reset). The core is then
+  left the way a collapse would leave it whether or not the GDSCs collapse, and the
+  baseline taken at the next resume is consistent. A devfreq sample landing between
+  the reset and `msm_devfreq_suspend()` could still give one clamped sample; nothing
+  else follows from it. r214 is r212 + `0111`. SMMU pinned from a fresh boot: **0
+  hangs in 10 cycles**, no devfreq warnings.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

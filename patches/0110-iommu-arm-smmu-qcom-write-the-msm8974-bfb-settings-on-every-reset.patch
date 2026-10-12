@@ -1,0 +1,86 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] iommu/arm-smmu-qcom: write msm8974's BFB settings on every reset
+
+Downstream's msm_iommu-v1 writes a table of implementation defined
+registers (qcom,iommu-bfb-regs and -data) each time it programs an SMMU,
+and kgsl detaches and reattaches the GPU's SMMU in every stop and start,
+so on stock the GPU SMMU gets the table again after every power collapse.
+TrustZone does not own this SMMU, so nothing else writes it; with
+arm-smmu the GPU SMMU has never had these values.
+
+Add a reset hook to the msm8974 implementation that writes the table from
+the device tree, and give the GPU SMMU node the twelve values from the
+kgsl_iommu node of Sony's stock device tree. arm-smmu calls the hook at
+probe and on every runtime resume.
+
+---
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi	2026-10-12 07:41:26.768439919 +0400
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi	2026-10-12 07:41:26.822439976 +0400
+@@ -2663,6 +2663,17 @@
+ 			clock-names = "iface", "bus", "core";
+ 
+ 			power-domains = <&mmcc OXILICX_GDSC>;
++
++			/*
++			 * Implementation defined settings, verbatim from the
++			 * kgsl_iommu node of Sony's stock device tree.
++			 */
++			qcom,iommu-bfb-regs = <0x204c 0x2050 0x2514 0x2540
++					       0x256c 0x20ac 0x215c 0x220c
++					       0x2314 0x2394 0x2414 0x2008>;
++			qcom,iommu-bfb-data = <0x3 0x0 0x4 0x10
++					       0x0 0x0 0x0 0x20
++					       0x0 0x1 0x81 0x0>;
+ 		};
+ 
+ 		sram@fdd00000 {
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c	2026-10-12 07:41:26.762439913 +0400
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c	2026-10-12 07:41:26.820654016 +0400
+@@ -746,10 +746,47 @@
+ 			  reg & ~ARM_SMMU_SCTLR_AFE);
+ }
+ 
++/*
++ * Downstream's msm_iommu-v1 writes a table of implementation defined registers
++ * (qcom,iommu-bfb-regs and -data) every time it programs the SMMU, and kgsl
++ * detaches and reattaches the GPU's SMMU on every power cycle, so the table is
++ * rewritten after every power collapse. TrustZone does not own these SMMUs, so
++ * nothing else writes it. Do the same from the reset hook, which runs at probe
++ * and on every runtime resume.
++ */
++static int msm8974_smmu_reset(struct arm_smmu_device *smmu)
++{
++	struct device_node *np = smmu->dev->of_node;
++	int nregs, ndata, i;
++
++	nregs = of_property_count_u32_elems(np, "qcom,iommu-bfb-regs");
++	ndata = of_property_count_u32_elems(np, "qcom,iommu-bfb-data");
++	if (nregs <= 0 && ndata <= 0)
++		return 0;
++	if (nregs != ndata) {
++		dev_err_once(smmu->dev, "bfb regs/data length mismatch (%d vs %d)\n",
++			     nregs, ndata);
++		return -EINVAL;
++	}
++
++	for (i = 0; i < nregs; i++) {
++		u32 off, val;
++
++		of_property_read_u32_index(np, "qcom,iommu-bfb-regs", i, &off);
++		of_property_read_u32_index(np, "qcom,iommu-bfb-data", i, &val);
++		writel_relaxed(val, smmu->base + off);
++	}
++
++	dev_dbg(smmu->dev, "applied %d bfb settings\n", nregs);
++
++	return 0;
++}
++
+ static const struct arm_smmu_impl msm8974_smmu_impl = {
+ 	.init_context = qcom_smmu_init_context,
+ 	.cfg_probe = msm8974_smmu_cfg_probe,
+ 	.def_domain_type = qcom_smmu_def_domain_type,
++	.reset = msm8974_smmu_reset,
+ 	.write_s2cr = msm8974_smmu_write_s2cr,
+ 	.write_sctlr = msm8974_smmu_write_sctlr,
+ 	.tlb_sync = qcom_smmu_tlb_sync,
