@@ -19,13 +19,29 @@ left the way a collapse would leave it whether or not the GDSCs actually
 collapse. Doing it in hw_init would also work, but the reset clears the
 RBBM power counter that devfreq takes its baseline from in
 msm_gpu_pm_resume(), before hw_init runs, so busy time would go
-backwards on every resume.
+backwards on every resume. In pm_suspend devfreq is still sampling, so
+the reset and a new baseline happen under devfreq's lock; without that a
+sample landing in between tripped the busy_time WARN about once an hour.
+
+Recovery suspends the GPU through the same hook, so a3xx_recover() no
+longer resets it on its own.
 
 ---
 --- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 09:44:39.069647193 +0400
-+++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 10:03:55.058262597 +0400
-@@ -375,6 +375,13 @@
- 	return a3xx_me_init(gpu) ? 0 : -EINVAL;
++++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 18:07:31.415576611 +0400
+@@ -390,9 +390,7 @@
+ 	if (hang_debug)
+ 		a3xx_dump(gpu);
+ 
+-	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 1);
+-	gpu_read(gpu, REG_A3XX_RBBM_SW_RESET_CMD);
+-	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 0);
++	/* adreno_recover() suspends the GPU, and a3xx_pm_suspend() resets it */
+ 	adreno_recover(gpu);
+ }
+ 
+@@ -574,12 +572,42 @@
+ 	return ring->memptrs->rptr;
  }
  
 +static void a3xx_soft_reset(struct msm_gpu *gpu)
@@ -35,37 +51,31 @@ backwards on every resume.
 +	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 0);
 +}
 +
- static void a3xx_recover(struct msm_gpu *gpu)
- {
- 	int i;
-@@ -390,12 +397,23 @@
- 	if (hang_debug)
- 		a3xx_dump(gpu);
- 
--	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 1);
--	gpu_read(gpu, REG_A3XX_RBBM_SW_RESET_CMD);
--	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 0);
-+	a3xx_soft_reset(gpu);
- 	adreno_recover(gpu);
- }
- 
 +static int a3xx_pm_suspend(struct msm_gpu *gpu)
 +{
++	struct msm_gpu_devfreq *df = &gpu->devfreq;
++	unsigned long sample_rate;
++
 +	/*
 +	 * Runtime suspend only gates the clocks: the GDSCs collapse once the
 +	 * SMMU, which shares them, has suspended too, and when it has not the
 +	 * GPU comes back with its old state. Leave it reset, as a collapse
 +	 * would. kgsl does the same when it finds the regulator left on.
++	 *
++	 * The reset also clears the busy counter devfreq samples, and devfreq
++	 * is not suspended until msm_gpu_pm_suspend(). Take its baseline again
++	 * under its lock, so no sample sees the counter go backwards.
 +	 */
++	mutex_lock(&df->lock);
 +	a3xx_soft_reset(gpu);
++	df->busy_cycles = a3xx_gpu_busy(gpu, &sample_rate);
++	mutex_unlock(&df->lock);
 +
 +	return msm_gpu_pm_suspend(gpu);
 +}
 +
- static void a3xx_destroy(struct msm_gpu *gpu)
- {
- 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
-@@ -579,7 +597,7 @@
+ static const struct adreno_gpu_funcs funcs = {
+ 	.base = {
  		.get_param = adreno_get_param,
  		.set_param = adreno_set_param,
  		.hw_init = a3xx_hw_init,
