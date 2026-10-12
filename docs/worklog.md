@@ -3767,6 +3767,76 @@ every hang dump (they are under `work/devcore/` in the workspace).
 - r214 from a fresh boot, nothing pinned, 60 cycles: **0 hangs**, no idle timeouts, no
   warnings, no dumps, with the GPU runtime suspended for 837 s of the hour. The same
   test gave 3 to 9 on every kernel before it.
+- A second r214 soak, later boot: **0 hangs** again, but one devfreq busy_time WARN at
+  minute 56: the sample that lands between the reset and `msm_devfreq_suspend()`,
+  which the note above said could happen. Fixed in `0111` itself (r216): the reset and
+  a fresh baseline now happen under devfreq's lock. `a3xx_recover()` dropped its own
+  unlocked reset, since `adreno_recover()` goes through the same `pm_suspend`.
+
+### GPU recovery on purpose, 2026-10-12
+
+GPU item 5 was recovery failing for good after one hang (8 October, old Mesa, before
+`0111`). Real hangs are now too rare to study it, so `tools/gpu-hang-inject.py` makes
+them: a job that cannot finish, then a canary job from another file descriptor that
+writes one word, and whether that word lands.
+
+- The control (`none`) passes, so submits from Python work at all.
+- `wait` (the CP waits on memory for a value that never comes): 21 hangs, every one
+  detected, recovered, and followed by its canary in about 2 s. 20 more with the SMMU
+  pinned, so the soft reset was the only reset: all recovered.
+- `fault` (an IB at an unmapped address) does not hang at all. The SMMU is in terminate
+  mode, the fetch returns zeros, and the CP runs them as harmless register writes; the
+  canary lands in 20 ms. 21 faults, nothing left behind.
+- kgsl's `adreno_reset()` soft resets only for non-IOMMU-fault hangs and otherwise, or
+  when the soft reset does not bring the ring back, stops and starts the device (IOMMU
+  detached, GDSCs off) until it works. drm only soft resets, and logs "oh well?" if
+  hw_init then fails. That escalation is the one gap left on paper.
+- None of this reproduces the failure: the injected hangs stop the CP, while the hang
+  of 8 October was the 3D pipeline (HLSQ busy). An injector for pipeline hangs needs a
+  crafted draw.
+
+### The CPU to 1.5GHz, 2026-10-12
+
+- The earlier "PM8841 reads do not reach the PMIC" was the wrong SID. Its regulators are
+  on SID 5 (`/sys/kernel/debug/regmap/0-05`): HF SMPS at 0x1400 and 0x1a00, FT SMPS at
+  0x1700 and 0x1d00-0x2900. The voltage code at base+0x41 times 5mV gives (validated:
+  the same decode on pm8941 s2 gives the 2.15V its regulator reports) **VDD_APC (s5-s8)
+  900mV**, GFX (s4) 925mV, CX (s2) 1.02V.
+- Each Krait's ACC (0xf9088000 + n*0x10000) reads `APC_PWR_GATE_CTL` 0x403f3f7f: BHS on,
+  all segments, LDO bypassed and powered down. The cores run straight off the rail. The
+  L2 SAW holds 0x10003 at +0x1c, the value stock writes for all phases on.
+- Stock (`krait-regulator.c`) boots the rail at `CORE_VOLTAGE_BOOTUP` 900000, uses the
+  per-core LDO only below 850mV, and sets the rail through the L2 SAW
+  (`msm_spm_set_vdd()`, setpoint uV/5000). This device's PVS table needs 895mV at
+  1497.6MHz, so up to there the fixed rail meets stock's own voltage.
+- `0112` describes it in amami's dts: pm8841 s5 as `vdd_apc`, fixed at 900mV,
+  always on; `cpu-supply` on all four cores; the PVS voltages as
+  `opp-microvolt-speed2-pvs4-v0` with `<pvs pvs 1100000>`; OPPs up to 1497.6MHz. The
+  OPP core disables any rate the rail cannot give (checked in `_opp_add()`). The shared
+  dtsi keeps its 960MHz cap.
+- r216 (`0111` with the lock, `0112`): every core lists 300 to 1497.6MHz, s5 reads
+  900mV with four consumers asking 895-1100mV, and the PMU counts 1495MHz on a pinned
+  spinner. At 960MHz four loaded cores already reach 70C in a minute against the 75C
+  passive trip, so at 1.5GHz sustained load is up to thermal.
+- `tools/cpu-load-check.sh` hashes the same data on every core and compares against a
+  reference, logging frequencies and temperatures: a wrong sum is what an undervolted
+  core produces.
+- Control on r214 (960MHz cap), one minute, four cores: 0 wrong sums, 70C.
+- r216, ten minutes, four cores: **0 wrong sums**. Thermal held them at 73-77C by
+  stepping the clocks, so the four-core average was 880MHz; sustained all-core load is
+  thermally bound either way.
+- r216, one core for three minutes: held at **1497.6MHz the whole time**, 218 sums, 0
+  wrong, 69C. That is the case the voltage matters for, and it holds.
+
+### Megapixels' pink highlights, 2026-10-12
+
+The preview folds the white balance gains into its colour matrix, so the shader never
+sees a white balanced channel to clip: a saturated pixel, (1, 1, 1) from the sensor,
+went through the matrix as (red, 1, blue) and came out pink. The same bug libcamera's
+software ISP had (`recipe/libcamera` `0005`). `clip-after-white-balance.patch` clips
+each channel before the matrix at `(1 - black) / gain`, where its gain reaches full
+scale. Megapixels r3, installed on the phone; it runs on the new shader. Not yet seen
+against a bright light.
 
 ## Parked patches
 

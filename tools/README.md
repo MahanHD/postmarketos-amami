@@ -197,3 +197,16 @@ than the GPU's 66 ms autosuspend, so nearly every draw is the first job after a 
 Both run on the phone through `sudo systemd-run --uid=mahan`.
 `devcore-collect.sh` runs next to them as root (`sudo systemd-run --unit=devcore`) and
 saves every GPU hang dump to `~/devcore` before the kernel drops it five minutes later.
+
+`gpu-hang-inject.py [wait|fault|none] [rounds]` hangs the GPU on purpose and checks the
+recovery: each round submits a job that cannot finish (`wait`: the CP waits for a value
+that never comes; `fault`: it jumps to an unmapped address), then a canary job from a
+second file descriptor that writes one word, and reports whether the word landed. `none`
+is the control. It turns a recovery test into minutes instead of waiting for real hangs.
+To force the GPU to come back without a power collapse, as it did before `0111`, pin the
+SMMU on: `echo on > /sys/bus/platform/devices/fdb10000.iommu/power/control`.
+
+`cpu-load-check.sh [minutes]` loads every Krait core with a pinned worker that hashes the
+same data again and again and compares each sum with a reference; a wrong sum is what an
+undervolted core gives. Every 10 s it logs each core's clock and the CPU temperatures to
+`~/cpu-load-check.log`. Run it with `sudo systemd-run ~/cpu-load-check.sh 10`.

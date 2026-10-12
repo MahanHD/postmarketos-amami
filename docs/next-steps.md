@@ -5,8 +5,8 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-12)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 214, with the boot image
-from 214 (`uname -v` prints `#215`). `0105` (kgsl's power-on fixup) stays parked (GPU
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 216, with the boot image
+from 216 (`uname -v` prints `#217`). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r7 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libmegapixels
 r1 and Megapixels r2 (`recipe/libmegapixels`, `recipe/megapixels`), with
@@ -26,9 +26,10 @@ The camera loads at boot and works in GNOME Snapshot through libcamera and PipeW
 in Megapixels. `capture.sh` still works for raw frames; at night it needs `VBLANK=30000`,
 a long exposure and gain 240, or the frame is black.
 
-**Where to pick up:** the GPU list below. The hang after a GPU power-on has a fix,
-`0111` (item 4): 0 hangs in an hour-long fresh-boot soak on r214, against 3 to 9
-before. One more soak on a later boot would close it. Tests that
+**Where to pick up:** the GPU power-on hang is fixed (`0111`, item 4: two hour-long
+soaks on r214 with 0 hangs, against 3 to 9 before) and the CPU runs to 1.5 GHz
+(`0112`). Next: the CPU rail through the SAW for the rest of the ladder, a pipeline
+hang injector for GPU recovery, and the camera list. Tests that
 run long on the phone go through `sudo systemd-run`; a `nohup` over SSH is killed when
 the session closes.
 
@@ -66,11 +67,13 @@ Snapshot's cairo stopgap is gone.
    and the GDSCs always collapsed. `0107`-`0110` (error IRQs, kgsl framing, memory
    retention, BFB) did not change the rate and stay because stock does the same.
    Worklog: "GPU hangs overnight".
-5. GPU recovery can fail for good: after one hang at 21:39 (Xorg, still on the old Mesa)
-   every reset left the GPU unable to finish anything until a reboot. Earlier the same day
-   it recovered from dozens of hangs. Decode `work/mesa/stuck.devcore` and find out why.
-   Recovery also never collapses the GDSCs (the SMMU is active), so its soft reset is all
-   that resets the core; chains of hangs after one recovery point the same way.
+5. GPU recovery once failed for good (8 October, old Mesa, before `0111`).
+   `tools/gpu-hang-inject.py` now makes hangs on demand: 41 CP hangs (20 with the GDSCs
+   held on) and 21 IOMMU faults all recovered, and the faults do not even hang (the SMMU
+   terminates). Not reproduced, because those are CP hangs and the failure followed a
+   3D pipeline hang. Left: an injector for pipeline hangs (a crafted draw), and kgsl's
+   escalation, a full stop and start when a soft reset does not bring the ring back,
+   which drm lacks.
 6. Offer the Mesa fix upstream once the port is clean.
 
 ## Camera, rear (IMX200)
@@ -93,12 +96,17 @@ Snapshot's cairo stopgap is gone.
    group is the lead).
 6. **Stream reliability.** A stream after a failed one can still wedge camss.
 
-## CPU above 960 MHz
+## CPU above 1.5 GHz
 
-The chip is rated to 2.15 GHz (speed2-pvs4, table in `notes.md`), but more than 960 MHz
-needs Linux to drive VDD_APC, which stock does with its `krait-regulator` driver and
-PM8841. That driver has to be ported from Sony's kernel; raising the clock without it
-would under-volt the CPU.
+`0112` (r216) runs the cores to 1497.6 MHz: VDD_APC (pm8841 s5, SID 5) is readable and
+sits at 900 mV, which covers this bin's PVS voltage up to 1497.6 MHz (895 mV). The chip
+is rated to 2150.4 MHz at 1 V, and the rest needs Linux to set the rail. Stock does it
+through the L2 SAW (`msm_spm_set_vdd()`), so the route is mainline's `qcom,saw-reg`
+support in `qcom_spmi-regulator` with s5 as the SAW leader; check what SAW version that
+code expects against the L2 SAW here (0x20010000 at +0xfd0, SAW2 v2.1) before trusting
+it. Then widen s5's constraints and add the OPPs above 1497.6 MHz. Thermal already
+throttles four loaded cores at 1.5 GHz near 75 C, so sustained gains are modest;
+single-thread bursts gain most.
 
 ## Camera, front (IMX132)
 

@@ -23,7 +23,7 @@ that makes mainline do the same.
 | Charging, battery percentage and temperature | Work |
 | Sensors | Accelerometer, gyroscope, magnetometer, proximity and light all work |
 | Notification LED, vibrator | Work |
-| CPU frequency scaling (300-960 MHz) and thermal throttling | Works |
+| CPU frequency scaling (300-1497.6 MHz) and thermal throttling | Works |
 | GPU frequency scaling and throttling | Works |
 | CPU hotplug | Works |
 | Suspend | s2idle works; deep suspend works but saves nothing here |
@@ -111,6 +111,9 @@ data for features that are not worth their cost yet.
   frequency scaling for the first time.
 - `0022` gives each Krait core its own cpufreq policy. Sharing one dragged
   power-collapsed cores into every frequency change and wedged them.
+- `0112` describes the CPU rail (pm8841 s5, held at the 900mV the bootloader sets)
+  and gives each frequency this chip's stock voltage, which takes the cores from
+  960 MHz to 1497.6 MHz, the highest rate that voltage covers.
 - `0079`-`0081` make CPU hotplug work: the dying core collapses properly, is
   released again on the way back, and is allowed to leave the collapse loop.
 - `0072`-`0076` are the L2 SAW, the MPM wakeup controller and its routing. They
