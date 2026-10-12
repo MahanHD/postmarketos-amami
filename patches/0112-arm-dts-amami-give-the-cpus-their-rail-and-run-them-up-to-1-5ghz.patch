@@ -1,0 +1,163 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] arm: dts: amami: give the cpus their rail and run them up to 1.5GHz
+
+The Krait OPP table stops at 960MHz because nothing described VDD_APC,
+so no rate could be checked against the voltage it needs.
+
+VDD_APC is pm8841 s5, leading s6-s8, on SID 5. Its voltage register
+reads 0xb4, 900mV (the same decode gives pm8941 s2 2.15V, which its
+regulator reports). That is stock's CORE_VOLTAGE_BOOTUP, and all four
+cores' ACCs show BHS on with the LDO bypassed and powered down, so the
+cores run straight off it. The L2 SAW already holds stock's
+all-phases value (0x10003 at +0x1c).
+
+Describe s5 as vdd_apc, fixed at 900mV since nothing can drive it
+through the SAW yet, make it the cpus' supply, and give the OPPs this
+device's speed2-pvs4-v0 voltages from Sony's stock device tree. Up to
+1497.6MHz (895mV) the rail covers stock's own voltage for every rate,
+so the table now goes that far; the OPP core disables any rate the rail
+cannot give. All of it lives in amami's dts: the shared table keeps its
+960MHz cap for boards that describe no rail.
+
+---
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-12 17:21:21.919290050 +0400
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-12 17:23:47.825472902 +0400
+@@ -55,6 +55,138 @@
+ 	status = "okay";
+ };
+ 
++&cpu0 {
++	cpu-supply = <&vdd_apc>;
++};
++
++&cpu1 {
++	cpu-supply = <&vdd_apc>;
++};
++
++&cpu2 {
++	cpu-supply = <&vdd_apc>;
++};
++
++&cpu3 {
++	cpu-supply = <&vdd_apc>;
++};
++
++/*
++ * Voltages are qcom,speed2-pvs4-bin-v0 from Sony's stock device tree, the
++ * bin this device's fuses select (qcom-cpufreq-nvmem names it
++ * speed2-pvs4-v0). Each is the least the cores need at that rate: stock
++ * runs them in BHS mode, straight off VDD_APC, at these voltages. The
++ * OPP core drops any rate whose voltage vdd_apc cannot give. The ladder
++ * stops at 1497.6MHz (895mV), the last rate vdd_apc's fixed 900mV covers;
++ * the rest, up to 2150.4MHz at 1V, comes with control of the rail.
++ */
++&cpu_opp_table {
++	opp-300000000 {
++		opp-microvolt-speed2-pvs4-v0 = <775000 775000 1100000>;
++	};
++
++	opp-422400000 {
++		opp-microvolt-speed2-pvs4-v0 = <775000 775000 1100000>;
++	};
++
++	opp-499200000 {
++		opp-microvolt-speed2-pvs4-v0 = <775000 775000 1100000>;
++	};
++
++	opp-576000000 {
++		opp-microvolt-speed2-pvs4-v0 = <775000 775000 1100000>;
++	};
++
++	opp-652800000 {
++		opp-microvolt-speed2-pvs4-v0 = <780000 780000 1100000>;
++	};
++
++	opp-729600000 {
++		opp-microvolt-speed2-pvs4-v0 = <790000 790000 1100000>;
++	};
++
++	opp-806400000 {
++		opp-microvolt-speed2-pvs4-v0 = <800000 800000 1100000>;
++	};
++
++	opp-883200000 {
++		opp-microvolt-speed2-pvs4-v0 = <810000 810000 1100000>;
++	};
++
++	opp-960000000 {
++		opp-microvolt-speed2-pvs4-v0 = <820000 820000 1100000>;
++	};
++
++	opp-1036800000 {
++		opp-hz = /bits/ 64 <1036800000>;
++		opp-supported-hw = <0x4>;
++		clock-latency-ns = <100000>;
++		opp-microvolt-speed2-pvs4-v0 = <830000 830000 1100000>;
++	};
++
++	opp-1113600000 {
++		opp-hz = /bits/ 64 <1113600000>;
++		opp-supported-hw = <0x4>;
++		clock-latency-ns = <100000>;
++		opp-microvolt-speed2-pvs4-v0 = <840000 840000 1100000>;
++	};
++
++	opp-1190400000 {
++		opp-hz = /bits/ 64 <1190400000>;
++		opp-supported-hw = <0x4>;
++		clock-latency-ns = <100000>;
++		opp-microvolt-speed2-pvs4-v0 = <850000 850000 1100000>;
++	};
++
++	opp-1267200000 {
++		opp-hz = /bits/ 64 <1267200000>;
++		opp-supported-hw = <0x4>;
++		clock-latency-ns = <100000>;
++		opp-microvolt-speed2-pvs4-v0 = <860000 860000 1100000>;
++	};
++
++	opp-1344000000 {
++		opp-hz = /bits/ 64 <1344000000>;
++		opp-supported-hw = <0x4>;
++		clock-latency-ns = <100000>;
++		opp-microvolt-speed2-pvs4-v0 = <870000 870000 1100000>;
++	};
++
++	opp-1420800000 {
++		opp-hz = /bits/ 64 <1420800000>;
++		opp-supported-hw = <0x4>;
++		clock-latency-ns = <100000>;
++		opp-microvolt-speed2-pvs4-v0 = <880000 880000 1100000>;
++	};
++
++	opp-1497600000 {
++		opp-hz = /bits/ 64 <1497600000>;
++		opp-supported-hw = <0x4>;
++		clock-latency-ns = <100000>;
++		opp-microvolt-speed2-pvs4-v0 = <895000 895000 1100000>;
++	};
++};
++
++&pm8841_1 {
++	regulators {
++		compatible = "qcom,pm8841-regulators";
++
++		/*
++		 * VDD_APC, the Krait rail: s5 leads s6-s8. Stock sets it through
++		 * the L2 SAW (msm_spm_set_vdd()); nothing here can do that yet,
++		 * so it is held at the 900mV the bootloader leaves it at
++		 * (CORE_VOLTAGE_BOOTUP in stock's krait-regulator.c, and what
++		 * its voltage register reads).
++		 */
++		vdd_apc: s5 {
++			regulator-min-microvolt = <900000>;
++			regulator-max-microvolt = <900000>;
++			regulator-always-on;
++			regulator-boot-on;
++		};
++	};
++};
++
+ &mdss {
+ 	status = "okay";
+ };
