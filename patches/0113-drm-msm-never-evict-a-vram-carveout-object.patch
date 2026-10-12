@@ -1,0 +1,56 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] drm/msm: never evict a VRAM carveout object
+
+Without an IOMMU for the display every buffer is a VRAM carveout object,
+and these have no shmem file behind them. Under memory pressure, or a
+drop_caches, the shrinker still evicted WILLNEED ones: msm_gem_evict()
+put_pages() hands the range back to the carveout, and the next use gets
+a new range, cleared, with nothing swapped back in. A shader or state
+buffer of Xorg's turned into zeros, and every job using it hung the GPU
+from then on, every recovery included, until Xorg was restarted: on
+this phone, every redraw of the panel clock.
+
+Reproduced on demand: echo 2000 > /sys/kernel/debug/dri/0/shrink, and
+Xorg hangs once a minute from then on; restarting Xorg stops it.
+
+Make carveout objects unevictable, and keep the WILLNEED ones on the
+pinned LRU, so the shrinker no longer counts them as reclaimable.
+DONTNEED ones stay purgeable.
+
+---
+--- a/drivers/gpu/drm/msm/msm_gem.c	2026-10-12 23:11:55.888486832 +0400
++++ b/drivers/gpu/drm/msm/msm_gem.c	2026-10-12 23:12:06.385626100 +0400
+@@ -102,7 +102,15 @@
+ 	if (msm_obj->pin_count) {
+ 		drm_gem_lru_move_tail_locked(&priv->lru.pinned, obj);
+ 	} else if (msm_obj->madv == MSM_MADV_WILLNEED) {
+-		drm_gem_lru_move_tail_locked(&priv->lru.willneed, obj);
++		/*
++		 * A carveout object cannot be evicted, so keep it off the list
++		 * the shrinker counts as reclaimable. It can still be purged
++		 * once it is DONTNEED.
++		 */
++		if (obj->filp)
++			drm_gem_lru_move_tail_locked(&priv->lru.willneed, obj);
++		else
++			drm_gem_lru_move_tail_locked(&priv->lru.pinned, obj);
+ 	} else {
+ 		GEM_WARN_ON(msm_obj->madv != MSM_MADV_DONTNEED);
+ 
+--- a/drivers/gpu/drm/msm/msm_gem.h	2026-10-12 23:11:20.613469356 +0400
++++ b/drivers/gpu/drm/msm/msm_gem.h	2026-10-12 23:11:20.663720767 +0400
+@@ -269,9 +269,13 @@
+ 	return (msm_obj->vmap_count == 0) && msm_obj->vaddr;
+ }
+ 
++/*
++ * A VRAM carveout object has no shmem file to swap its pages out to:
++ * evicting it hands its range back to the carveout and loses the contents.
++ */
+ static inline bool is_unevictable(struct msm_gem_object *msm_obj)
+ {
+-	return is_unpurgeable(msm_obj) || msm_obj->vaddr;
++	return is_unpurgeable(msm_obj) || msm_obj->vaddr || !msm_obj->base.filp;
+ }
+ 
+ void msm_gem_purge(struct drm_gem_object *obj);

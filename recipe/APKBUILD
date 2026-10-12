@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=217
+pkgrel=218
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -125,6 +125,7 @@ source="
 	0110-iommu-arm-smmu-qcom-write-the-msm8974-bfb-settings-on-every-reset.patch
 	0111-drm-msm-a3xx-soft-reset-the-gpu-before-runtime-suspend.patch
 	0112-arm-dts-amami-give-the-cpus-their-rail-and-run-them-up-to-1-5ghz.patch
+	0113-drm-msm-never-evict-a-vram-carveout-object.patch
 	9006-debug-camss-allow-arm32-bringup.patch
 	9007-debug-amami-describe-the-front-camera.patch
 	9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
@@ -263,6 +264,7 @@ a86fd4730caa19de47dea5e6d6c743d6de8a6a97b941f2cec648b144feee8bdaf4cf9fae5622371c
 4a4c1790da7b104fdadbc2567d6bbe270c2223cdd268c1056a420f82947dd68d3ee80b3ffdd35aae6565c41f66db409c99fb693d5a0a3617592de988b1392bb7  0110-iommu-arm-smmu-qcom-write-the-msm8974-bfb-settings-on-every-reset.patch
 99756fc629bf6972857d1038a55545cb2c9f0bbf29c497502255ab5df0a89aa9272e0f806deae30e519899604ae15825e7fcf4419feac63a3bc6fabb880c5b1c  0111-drm-msm-a3xx-soft-reset-the-gpu-before-runtime-suspend.patch
 62da61579d6ac5de5beedcd88c74f19853c0af0f45ff7c517e842feb5ce69964494ff0c5c35d0d1d69efaa5b72b7999cef38eeb88d493d77d1554fcb3e8ba172  0112-arm-dts-amami-give-the-cpus-their-rail-and-run-them-up-to-1-5ghz.patch
+b94aa35c909e93302ca0d0f9e15c6d8b91c44a57f8e73cf861f56cd94f7f449fca0104ca984d347a87157cea3b16f09d00ae41d24b32f445cb1be19a3861e93e  0113-drm-msm-never-evict-a-vram-carveout-object.patch
 33d0a8c71b69ccf92e17f7ddaf27baa00c6fb5045533847f87cd9d7a22cce83017388e4c409dd275c4a0ad1594db169791dff0c54b52fc92d46cad5b806960e4  9006-debug-camss-allow-arm32-bringup.patch
 5ca89212cb516c0b6319e8bdfc2aecdce9f1fe5dd9cb8f1d04175530268990d87a7e8a5f38db5a623dd549012dc7d55c61bc87cab792b6bdb24279567a2dc469  9007-debug-amami-describe-the-front-camera.patch
 4c5f60e1629f4a8b84338ecc96ec35cb6588aaef916a2bc4c61dafcece1cc62c9e99e40bf33155188e89e27f60e30f7630e6317facac4aa69cc45a99ea9d0dcb  9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
