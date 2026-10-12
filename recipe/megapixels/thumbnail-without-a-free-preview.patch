@@ -1,0 +1,90 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] process_pipeline: make the last thumbnail without a free preview
+
+Taking a photo aborted with "Assertion failed: thumb" in process_image().
+The thumbnail of a burst is read back from the preview buffer its last
+frame is rendered into, but process_image_for_preview() gives up when
+none of its four output buffers is free. Each one stays referenced until
+the main thread draws it, and around the switch to the capture mode the
+main thread falls behind, so at full resolution all four can be taken
+when the last frame arrives.
+
+Skip only the preview in that case. For the last capture, render the
+frame into a texture of its own, read the thumbnail back from it and
+delete it.
+
+---
+--- a/src/process_pipeline.c	2026-10-12 19:35:15.121541701 +0400
++++ b/src/process_pipeline.c	2026-10-12 19:35:15.142735283 +0400
+@@ -669,10 +669,32 @@
+                 }
+         }
+ 
++        /*
++         * The main thread holds a reference to every preview it has not drawn
++         * yet, and when it falls behind, as it does around the switch to the
++         * capture mode, all of them can be taken. Skip the preview then, but
++         * not the thumbnail of the last capture, which process_image() needs:
++         * render that frame into a texture of its own.
++         */
++        GLuint thumb_texture = 0;
+         if (output_buffer == NULL) {
+-                return NULL;
++                if (state_proc.captures_remaining != 1) {
++                        return NULL;
++                }
++
++                glGenTextures(1, &thumb_texture);
++                glBindTexture(GL_TEXTURE_2D, thumb_texture);
++                glTexImage2D(GL_TEXTURE_2D,
++                             0,
++                             GL_RGBA,
++                             output_buffer_width,
++                             output_buffer_height,
++                             0,
++                             GL_RGBA,
++                             GL_UNSIGNED_BYTE,
++                             NULL);
++                check_gl();
+         }
+-        assert(output_buffer != NULL);
+ 
+ #ifdef RENDERDOC
+         if (rdoc_api) {
+@@ -721,8 +743,10 @@
+         }
+         check_gl();
+ 
+-        gles2_debayer_process(
+-                gles2_debayer, output_buffer->texture_id, input_texture);
++        gles2_debayer_process(gles2_debayer,
++                              output_buffer ? output_buffer->texture_id :
++                                              thumb_texture,
++                              input_texture);
+         check_gl();
+ 
+         glFinish();
+@@ -741,8 +765,10 @@
+         }
+ #endif
+ 
+-        mp_process_pipeline_buffer_ref(output_buffer);
+-        mp_main_set_preview(output_buffer);
++        if (output_buffer) {
++                mp_process_pipeline_buffer_ref(output_buffer);
++                mp_main_set_preview(output_buffer);
++        }
+ 
+         if (framecounter++ == 2) {
+                 framecounter = 0;
+@@ -789,6 +815,10 @@
+                                                        sizeof(uint32_t));
+         }
+ 
++        if (thumb_texture) {
++                glDeleteTextures(1, &thumb_texture);
++        }
++
+         return thumb;
+ }
+ 
