@@ -1,0 +1,95 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] gles2_debayer: clip after white balance
+
+The preview folds the white balance gains into the colour matrix, so the
+shader never sees the white balanced value of a channel and cannot clip
+it. A saturated pixel, (1, 1, 1) on the sensor, leaves white balance as
+(red, 1, blue), and the matrix turns that pink: every clipped highlight,
+a lamp or a bright window, came out pink instead of white.
+
+Clip each channel before the matrix at the level its gain takes to full
+scale, as an ISP clips after white balance. A saturated pixel then
+leaves white balance neutral and stays white. libcamera's software ISP
+had the same bug and gets the same fix in recipe/libcamera.
+
+---
+--- a/data/debayer.frag	2026-10-12 17:20:45.984941685 +0400
++++ b/data/debayer.frag	2026-10-12 17:24:07.456744074 +0400
+@@ -6,6 +6,7 @@
+ uniform mat3 color_matrix;
+ uniform float inv_gamma;
+ uniform float blacklevel;
++uniform vec3 clip_level;
+ 
+ varying vec2 top_left_uv;
+ varying vec2 top_right_uv;
+@@ -34,6 +35,9 @@
+     #endif
+ 
+     color -= blacklevel;
++    // Clip where white balance takes each channel past full scale, as
++    // an ISP does, so saturated areas stay white through the matrix
++    color = min(color, clip_level);
+     color *= color_matrix;
+ 
+     vec3 gamma_color = pow(color, vec3(inv_gamma));
+--- a/data/debayer_packed.frag	2026-10-12 17:20:45.984941685 +0400
++++ b/data/debayer_packed.frag	2026-10-12 17:24:07.456862394 +0400
+@@ -8,6 +8,7 @@
+ uniform mat3 color_matrix;
+ uniform float inv_gamma;
+ uniform float blacklevel;
++uniform vec3 clip_level;
+ uniform float row_length;
+ uniform float padding_ratio;
+ 
+@@ -52,6 +53,9 @@
+     #endif
+ 
+     color -= blacklevel;
++    // Clip where white balance takes each channel past full scale, as
++    // an ISP does, so saturated areas stay white through the matrix
++    color = min(color, clip_level);
+     color *= color_matrix;
+ 
+     vec3 gamma_color = pow(color, vec3(inv_gamma));
+--- a/src/gles2_debayer.c	2026-10-12 17:20:45.996688804 +0400
++++ b/src/gles2_debayer.c	2026-10-12 17:24:07.457107918 +0400
+@@ -130,6 +130,7 @@
+                 glGetUniformLocation(self->program, "color_matrix");
+         self->uniform_inv_gamma = glGetUniformLocation(self->program, "inv_gamma");
+         self->uniform_blacklevel = glGetUniformLocation(self->program, "blacklevel");
++        self->uniform_clip_level = glGetUniformLocation(self->program, "clip_level");
+         if (libmegapixels_format_bits_per_pixel(self->format) == 10)
+                 self->uniform_row_length =
+                         glGetUniformLocation(self->program, "row_length");
+@@ -198,6 +199,19 @@
+ 
+         glUniform1f(self->uniform_blacklevel, blacklevel);
+         check_gl();
++
++        /*
++         * The white balance gains are folded into the colour matrix, so a
++         * saturated pixel, (1, 1, 1) on the sensor, would leave it as
++         * (red, 1, blue) and turn pink. Clip each channel where its gain
++         * would take it past full scale instead.
++         */
++        float full = 1.0f - blacklevel;
++        float gain_r = self->forward_matrix[0] && red > 1.0f ? red : 1.0f;
++        float gain_b = self->forward_matrix[0] && blue > 1.0f ? blue : 1.0f;
++        glUniform3f(self->uniform_clip_level,
++                    full / gain_r, full, full / gain_b);
++        check_gl();
+ }
+ 
+ void
+--- a/src/gles2_debayer.h	2026-10-12 17:20:45.986031218 +0400
++++ b/src/gles2_debayer.h	2026-10-12 17:24:07.456965217 +0400
+@@ -27,6 +27,7 @@
+         GLint uniform_row_length;
+         GLint uniform_inv_gamma;
+         GLint uniform_blacklevel;
++        GLint uniform_clip_level;
+ 
+         GLuint quad;
+ } GLES2Debayer;
