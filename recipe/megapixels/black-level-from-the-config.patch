@@ -1,0 +1,96 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] use the camera's black level
+
+Megapixels guessed the black level from the preview, nudging it until a
+few percent of the pixels were black, and never stored it in the DNG. On
+the IMX200 (pedestal 64 of 1023) the guess overshot in dim scenes and ate
+most of the blue channel, so auto white balance gave blue about 3.7
+times the gain, and the photo, without a BlackLevel tag, kept the
+pedestal as light: dark, with every shadow coloured by the gains.
+
+When the camera config has a BlackLevel (recipe/libmegapixels), start
+from it, stop guessing, and write it to the DNG at the raw bit depth.
+The preview also scales full scale back to 1 after taking it off, as
+DNG converters do, so the preview, its statistics and the photo agree on
+brightness; the white balance clip is then simply 1 / gain.
+
+---
+--- a/data/debayer.frag	2026-10-12 23:48:48.105223788 +0400
++++ b/data/debayer.frag	2026-10-12 23:48:48.128888459 +0400
+@@ -34,7 +34,8 @@
+     vec3 color = vec3(samples.x, (samples.y + samples.z) / 2.0, samples.w);
+     #endif
+ 
+-    color -= blacklevel;
++    // Zero light to 0, full scale back to 1
++    color = (color - blacklevel) / (1.0 - blacklevel);
+     // Clip where white balance takes each channel past full scale, as
+     // an ISP does, so saturated areas stay white through the matrix
+     color = min(color, clip_level);
+--- a/data/debayer_packed.frag	2026-10-12 23:48:48.105223788 +0400
++++ b/data/debayer_packed.frag	2026-10-12 23:48:48.128986880 +0400
+@@ -52,7 +52,8 @@
+     vec3 color = vec3(samples.x, (samples.y + samples.z) / 2.0, samples.w);
+     #endif
+ 
+-    color -= blacklevel;
++    // Zero light to 0, full scale back to 1
++    color = (color - blacklevel) / (1.0 - blacklevel);
+     // Clip where white balance takes each channel past full scale, as
+     // an ISP does, so saturated areas stay white through the matrix
+     color = min(color, clip_level);
+--- a/src/gles2_debayer.c	2026-10-12 23:48:48.106873606 +0400
++++ b/src/gles2_debayer.c	2026-10-12 23:48:48.129552989 +0400
+@@ -204,13 +204,12 @@
+          * The white balance gains are folded into the colour matrix, so a
+          * saturated pixel, (1, 1, 1) on the sensor, would leave it as
+          * (red, 1, blue) and turn pink. Clip each channel where its gain
+-         * would take it past full scale instead.
++         * would take it past full scale instead. The shader has already
++         * scaled full scale to 1 when it took the black level off.
+          */
+-        float full = 1.0f - blacklevel;
+         float gain_r = self->forward_matrix[0] && red > 1.0f ? red : 1.0f;
+         float gain_b = self->forward_matrix[0] && blue > 1.0f ? blue : 1.0f;
+-        glUniform3f(self->uniform_clip_level,
+-                    full / gain_r, full, full / gain_b);
++        glUniform3f(self->uniform_clip_level, 1.0f / gain_r, 1.0f, 1.0f / gain_b);
+         check_gl();
+ }
+ 
+--- a/src/process_pipeline.c	2026-10-12 23:48:48.106873606 +0400
++++ b/src/process_pipeline.c	2026-10-12 23:48:48.128538272 +0400
+@@ -564,8 +564,11 @@
+         libmegapixels_aaa_software_statistics(
+                 &state_proc.stats, center, width, height);
+ 
+-        state_proc.blacklevel -= (float)state_proc.stats.blacklevel * 0.001f;
+-        state_proc.blacklevel = clamp_float(state_proc.blacklevel, 0.0f, 0.07f);
++        /* Without a configured black level, guess one from the preview */
++        if (!state_proc.camera->black_level) {
++                state_proc.blacklevel -= (float)state_proc.stats.blacklevel * 0.001f;
++                state_proc.blacklevel = clamp_float(state_proc.blacklevel, 0.0f, 0.07f);
++        }
+ 
+ 	if (auto_focus) {
+ 		struct focus_stats stats;
+@@ -1157,6 +1160,10 @@
+                                   state_proc.balance[0],
+                                   state_proc.balance[1],
+                                   state_proc.balance[2]);
++        if (state_proc.camera->black_level) {
++                int bits = libmegapixels_format_bits_per_pixel(state_proc.mode->format);
++                libdng_set_black_level(&dng, state_proc.camera->black_level >> (16 - bits));
++        }
+ 
+         if (!state_proc.exposure.manual) {
+                 libdng_set_exposure_program(&dng, LIBDNG_EXPOSUREPROGRAM_NORMAL);
+@@ -1644,7 +1651,7 @@
+                  * mode change too, so a photo, which switches to the capture
+                  * mode, was taken with no white balance at all.
+                  */
+-                state_proc.blacklevel = 0.0f;
++                state_proc.blacklevel = state_proc.camera->black_level / 65536.0f;
+                 state_proc.red = 1.0f;
+                 state_proc.blue = 1.0f;
+ 

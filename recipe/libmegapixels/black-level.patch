@@ -1,0 +1,47 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] read a BlackLevel per camera
+
+Nothing told an application the sensor's black level, so Megapixels
+guessed one from the preview, nudging it until a few percent of pixels
+were black. That number depends on the scene: in a dim one it overshot
+the IMX200's real pedestal of 64 and ate most of the blue channel's
+signal, which drove auto white balance to three times too much blue gain.
+
+Add an optional BlackLevel key to the camera section, on the 16-bit scale
+libcamera's tuning files use, appended to libmegapixels_camera.
+
+---
+--- a/docs/config.rst	2026-10-12 23:47:34.111548953 +0400
++++ b/docs/config.rst	2026-10-12 23:47:48.259770401 +0400
+@@ -95,6 +95,9 @@
+ * :code:`FlashPath`: optional, defines the path to a LED device to use as the flash for this camera.
+ * :code:`FlashDisplay`: optional, defines that there is no LED that can be used as flash, use the display as the
+   light-source instead.
++* :code:`BlackLevel`: optional, the raw value of zero light (the sensor's pedestal) on a 16-bit scale, the way
++  libcamera's tuning files give it: 4096 for a 10-bit sensor whose pedestal is 64. Applications subtract it before
++  white balance and store it in DNG files.
+ 
+ The camera section requires a :code:`SensorDriver` and :code:`BridgeDriver` key. The BridgeDriver will identify the bridge device (eg.
+ /dev/video0) and media device (eg. /dev/media0). This combination should uniquely identify a single camera on the device.
+--- a/include/libmegapixels.h	2026-10-12 23:47:34.111754123 +0400
++++ b/include/libmegapixels.h	2026-10-12 23:47:48.259401535 +0400
+@@ -105,6 +105,9 @@
+ 
+ 		int num_handles;
+ 		libmegapixels_subdev **handles;
++
++		// Raw value of zero light on a 16-bit scale, 0 when not configured
++		int black_level;
+ };
+ typedef struct _lmp_camera libmegapixels_camera;
+ 
+--- a/src/parse.c	2026-10-12 23:47:34.111814636 +0400
++++ b/src/parse.c	2026-10-12 23:47:48.259596143 +0400
+@@ -253,6 +253,7 @@
+ 	camera->name = strdup(name);
+ 	camera->sensor_name = strdup(sensor_driver);
+ 	camera->bridge_name = strdup(bridge_driver);
++	config_setting_lookup_int(root, "BlackLevel", &camera->black_level);
+ 	config->cameras = realloc(config->cameras, (config->count + 1) * sizeof(config->cameras));
+ 	if (config->cameras == NULL) {
+ 		return -1;

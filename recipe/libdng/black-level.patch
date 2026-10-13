@@ -1,0 +1,118 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] add libdng_set_black_level()
+
+There was no way to store the black level, so DNGs from Megapixels had
+no BlackLevel tag and converters took the sensor's pedestal (64 on a
+10-bit Sony sensor) for light. In a dim scene that is most of the
+signal: the white balance gains multiply it, and every dark area takes
+the colour of the strongest gain.
+
+Add libdng_set_black_level(), stored at the end of libdng_info, written
+as BlackLevel in the raw image's IFD when it is set, and read back by
+libdng_read().
+
+---
+--- n/docs/api.rst	2026-10-12 23:47:16.635394516 +0400
++++ b/docs/api.rst	2026-10-12 23:46:56.220840147 +0400
+@@ -337,6 +337,30 @@
+ - TIFFTAG_ANALOGBALANCE
+ 
+ 
++.. _set_black_level:
++
++int libdng_set_black_level(libdng_info \*dng, uint32_t level)
++^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
++
++Set the raw value of zero light, in the units of the raw data: 64 for a 10-bit
++sensor with the usual pedestal. DNG processing software subtracts it before
++white balance; without it the pedestal is taken for light and dark areas pick up
++the colour of the white balance gains. 0, the default, leaves the tag out.
++
++.. code-block:: c
++
++   libdng_info dng = {0};
++   libdng_new(&dng);
++
++   libdng_set_black_level(&dng, 64);
++
++   libdng_free(&dng);
++
++Affected tags:
++
++- TIFFTAG_BLACKLEVEL
++
++
+ .. _load_calibration_file:
+ 
+ int libdng_load_calibration_file(libdng_info \*dng, const char \*path)
+--- n/include/libdng.h	2026-10-12 23:47:16.618617136 +0400
++++ b/include/libdng.h	2026-10-12 23:45:55.131692671 +0400
+@@ -57,6 +57,9 @@
+ 
+ 		// v4l2 bytesperline in case it's weird
+ 		unsigned int stride;
++
++		// Raw value of zero light, in raw units
++		uint32_t blacklevel;
+ } libdng_info;
+ 
+ #define LIBDNG_ORIENTATION_TOPLEFT 1
+@@ -137,6 +140,9 @@
+ libdng_set_analog_balance(libdng_info *dng, float red, float green, float blue);
+ 
+ EXPORT int
++libdng_set_black_level(libdng_info *dng, uint32_t level);
++
++EXPORT int
+ libdng_load_calibration_file(libdng_info *dng, const char *path);
+ 
+ EXPORT int
+--- n/src/libdng.c	2026-10-12 23:47:16.635059865 +0400
++++ b/src/libdng.c	2026-10-12 23:46:56.220601815 +0400
+@@ -62,6 +62,8 @@
+ 	dng->analogbalance[1] = 1.0f;
+ 	dng->analogbalance[2] = 1.0f;
+ 
++	dng->blacklevel = 0;
++
+ 	dng->exposure_time = 0.0f;
+ 	dng->iso = 0;
+ 	dng->fnumber = 0.0f;
+@@ -214,6 +216,16 @@
+ }
+ 
+ int
++libdng_set_black_level(libdng_info *dng, uint32_t level)
++{
++	if (dng == NULL)
++		return 0;
++
++	dng->blacklevel = level;
++	return 1;
++}
++
++int
+ libdng_set_exposure_program(libdng_info *dng, uint16_t mode)
+ {
+ 	if (dng == NULL)
+@@ -542,6 +554,10 @@
+ 	TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, dng->bit_depth);
+ 	TIFFSetField(tif, DNGTAG_CFAPATTERN, 4, dng->cfapattern);
+ 	TIFFSetField(tif, DNGTAG_WHITELEVEL, 1, &dng->whitelevel);
++	if (dng->blacklevel) {
++		float blacklevel = (float) dng->blacklevel;
++		TIFFSetField(tif, DNGTAG_BLACKLEVEL, 1, &blacklevel);
++	}
+ 
+ 	unsigned int stride = dng->stride;
+ 	for (int row = 0; row < height; row++) {
+@@ -707,6 +723,9 @@
+ 	} else {
+ 		dng->whitelevel = (1 << dng->bit_depth) - 1;
+ 	}
++	if (TIFFGetField(tif, DNGTAG_BLACKLEVEL, &count, &fvalues) == 1 && count > 0) {
++		dng->blacklevel = (uint32_t) (fvalues[0] + 0.5f);
++	}
+ 	if (TIFFGetField(tif, DNGTAG_CFAPATTERN, &count, &u8values) == 1) {
+ 		if (count > 4) {
+ 			fprintf(stderr, "overflow in CFAPATTERN length %d > 4\n", count);

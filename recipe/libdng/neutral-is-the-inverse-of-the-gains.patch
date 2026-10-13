@@ -1,0 +1,61 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] write the inverse of the white balance gains as AsShotNeutral
+
+libdng_set_neutral() and makedng --neutral take white balance gains, as
+the API docs and the man page say, and Megapixels passes its gains. But
+they were written to AsShotNeutral as they are, and AsShotNeutral is the
+raw value of a neutral colour: the inverse of the gains. A DNG converter
+then applied the white balance the wrong way round, and photos came out
+with the opposite colour cast, doubled.
+
+Write gain[green] / gain[i], and convert back the same way when reading,
+so the API keeps meaning gains in both directions. Reading also no longer
+copies more than three values into neutral[3].
+
+---
+--- a/docs/api.rst	2025-11-11 03:01:35.000000000 +0400
++++ n/docs/api.rst	2026-10-12 23:47:16.635394516 +0400
+@@ -300,6 +300,9 @@
+ 
+    libdng_free(&dng);
+ 
++The DNG stores the inverse of these gains, the raw value of a neutral colour,
++in AsShotNeutral; libdng converts both ways.
++
+ Affected tags:
+ 
+ - TIFFTAG_ASSHOTNEUTRAL
+--- a/src/libdng.c	2025-11-11 03:01:35.000000000 +0400
++++ n/src/libdng.c	2026-10-12 23:47:16.635059865 +0400
+@@ -456,7 +456,16 @@
+ 		TIFFSetField(tif, DNGTAG_FORWARD_MATRIX_1, 9, dng->forward_matrix_1);
+ 	if(!is_empty_matrix(dng->forward_matrix_2))
+ 		TIFFSetField(tif, DNGTAG_FORWARD_MATRIX_2, 9, dng->forward_matrix_2);
+-	TIFFSetField(tif, DNGTAG_ASSHOTNEUTRAL, 3, dng->neutral);
++	/*
++	 * dng->neutral holds white balance gains, as libdng_set_neutral()
++	 * documents. AsShotNeutral is the raw value of a neutral colour, which
++	 * is the inverse of those gains.
++	 */
++	float as_shot_neutral[3];
++	for (int i = 0; i < 3; i++) {
++		as_shot_neutral[i] = dng->neutral[i] > 0.0f ? dng->neutral[1] / dng->neutral[i] : 1.0f;
++	}
++	TIFFSetField(tif, DNGTAG_ASSHOTNEUTRAL, 3, as_shot_neutral);
+ 	TIFFSetField(tif, DNGTAG_ANALOGBALANCE, 3, dng->analogbalance);
+ 
+ 	if (dng->camera_make != NULL)
+@@ -627,9 +636,10 @@
+ 	}
+ 	TIFFGetField(tif, TIFFTAG_ORIENTATION, &dng->orientation);
+ 
+-	if (TIFFGetField(tif, DNGTAG_ASSHOTNEUTRAL, &count, &fvalues) == 1) {
+-		for (int i = 0; i < count; i++) {
+-			dng->neutral[i] = fvalues[i];
++	if (TIFFGetField(tif, DNGTAG_ASSHOTNEUTRAL, &count, &fvalues) == 1 && count == 3) {
++		/* Back from the raw value of neutral to gains */
++		for (int i = 0; i < 3; i++) {
++			dng->neutral[i] = fvalues[i] > 0.0f ? fvalues[1] / fvalues[i] : 1.0f;
+ 		}
+ 	}
+ 	if (TIFFGetField(tif, DNGTAG_ANALOGBALANCE, &count, &fvalues) == 1) {
