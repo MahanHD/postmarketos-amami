@@ -1364,9 +1364,24 @@ register tables. Things it had to learn:
   frames still come out at full size or change mode part way through: up to the fifth,
   measured on the fade test pattern with `tools/camera/rowwatch.c`. Before `0116` the VFE
   wrote those past the end of the buffer, which is what "restarting the stream reset the
-  phone" was. Since r228 the driver reports 5 through `g_skip_frames`, and camss drops
-  them with the write masters' frame-drop pattern, so none reaches a buffer; `0116` stays
-  as the bound for any oversized frame.
+  phone" was. The driver reports how many to drop through `g_skip_frames`, and camss
+  drops them with the write masters' frame-drop pattern, so none reaches a buffer; `0116`
+  stays as the bound for any oversized frame. The exposure and gain are written last and
+  take up to two frames to show, so the count has to cover the whole write window, not
+  only the readout: five (r228) left the sixth and seventh frame at the default exposure
+  in 16 streams with a long exposure, and a Megapixels photo came out 12x dark (gain not
+  yet applied). Eight since r231. The window is about 120 ms since r232, loaded or not
+  (traced with the `i2c` events): mode 55 ms, the shading table in one bulk write (63
+  transactions; it was 252), then the controls. The shading table reads back as zeros
+  over CCI, so it is write-only; an A/B against the old module gave the same corner
+  shading.
+- **Camera buffers have no kernel mapping (`0115`, `0118`).** The CMA area (`cma=320M`)
+  is in highmem, so each coherent buffer with a kernel mapping was remapped into the
+  240 MB vmalloc area, and a 26 MB full-size frame often found no free range once the
+  phone had run a while (`vmalloc_node_range ... failed`): Megapixels then got one buffer,
+  exited on the failed `DQBUF`, and segfaulted in Mesa while its GL thread was still
+  drawing. Without the mapping, dma-direct took the buffers itself and returned them
+  neither zeroed nor cleaned from the cache; `0118` hands them to ARM's allocator.
 - **Only 2x2 binning switches after stream-on.** The output width does not, nor the
   SMIA scaler, so stock's 4x4 modes (1312x988) kept sending 2624-pixel lines: every
   1312 frame was garbage, and the stream after one wedged camss. The mode is gone.

@@ -3,13 +3,13 @@
 Where the port stands and what comes next, in order. The history behind every item
 is in `worklog.md`; the settled findings are in `notes.md`.
 
-## Current state (2026-10-15)
+## Current state (2026-10-16)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 228, with the boot image
-from 227 (`uname -v` prints `#228`; only the imx200 module changed since). `0105` (kgsl's power-on fixup) stays parked (GPU
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 232, with the boot image
+from 230 (`uname -v` prints `#231`; only the imx200 module changed since). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r8 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libdng r1,
-libmegapixels r2 and Megapixels r8 (`recipe/libdng`, `recipe/libmegapixels`,
+libmegapixels r2 and Megapixels r12 (`recipe/libdng`, `recipe/libmegapixels`,
 `recipe/megapixels`), with
 `userspace/megapixels/*` in `/usr/share/megapixels/config/`. The GPU runs behind its
 IOMMU since r204 (`0034`-`0036`); the display still uses the VRAM carveout, and so do all
@@ -97,21 +97,32 @@ Snapshot's cairo stopgap is gone.
    remaining bytes and stock's `exposure_ctrl.dat` may hold better starting points.
 5. **The first frames of a stream** come out at full size or half switched: stream-on
    reloads the readout registers, and the clock presets that would keep them
-   (0x3004-0x3005) are made for stock's 8 MHz clock (review pass 2). Since r228 camss
-   drops the first five (`g_skip_frames`), and `0116` bounds any oversized frame. Making 8 MHz (an M/N MCLK, which `0090` removed because it came out wrong)
+   (0x3004-0x3005) are made for stock's 8 MHz clock (review pass 2). camss drops the
+   first eight (`g_skip_frames`; five from r228, eight from r231, after the default
+   exposure was found in the sixth and seventh), and `0116` bounds any oversized frame.
+   The writes after stream-on end about 120 ms in since r232 (the shading table in one
+   bulk write), loaded or not. Making 8 MHz (an M/N MCLK, which `0090` removed because it came out wrong)
    would let the sensor run stock's tables as they are, 4x4 modes included.
 6. **A cheap preview mode.** The 1312x988 mode is gone (it never delivered 1312-pixel
    lines), so Megapixels previews at 2624x1976. It keeps about 7 of the 30 frames a
-   second (460 dropped in 20 s with the phone otherwise idle), at 180% CPU; where the
-   time goes is not measured yet.
-7. **Megapixels' post-processing** takes about 2.5 minutes a photo (`dcraw_emu` and
-   ImageMagick on the full 20 MP frame). Since r8 photos queue instead of running at once
-   and the burst is the two frames the script reads, so taking several no longer fills
-   the RAM-backed /tmp or the swap.
+   second (460 dropped in 20 s with the phone otherwise idle). Of its 180% CPU, the code
+   scanner took 92% (since Megapixels r12 it rests a second between scans, at density
+   2: 38%), and the processing thread 80%, a quarter of it copying each frame out of
+   the uncached camera buffer and much of the rest page faults on the fresh copy. Cached buffers (`V4L2_MEMORY_FLAG_NON_COHERENT`) would make
+   that copy cheap, but dma-direct's non-coherent allocation refuses highmem pages, and
+   the CMA area is in highmem.
+7. **Megapixels' post-processing** takes about 70 s a photo on an idle phone
+   (`dcraw_emu` 29 s with FBDD denoising, ImageMagick 35 s since r9, exiftool 5 s), and
+   about twice that with the preview open. Since r8 photos queue instead of running at
+   once and the burst is the two frames the script reads, so taking several no longer
+   fills the RAM-backed /tmp or the swap.
 8. **A failed stream start wedges camss** until reboot (every later start returns
    EINVAL). Seen once on r228 after a CCI timeout writing the lens position; the notes
    record the same after any failed or timed-out start. Recovery after a failed start is
    unwritten.
+9. **Megapixels' white balance** settled once on red 0.61, blue 0.25 (its lower limit)
+   for a whole session, and both photos in it came out purple; other sessions in the same
+   light give 0.85 and 0.40. Not reproduced or looked into yet.
 
 ## CPU above 1.5 GHz
 

@@ -169,3 +169,28 @@ after, and Megapixels, starved of GPU memory, kept showing one. `0103` reports 5
 aligned, and Megapixels' preview on the test pattern is unchanged across three photos.
 The 96-row shift seen earlier in two long raw runs was not reproduced on the test
 pattern and was most likely the scene moving under the profile comparison.
+
+### Follow-up: a crash and dark photos (r229-r232, Megapixels r9-r12)
+
+The next morning's first photo crashed Megapixels. The camera got one full-size buffer
+(`vmalloc_node_range for size 25825280 failed`): CMA is in highmem, and each buffer was
+remapped into the 240 MB vmalloc area. Megapixels exited on the failed `DQBUF`, and its
+GL thread segfaulted in Mesa during the exit. `0115` now allocates the camera buffers
+without a kernel mapping (r229), which on 32-bit ARM had dma-direct return them unzeroed
+and uncleaned from the cache; `0118` (r230) hands them to ARM's own allocator, and
+buffers just reused after streaming read back all zero. With the preview running, the
+kernel maps 0.45 MB of camera buffers instead of 57 MB.
+
+A second photo taken soon after the first came out dark twice: once at 1% of the
+brightness (both frames at the default exposure), once 12x dark (the exposure applied,
+the gain not yet). Five skipped frames did not cover the writes after stream-on: on 16
+long-exposure streams the sixth and seventh frames still had the default exposure. Eight
+are skipped since r231, and since r232 the shading table goes out in one bulk write, which
+ends the window at about 120 ms, loaded or not. Four photos 15 s apart then gave eight
+burst frames within 17% of each other, all at full exposure.
+
+Development took 2.5 to 3 minutes a photo with the preview open, against 95 s on an idle
+phone. ImageMagick's `-sharpen` and `-sigmoidal-contrast` are now an unsharp mask and a
+lookup table (Megapixels r9, 59 s to 35 s, 62 dB PSNR against the old JPEG), and the code
+scanner, which held a core for as long as the camera was open, rests a second between
+scans at density 2 (r12, 92% to 38%).

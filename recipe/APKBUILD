@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=228
+pkgrel=232
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -123,6 +123,7 @@ source="
 	0115-media-camss-capture-into-contiguous-buffers-without-an-iommu.patch
 	0116-media-camss-vfe-4-1-stop-rdi-writes-at-the-end-of-the-buffer.patch
 	0117-drm-msm-purge-unneeded-carveout-objects-when-the-carveout-is-full.patch
+	0118-dma-direct-let-arm-allocate-buffers-without-a-kernel-mapping.patch
 	9000-debug-regmap-allow-write-debugfs.patch
 	9001-debug-sns-reg-extra-group.patch
 	9002-debug-scan-offload-ie-trim.patch
@@ -239,7 +240,7 @@ cfc3e9f7ad56d3af5f44b778f968f7df1361d7e7a0fa84555f712d716773a00ed084c952ebc60e53
 138882dd979b7227def914bd80e9dd42e77442c6142983183466a76f8892bd543d065b783db32e767e9726bbee9b99cbae18ec39674490200047c497ce87bc1d  0100-arm-dts-amami-add-the-rear-camera.patch
 81a0764d8dd8defb576f189c292fed9c74ac53aa6438a5da95206003520066b4cb7c1defa2696286457cd13118a385528b36b182e23a8beb18cdcd567dc82014  0101-media-i2c-add-a-driver-for-the-rohm-bu64296-lens-actuator.patch
 078ea3499e898ce3b058332e8897415ba50d21049622a7733462ce3a56637d50f125fb1ea13843b8d41f4e9865b22861db56701166413cafd469fee96f4436ab  0102-arm-dts-amami-add-the-rear-camera-focus-actuator.patch
-78c07ae742181224cf5d9029eee71b9e88060b0bd4f86011a335846d7a5740f496812a46e7fe43380c6e5024be7d8ad3f74ef9a9a7839c18b91892daab4d8b5f  0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
+2a651e65f10c0ff517616b8b450eb1debd7db8814835f78cb44842f19e1eadc8e5f99ee200f0fc98cdf97385264ea4837e2ddd1598fbdc0565a07b1e345f4a9c  0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
 6f2fbfa9942e3875dd89ee0ea4632c5693ea33997febcf4ab79269cd14ab1f1fe58831acd115f76e225972cc924f148a438ac5dea8ab6af9ef6a915cab79f560  0104-arm-dts-amami-drive-the-rear-camera-with-the-imx200-driver.patch
 593a9532010566e10595b58814f2b576e383a9b380fac1ac5a067e50c7cec5b2446ca5d630f83e1279badad1ab156472e2d85751d9129fbc63d71f23fc17d1fb  0106-drm-msm-clear-carveout-buffers-when-they-are-allocated.patch
 71335be6ac0ccbac11e337ba6a524148e6207b045fd15168ddcb47268f31626ceb7fcad01464181cc67c1ab0de426b31d060fe883c16132141aa1306091f6950  0107-drm-msm-a3xx-report-the-gpu-s-error-interrupts.patch
@@ -250,9 +251,10 @@ a86fd4730caa19de47dea5e6d6c743d6de8a6a97b941f2cec648b144feee8bdaf4cf9fae5622371c
 62da61579d6ac5de5beedcd88c74f19853c0af0f45ff7c517e842feb5ce69964494ff0c5c35d0d1d69efaa5b72b7999cef38eeb88d493d77d1554fcb3e8ba172  0112-arm-dts-amami-give-the-cpus-their-rail-and-run-them-up-to-1-5ghz.patch
 f70efd8bedb66e985182e8b5ac3453b78c257176aa10aa2308e612ae778ae48d4da86f7e47df008392745db0cd8c67008940936ff298df4a2d486e796ed416a0  0113-drm-msm-never-evict-a-vram-carveout-object.patch
 a20af1bd13103cb4d80c59dd2710424b9d9999d89b6daef9ae358f13f79bc03c517164d3eed7ecf8aca1bf882687d79ee176221038893d68fb684627436c4a05  0114-drm-msm-divide-by-all-of-the-elapsed-time-in-retire-submit.patch
-0f347a93e63e75d4358351c36d7bc75f95d45c1ef228485f57a9799a085583aba4be34132a034acc62b22a7352894cd5e7a339e2f7f2850529c4bdd835e7a6ed  0115-media-camss-capture-into-contiguous-buffers-without-an-iommu.patch
+227af76b10e1f991afd5be665d98255763c3c8a94f2c175aa2ce49f3ce715133028b004efa6bd0ed95de0a4dc70f4482deff9fa8399b2f73d9114d22cf5f319f  0115-media-camss-capture-into-contiguous-buffers-without-an-iommu.patch
 b99e6389e15f203813403bfa484f42d6b9f9c7815dfc52a23a104f344eb7c94f82140da984e385d5af88018d3803a34f017a763f14f28b10cfd7b76475fae932  0116-media-camss-vfe-4-1-stop-rdi-writes-at-the-end-of-the-buffer.patch
 274482a7b9c5e1c6cc99c211ef43cfee90eb72aca643da98094d2aeae7fce4a4711dd44187421670bf73820df6f0d16bb76659709d24354cef042162fd9162e2  0117-drm-msm-purge-unneeded-carveout-objects-when-the-carveout-is-full.patch
+8e9acef876cb2d2042ae9b9ed06479ded41216eeb4afa0183b495591f1fa5053dfb8cb0cfe3b29beda785ee4d131b81b323cab4ce30c4a7dc09e5a245822648f  0118-dma-direct-let-arm-allocate-buffers-without-a-kernel-mapping.patch
 bc846a809fa4aac7142d6b242f602e436109287c0176a3df9d3d6f2711d6d8d8c2d1a15e55c0f80c2dff719484b2d1c5bd3c09799bd91dd9ffd5a95e4795b0cf  9000-debug-regmap-allow-write-debugfs.patch
 ef932ace6d9144afd9cb89d97895a0a448f8e09d666b214ffdf87fb6b3e7d4d3874956c62431483daff46b0bce41682a8f69311c1446209e14a980c2d82bf271  9001-debug-sns-reg-extra-group.patch
 c5c81ae047103cff73fc74aee1bd27a5a212f3af60c98e6aece8867995325d3c3194c66ef44ddc0dd55620e4286b3744a99e5dbe645c7b20bfe227e23ee8864b  9002-debug-scan-offload-ie-trim.patch

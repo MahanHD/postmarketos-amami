@@ -162,6 +162,10 @@ from.
   every frame; `rowwatch.py` (host) reports when frames land shifted in their buffer.
   `starve.c` streams with a reader too slow for the VFE, to check that running out of
   buffers does not shift frames.
+- `zcheck.c` allocates camss buffers without streaming and counts their nonzero bytes;
+  fresh buffers must read all zero.
+- `sontime.c` times `VIDIOC_STREAMON`, the sensor's register writes included, and the
+  first frame.
 - `sensor-reg.sh` reads or writes sensor registers over `/dev/i2c-3` during a stream
   (needs i2c-tools). Reading the sensor back is how exposure and gain were ruled out
   when the picture was black.

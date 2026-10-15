@@ -1,0 +1,74 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] zbar: rest between scans and scan every other line
+
+Each preview frame went to the code scanner as soon as the previous scan
+had finished. On the Xperia Z1 Compact one scan of the half-size preview
+takes 0.8 to 1.3 s on an idle phone and more beside the preview, so the
+scanner thread used 92% of a core for as long as the camera was open, and
+photos developing in the background took about twice as long as on an idle
+phone.
+
+Rest a second after each scan before taking the next frame, and scan every
+other line and column (zbar's density 2), which halves a scan. A QR code
+132 and 87 pixels wide in the scanned image is still found; at density 3
+the smaller is not. A cap on how often scans start would not do: a scan
+can take longer than any reasonable interval.
+
+--- a/src/zbar_pipeline.c
++++ b/src/zbar_pipeline.c
+@@ -4,6 +4,7 @@
+ #include "main.h"
+ #include "pipeline.h"
+ #include <assert.h>
++#include <glib.h>
+ #include <sys/prctl.h>
+ #include <zbar.h>
+ 
+@@ -23,6 +24,18 @@
+ static volatile int frames_processed = 0;
+ static volatile int frames_received = 0;
+ 
++/*
++ * A new scan used to start as soon as the last one finished, and on slow
++ * phones that kept a core busy for as long as the camera was open: on the
++ * Xperia Z1 Compact one scan of the half-size preview takes about a second.
++ * Codes are held up to the camera for seconds, so rest a second after each
++ * scan, and scan every other line and column, which halves a scan and still
++ * finds them.
++ */
++#define SCAN_REST_US G_USEC_PER_SEC
++#define SCAN_DENSITY 2
++static _Atomic gint64 last_scan_end = 0;
++
+ static zbar_image_scanner_t *scanner;
+ 
+ static void
+@@ -31,6 +44,8 @@
+         prctl(PR_SET_NAME, "megapixels-zb", NULL, NULL, NULL);
+         scanner = zbar_image_scanner_create();
+         zbar_image_scanner_set_config(scanner, 0, ZBAR_CFG_ENABLE, 1);
++        zbar_image_scanner_set_config(scanner, 0, ZBAR_CFG_X_DENSITY, SCAN_DENSITY);
++        zbar_image_scanner_set_config(scanner, 0, ZBAR_CFG_Y_DENSITY, SCAN_DENSITY);
+ }
+ 
+ void
+@@ -278,6 +293,7 @@
+         zbar_image_destroy(zbar_image);
+         mp_zbar_image_unref(image);
+ 
++        last_scan_end = g_get_monotonic_time();
+         ++frames_processed;
+ }
+ 
+@@ -289,6 +305,11 @@
+                 mp_zbar_image_unref(image);
+                 return;
+         }
++
++        if (g_get_monotonic_time() - last_scan_end < SCAN_REST_US) {
++                mp_zbar_image_unref(image);
++                return;
++        }
+ 
+         ++frames_received;
+ 

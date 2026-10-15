@@ -39,7 +39,8 @@ that makes mainline do the same.
     recipe/libcamera/ libcamera patches and the IMX200 tuning file
     recipe/mesa/      Mesa with the Adreno 330 fix for GTK4's GL renderer
     recipe/megapixels/ Megapixels with its colour profile handling and preview mode
-                      choice fixed
+                      choice fixed, photos developed one at a time and faster, and
+                      the code scanner throttled
     recipe/libmegapixels/ libmegapixels with frame rates through vertical blanking
                       and the config's black level
     recipe/libdng/    libdng with DNG white balance and black level written correctly
@@ -166,7 +167,7 @@ The ADSP audio services, a SLIMbus controller for msm8974, and a WCD9320 (Taiko)
 codec driver, which mainline did not have. The codec probes and all of its
 registers work, but no samples move over SLIMbus in either direction yet.
 
-**Camera** (`0085`-`0104`, `0115`, `0116`)
+**Camera** (`0085`-`0104`, `0115`, `0116`, `0118`)
 
 - `0085`-`0087` add msm8974 support to CAMSS. The block matches msm8916's, which
   mainline already supports.
@@ -189,11 +190,17 @@ registers work, but no samples move over SLIMbus in either direction yet.
 - `0103` is a driver for the IMX200 itself, built from the stock firmware's tables. It
   gives libcamera a normal sensor with three modes, 2624x1480, 2624x1976 and 5248x3936,
   programs the lens shading from the module's EEPROM as stock does, keeps the focus
-  lens powered while the sensor is, and has camss drop the first five frames of a stream,
-  which come out at full size or half switched. `0104` switches the device tree to it.
+  lens powered while the sensor is, and has camss drop the first eight frames of a
+  stream, which come out at full size, half switched or at the default exposure. `0104`
+  switches the device tree to it.
 - `0115` lets CAMSS run without an IOMMU by capturing into contiguous buffers, and
   `0116` stops the VFE writing past a buffer when a frame is larger than its format,
-  which the IMX200's first frames are (see `docs/review.md`, pass 2).
+  which the IMX200's first frames are (see `docs/review.md`, pass 2). The buffers have
+  no kernel mapping: on 32-bit ARM each one took a range of the 240 MB vmalloc area, and
+  a 26 MB full-size frame often found none, which crashed Megapixels on a photo.
+- `0118` gives such buffers to ARM's own DMA allocator. dma-direct took every buffer
+  without a kernel mapping itself, and on ARM it neither zeroes nor cache-cleans them,
+  so stale dirty lines could land on top of a frame and old memory reached userspace.
 
 No camera debug patch is in the build any more; `9007` (the front sensor, not yet
 working) is the one to start from for the IMX132.

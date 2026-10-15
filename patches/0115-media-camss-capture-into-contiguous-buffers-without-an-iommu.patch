@@ -10,6 +10,12 @@ When the device has no IOMMU, use dma-contig buffers, which are one address
 by construction, and drop the IOMMU_DMA dependency. With an IOMMU nothing
 changes.
 
+The buffers are allocated without a kernel mapping: the kernel never
+touches the frames, and on 32-bit ARM each mapping takes a range of the
+240 MB vmalloc area, where a full-size frame (26 MB) often found none once
+the preview had run, so the photo failed. read() needs the mapping, so it is
+not offered on these queues.
+
 Replaces debug/9006, 9009 and 9010.
 
 --- a/drivers/media/platform/qcom/camss/Kconfig
@@ -48,7 +54,7 @@ Replaces debug/9006, 9009 and 9010.
  		sgt = vb2_dma_sg_plane_desc(vb, i);
  		if (!sgt)
  			return -EFAULT;
-@@ -714,7 +721,15 @@
+@@ -714,10 +721,28 @@
  
  	q = &video->vb2_q;
  	q->drv_priv = video;
@@ -58,10 +64,24 @@ Replaces debug/9006, 9009 and 9010.
 +	 * work behind an IOMMU, which maps them to one range. Without one (the
 +	 * 32-bit SoCs, which have no IOMMU_DMA) take contiguous buffers instead.
 +	 */
-+	if (device_iommu_mapped(video->camss->dev))
++	q->io_modes = VB2_DMABUF | VB2_MMAP | VB2_READ;
++	if (device_iommu_mapped(video->camss->dev)) {
 +		q->mem_ops = &vb2_dma_sg_memops;
-+	else
++	} else {
 +		q->mem_ops = &vb2_dma_contig_memops;
++		/*
++		 * The kernel never touches the frames, and on 32-bit ARM a
++		 * kernel mapping of each buffer comes out of the 240 MB vmalloc
++		 * area, where a full-size frame (26 MB) often finds no free
++		 * range once the preview has run. Without the mapping read()
++		 * cannot work, so it goes too.
++		 */
++		q->dma_attrs = DMA_ATTR_NO_KERNEL_MAPPING;
++		q->io_modes &= ~VB2_READ;
++	}
  	q->ops = &msm_video_vb2_q_ops;
  	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
- 	q->io_modes = VB2_DMABUF | VB2_MMAP | VB2_READ;
+-	q->io_modes = VB2_DMABUF | VB2_MMAP | VB2_READ;
+ 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+ 	q->buf_struct_size = sizeof(struct camss_buffer);
+ 	q->dev = video->camss->dev;

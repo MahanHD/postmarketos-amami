@@ -3,7 +3,7 @@
 # Alpine 3.24 community/megapixels with colour fixes for the Xperia Z1 Compact
 pkgname=megapixels
 pkgver=2.1.0
-pkgrel=8
+pkgrel=12
 pkgdesc="GTK+4 camera app for mobile devices"
 url="https://gitlab.com/megapixels-org/Megapixels"
 # s390x: doubt anyone would use a mainframe to take photosj
@@ -36,6 +36,8 @@ source="https://gitlab.com/megapixels-org/Megapixels/-/archive/$pkgver/Megapixel
 	preview-mode-nearest-the-preview-size.patch
 	burst-of-the-frames-postprocess-reads.patch
 	postprocess-one-photo-at-a-time.patch
+	postprocess-sharpen-and-contrast-faster.patch
+	zbar-rest-between-scans.patch
 	"
 options="!check" # There's no testsuite
 builddir="$srcdir/Megapixels-$pkgver"
@@ -61,4 +63,6 @@ b29174dba66f45e4d2c1399c5e8244466f253e41a3e9531f898329c36a0e835efce34588bd33de6c
 b309c1445b116679d469d219c58412fd8f4e29d029dce414e6fd725b53d6ff8efcc4953a67f3aa2f1be75b73dea122fae218986885edb6346587cd0edd058cb1  preview-mode-nearest-the-preview-size.patch
 1d0ad3fbaa6964a489f02bdc2a9beb2072aa2c4ab37c482a8010ad506781297adbb619b2dd79f1b22fb1b9d68ac0b22ad36b91c112ab56cfea5eedb5d250ffca  burst-of-the-frames-postprocess-reads.patch
 900e4b8e17810b658d78bcdb68b004f69bc69af4f622ca5dfd9e814a1308fd8d2b1b88a9ae9b3bfd5561a3b10bf6962530fea935382e5260eab95f2bf7cb0bf4  postprocess-one-photo-at-a-time.patch
+b39c57616e3d8626768bcc5c77818770bc5c9afc0b80893f24e267b97169f6c2a2514f614866101f5b8ba776fdc57914dac2b188a39c66077472125abcd0d412  postprocess-sharpen-and-contrast-faster.patch
+d5b528e834f66bb20421845e25f58d94d3d26870b35a39989dfbabc998634125f2a87eed488bfdefe2505199f63f95fe4b2fdd293ae9237cf119d449a46cf9c1  zbar-rest-between-scans.patch
 "

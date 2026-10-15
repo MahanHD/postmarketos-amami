@@ -1,0 +1,57 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] dma-direct: let ARM allocate buffers without a kernel mapping
+
+dma_direct_alloc() hands DMA_ATTR_NO_KERNEL_MAPPING requests to
+dma_direct_alloc_no_mapping() before it looks at the architecture, so on
+32-bit ARM non-coherent devices bypass arch_dma_alloc() for them. That path
+relies on arch_dma_prep_coherent() to clean the buffer from the cache and
+ARM has none: the buffer comes back neither zeroed nor cleaned, dirty lines
+can later be written back over what the device stored, and the memory's old
+contents reach userspace through mmap. ARM's own allocator handles the
+attribute (want_vaddr) and zeroes and flushes the pages, highmem included.
+
+Take the shortcut only when the architecture has no allocator of its own or
+the device is coherent, and free the same way.
+
+Needed by 0115, whose camera buffers have no kernel mapping; the msm
+carveout (msm.vram) is the other user here.
+
+--- a/kernel/dma/direct.c
++++ b/kernel/dma/direct.c
+@@ -205,6 +205,20 @@
+ 	return page;
+ }
+ 
++/*
++ * Non-coherent devices on an architecture with its own allocator (32-bit
++ * ARM) get all their coherent buffers from it, those without a kernel
++ * mapping too: dma_direct_alloc_no_mapping() neither zeroes the buffer nor
++ * cleans it from the cache there (ARM has no arch_dma_prep_coherent()), so
++ * dirty lines could later be written back over what the device stored, and
++ * whatever the memory last held would reach userspace through mmap.
++ */
++static bool dma_direct_use_arch_alloc(struct device *dev)
++{
++	return IS_ENABLED(CONFIG_ARCH_HAS_DMA_ALLOC) &&
++	       !dev_is_dma_coherent(dev) && !is_swiotlb_for_alloc(dev);
++}
++
+ void *dma_direct_alloc(struct device *dev, size_t size,
+ 		dma_addr_t *dma_handle, gfp_t gfp, unsigned long attrs)
+ {
+@@ -217,6 +231,7 @@
+ 		gfp |= __GFP_NOWARN;
+ 
+ 	if ((attrs & DMA_ATTR_NO_KERNEL_MAPPING) &&
++	    !dma_direct_use_arch_alloc(dev) &&
+ 	    !force_dma_unencrypted(dev) && !is_swiotlb_for_alloc(dev))
+ 		return dma_direct_alloc_no_mapping(dev, size, dma_handle, gfp);
+ 
+@@ -318,6 +333,7 @@
+ 	unsigned int page_order = get_order(size);
+ 
+ 	if ((attrs & DMA_ATTR_NO_KERNEL_MAPPING) &&
++	    !dma_direct_use_arch_alloc(dev) &&
+ 	    !force_dma_unencrypted(dev) && !is_swiotlb_for_alloc(dev)) {
+ 		/* cpu_addr is a struct page cookie, not a kernel address */
+ 		dma_free_contiguous(dev, cpu_addr, size);

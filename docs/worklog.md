@@ -3967,6 +3967,35 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
   photos. One 2624x1480 start failed on a CCI timeout writing the lens and left camss
   wedged until reboot; after it, all three modes streamed.
 
+### Megapixels crash, dark second photos, slow development, 2026-10-16
+
+- The first photo of the morning crashed Megapixels: `vmalloc_node_range for size
+  25825280 failed` (dmesg), one buffer granted, `DQBUF` EBUSY, `exit(1)` from the io
+  thread while the main thread drew (core: thread 9 in `exit()`, thread 1 in
+  libgallium). `/proc/vmallocinfo`: 57 MB of `dma_common_contiguous_remap` during the
+  preview, the rest fragmented by thread stacks. CMA sits at 0x6c000000, highmem.
+- `0115` gained `DMA_ATTR_NO_KERNEL_MAPPING` (r229). That took dma-direct's
+  `dma_direct_alloc_no_mapping()`, ahead of `arch_dma_alloc()`: no zeroing, no cache
+  clean (ARM has no `arch_dma_prep_coherent()`), and a buddy fallback that warned at
+  order 13. `0118` (r230, boot image 230) sends non-coherent devices on ARM to ARM's
+  allocator for those too. `tools/camera/zcheck.c`: fresh buffers read all zero after
+  frames averaging 47 per byte were freed. The msm carveout takes the same path.
+- Dark photos: frame means over stream starts (`rowwatch`, 8 runs per mode, exposure
+  3900, gain 200) showed the default exposure in up to two frames after the five
+  skipped. Skip 8 (r231): 16 runs clean, means 202 and 182 from the first frame.
+- A 12x dark one followed on r231 (gain 1x, exposure applied). i2c tracing: the writes
+  after stream-on ran 0.4 s with the shading table as 252 single writes. Bulk write
+  (r232): 120 ms, the same with four busy loops. The table is write-only over CCI
+  (reads zero); auto-increment checked on 0x0340-0x0341; an A/B with r231's module gave
+  identical corner shading.
+- Development: `dcraw_emu` 29 s, `-sharpen` 43 s, `-sigmoidal-contrast` 27 s, JPEG 5 s,
+  exiftool 5 s on an idle phone. Unsharp mask plus a `-clut` curve: 35 s, 62 dB PSNR
+  (Megapixels r9). With the preview open: zbar 92% of a core (1.2 s per scan of the
+  1312x988 grey image), the processing thread 80%. A cap of two scans a second did
+  nothing, as one scan outlasts it (r10, r11); r12 rests a second after each scan, at
+  density 2 (finds a 132 and an 87 pixel QR code; density 3 misses the small one): 38%.
+- One session's photos came out purple, AWB at red 0.61, blue 0.25; not reproduced.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

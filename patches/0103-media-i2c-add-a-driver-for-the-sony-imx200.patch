@@ -29,7 +29,7 @@
  obj-$(CONFIG_VIDEO_IMX274) += imx274.o
 --- /dev/null
 +++ b/drivers/media/i2c/imx200.c
-@@ -0,0 +1,1138 @@
+@@ -0,0 +1,1155 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Sony IMX200 camera sensor driver
@@ -49,7 +49,9 @@
 +#include <linux/module.h>
 +#include <linux/pm_runtime.h>
 +#include <linux/property.h>
++#include <linux/regmap.h>
 +#include <linux/regulator/consumer.h>
++#include <linux/unaligned.h>
 +
 +#include <media/v4l2-cci.h>
 +#include <media/v4l2-ctrls.h>
@@ -536,22 +538,33 @@
 + * Subdev operations
 + */
 +
++/*
++ * Tables A and B are contiguous, two 16-bit gains per point each, and the
++ * sensor increments the address within a write. Written register by register
++ * they took 252 transactions, most of the 0.3 s stream-on takes, while the
++ * sensor was already sending frames; in one bulk write regmap splits them into
++ * as many as the CCI needs (63, at 8 data bytes each).
++ */
 +static void imx200_write_lsc(struct imx200 *imx200, int *err)
 +{
++	u8 table[2 * IMX200_LSC_POINTS * 2 * 2];
 +	unsigned int i;
++	int ret;
 +
-+	for (i = 0; i < IMX200_LSC_POINTS; i++) {
-+		u16 gain = imx200->lsc[i];
++	BUILD_BUG_ON(IMX200_REG_LSC_TABLE_B !=
++		     IMX200_REG_LSC_TABLE_A + IMX200_LSC_POINTS * 4);
 +
-+		cci_write(imx200->regmap, CCI_REG16(IMX200_REG_LSC_TABLE_A + 4 * i),
-+			  gain, err);
-+		cci_write(imx200->regmap,
-+			  CCI_REG16(IMX200_REG_LSC_TABLE_A + 4 * i + 2), gain, err);
-+		cci_write(imx200->regmap, CCI_REG16(IMX200_REG_LSC_TABLE_B + 4 * i),
-+			  gain, err);
-+		cci_write(imx200->regmap,
-+			  CCI_REG16(IMX200_REG_LSC_TABLE_B + 4 * i + 2), gain, err);
-+	}
++	if (*err)
++		return;
++
++	for (i = 0; i < ARRAY_SIZE(table) / 2; i++)
++		put_unaligned_be16(imx200->lsc[(i / 2) % IMX200_LSC_POINTS],
++				   &table[2 * i]);
++
++	ret = regmap_bulk_write(imx200->regmap, IMX200_REG_LSC_TABLE_A, table,
++				ARRAY_SIZE(table));
++	if (ret)
++		*err = ret;
 +}
 +
 +/*
@@ -795,12 +808,16 @@
 +};
 +
 +/*
-+ * The mode can only be written after stream-on (see imx200_enable_streams()),
-+ * and the frames already under way then come out at full size or switch mode
-+ * part way through. Over five streams on the fade test pattern the last bad
-+ * frame was the third, fourth or fifth; camss drops these without writing them.
++ * The mode and the controls can only be written after stream-on (see
++ * imx200_enable_streams()), and the frames already under way then come out at
++ * full size, switch mode part way through, or keep the default exposure. Over
++ * five streams on the fade test pattern the last oversized frame was the
++ * third, fourth or fifth; over sixteen streams in both modes with a long
++ * exposure the last dark or half-exposed one was the sixth or seventh, as the
++ * new exposure takes up to two frames to show. camss drops these without
++ * writing them; one more is dropped for margin.
 + */
-+#define IMX200_SKIP_FRAMES	5
++#define IMX200_SKIP_FRAMES	8
 +
 +static int imx200_g_skip_frames(struct v4l2_subdev *sd, u32 *frames)
 +{
