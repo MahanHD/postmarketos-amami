@@ -5,8 +5,8 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-12)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 218, with the boot image
-from 218 (`uname -v` prints `#219`). `0105` (kgsl's power-on fixup) stays parked (GPU
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 219, with the boot image
+from 219 (`uname -v` prints `#220`). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r7 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libmegapixels
 r1 and Megapixels r2 (`recipe/libmegapixels`, `recipe/megapixels`), with
@@ -25,6 +25,9 @@ Not working: audio (no sound, see `notes.md`) and the front camera (not started)
 The camera loads at boot and works in GNOME Snapshot through libcamera and PipeWire, and
 in Megapixels. `capture.sh` still works for raw frames; at night it needs `VBLANK=30000`,
 a long exposure and gain 240, or the frame is black.
+
+**Review in progress:** `review.md` holds a pass-by-pass review of the whole port; pass 1
+(GPU) is done, pass 2 (camera) is next.
 
 **Where to pick up:** the GPU power-on hang is fixed (`0111`, item 4: two hour-long
 soaks on r214 with 0 hangs, against 3 to 9 before) and the CPU runs to 1.5 GHz

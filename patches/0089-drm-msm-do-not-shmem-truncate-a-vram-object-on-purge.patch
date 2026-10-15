@@ -1,17 +1,30 @@
---- a/drivers/gpu/drm/msm/msm_gem.c
-+++ b/drivers/gpu/drm/msm/msm_gem.c
-@@ -870,6 +870,18 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] drm/msm: don't shmem-truncate a VRAM carveout object on purge
+
+When the display has no IOMMU every buffer is a VRAM carveout object,
+made with drm_gem_private_object_init() and without a shmem file. Purging
+one still went on to shmem_truncate_range(file_inode(obj->filp), ...)
+after put_pages() had handed its range back to the carveout, and
+file_inode(NULL) faulted inside the shrinker, killing kswapd the first
+time memory got tight while a DONTNEED buffer was cached.
+
+Stop after the purge's common part when there is no shmem file.
+
+---
+--- a/drivers/gpu/drm/msm/msm_gem.c	2026-10-15 09:54:09.791506085 +0400
++++ b/drivers/gpu/drm/msm/msm_gem.c	2026-10-15 09:54:09.807164107 +0400
+@@ -873,6 +873,18 @@
  
  	drm_gem_free_mmap_offset(obj);
  
 +	/*
-+	 * A VRAM carveout object - what every buffer is when the GPU runs
-+	 * without an IOMMU - is made with drm_gem_private_object_init() and has
-+	 * no shmem file: put_pages() above has already handed its range back
-+	 * to the carveout, and there is nothing for shmem to drop. Without
-+	 * this check file_inode(NULL) faults at offsetof(struct file, f_inode)
-+	 * from inside the shrinker, i.e. in kswapd, the first time memory gets
-+	 * tight while the GPU has a DONTNEED buffer cached.
++	 * A VRAM carveout object - what every buffer is when the display has
++	 * no IOMMU - is made with drm_gem_private_object_init() and has no
++	 * shmem file: put_pages() above has already handed its range back to
++	 * the carveout, and there is nothing for shmem to drop. Without this
++	 * check file_inode(NULL) faults at offsetof(struct file, f_inode) from
++	 * inside the shrinker, i.e. in kswapd, the first time memory gets
++	 * tight while a DONTNEED buffer is cached.
 +	 */
 +	if (!obj->filp)
 +		return;

@@ -9,17 +9,27 @@ submission, and drm/msm does not:
   After a power-on kgsl has no current context, so the first submission
   always gets it.
 - After the end-of-pipe timestamp it writes a dummy CP_SET_CONSTANT to
-  HLSQ_CL_KERNEL_GROUP_X_REG (0x2215) "to trigger context rollover". a3xx_submit()
-  has the same lines, disabled with #if 0.
+  HLSQ_CL_KERNEL_GROUP_X_REG (0x2215, HLSQ_CL_KERNEL_GROUP_RATIO(0) in
+  today's headers) "to trigger context rollover". a3xx_submit() has the
+  same lines, disabled with #if 0 and using a CP_REG() that no longer
+  exists; define it as kgsl does.
 
 Do both, and forget the current context in hw_init, since the GPU has
 lost all state by then; that also makes a CTX_RESTORE_BUF run again
 after a power-on, which is what it is for.
 
 ---
---- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 03:26:43.959335313 +0400
-+++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 03:27:35.691839942 +0400
-@@ -33,6 +33,17 @@
+--- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-15 09:54:51.453836038 +0400
++++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-15 09:55:01.051583867 +0400
+@@ -28,11 +28,25 @@
+ static void a3xx_dump(struct msm_gpu *gpu);
+ static bool a3xx_idle(struct msm_gpu *gpu);
+ 
++/* CP_SET_CONSTANT's address for a register in the 0x2000 block, as kgsl has it */
++#define CP_REG(reg) ((0x4 << 16) | ((reg) - 0x2000))
++
+ static void a3xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
+ {
  	struct msm_ringbuffer *ring = submit->ring;
  	unsigned int i;
  
@@ -37,7 +47,7 @@ after a power-on, which is what it is for.
  	for (i = 0; i < submit->nr_cmds; i++) {
  		switch (submit->cmd[i].type) {
  		case MSM_SUBMIT_CMD_IB_TARGET_BUF:
-@@ -72,12 +83,10 @@
+@@ -72,12 +86,10 @@
  	OUT_RING(ring, rbmemptr(ring, fence));
  	OUT_RING(ring, submit->seqno);
  
@@ -46,13 +56,13 @@ after a power-on, which is what it is for.
 +	/* Dummy set-constant to trigger context rollover, as kgsl does */
  	OUT_PKT3(ring, CP_SET_CONSTANT, 2);
 -	OUT_RING(ring, CP_REG(REG_A3XX_HLSQ_CL_KERNEL_GROUP_X_REG));
-+	OUT_RING(ring, 0x00040000 | (REG_A3XX_HLSQ_CL_KERNEL_GROUP_RATIO(0) - 0x2000));
++	OUT_RING(ring, CP_REG(REG_A3XX_HLSQ_CL_KERNEL_GROUP_RATIO(0)));
  	OUT_RING(ring, 0x00000000);
 -#endif
  
  	adreno_flush(gpu, ring, REG_AXXX_CP_RB_WPTR);
  }
-@@ -360,6 +369,9 @@
+@@ -360,6 +372,9 @@
  	/* clear ME_HALT to start micro engine */
  	gpu_write(gpu, REG_AXXX_CP_ME_CNTL, 0);
  

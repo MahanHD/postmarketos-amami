@@ -11,6 +11,8 @@ the GPU unable to run anything.
   wait   the CP waits for a memory value that never comes (CP_WAIT_REG_MEM)
   fault  the CP jumps to an indirect buffer at an unmapped GPU address
   none   no hang, only the canary (the control)
+
+CANARY_TIMEOUT=seconds (default 15) sets how long to wait for each canary.
 """
 import fcntl, mmap, os, struct, sys, time
 
@@ -106,12 +108,14 @@ def canary(gpu, value, timeout):
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "wait"
     rounds = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    # long enough to wait behind a queue of other jobs' hangs
+    timeout = float(os.environ.get("CANARY_TIMEOUT", 15))
     bad = 0
     for i in range(rounds):
         hanger, checker = Gpu(), Gpu()
         if mode != "none":
             hang_job(hanger, mode)
-        t = canary(checker, 0xc0de0000 + i, 15)
+        t = canary(checker, 0xc0de0000 + i, timeout)
         if t is None:
             bad += 1
         print("%s round %d: canary %s" % (time.strftime("%T"), i + 1,
