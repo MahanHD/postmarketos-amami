@@ -3,7 +3,7 @@
 # Alpine 3.24 community/megapixels with colour fixes for the Xperia Z1 Compact
 pkgname=megapixels
 pkgver=2.1.0
-pkgrel=6
+pkgrel=7
 pkgdesc="GTK+4 camera app for mobile devices"
 url="https://gitlab.com/megapixels-org/Megapixels"
 # s390x: doubt anyone would use a mainframe to take photosj
@@ -33,6 +33,7 @@ source="https://gitlab.com/megapixels-org/Megapixels/-/archive/$pkgver/Megapixel
 	thumbnail-without-a-free-preview.patch
 	photo-keeps-white-balance.patch
 	black-level-from-the-config.patch
+	preview-mode-nearest-the-preview-size.patch
 	"
 options="!check" # There's no testsuite
 builddir="$srcdir/Megapixels-$pkgver"
@@ -55,4 +56,5 @@ ea4e0bb4f708e7c300f12e9f942061c40053101e3d2e04a0b88db93d4562ba47e7ac1d5213e338e3
 5ac71105eb8005d19cdfb9afad7e12c19c365a9304b236eb9497594b189c69e7c26260502529994828c52ce4367929d45bb07d48e2ce2066865a68315fe6d4f9  thumbnail-without-a-free-preview.patch
 8126725afa67053586fd341c72ebc86d0541f2b8c848ab3db05e40cb2ee042b5399192510572e571ded358c275aa6138623070ae9004c4c76909b869db448ff1  photo-keeps-white-balance.patch
 b29174dba66f45e4d2c1399c5e8244466f253e41a3e9531f898329c36a0e835efce34588bd33de6ce919a05f7e24c317959e632b3a22596ae19863f5f5563691  black-level-from-the-config.patch
+b309c1445b116679d469d219c58412fd8f4e29d029dce414e6fd725b53d6ff8efcc4953a67f3aa2f1be75b73dea122fae218986885edb6346587cd0edd058cb1  preview-mode-nearest-the-preview-size.patch
 "

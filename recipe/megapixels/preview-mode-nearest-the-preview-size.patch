@@ -1,0 +1,39 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] io_pipeline: pick the preview mode nearest the preview size
+
+The preview mode is the one scoring best on frame rate and on how close
+its area is to the preview's, but the area term was an integer division
+and the best score started at 0. Any mode more than twice the preview's
+area got a whole number of at least 2 taken off, scored below 0 and
+could never be picked. On a phone whose smallest mode is 2624x1976 none
+qualified, and the preview fell back to the 5248x3936 capture mode: 16
+frames a second, and textures that took most of the GPU's memory, so the
+first photo then failed with GL_OUT_OF_MEMORY and the
+glCheckFramebufferStatus() assertion in gles2_debayer_process().
+
+Divide in floating point and start from -INFINITY, so the nearest mode
+always wins.
+
+---
+--- a/src/io_pipeline.c	2026-02-17 19:10:59.000000000 +0400
++++ b/src/io_pipeline.c	2026-10-15 19:47:03.764398211 +0400
+@@ -612,7 +612,7 @@
+                         mpcamera = mp_camera_new(state_io.camera);
+                         state_io.mode_preview = NULL;
+                         state_io.mode_capture = NULL;
+-                        float score = 0;
++                        float score = -INFINITY;
+                         int area_preview =
+                                 state_io.preview_width * state_io.preview_height;
+                         if (area_preview == 0) {
+@@ -626,8 +626,8 @@
+                                 int mode_area = state_io.camera->modes[m]->width *
+                                                 state_io.camera->modes[m]->height;
+                                 mscore += 1.0f -
+-                                          (float)(ABS(mode_area - area_preview) /
+-                                                  area_preview);
++                                          (float)ABS(mode_area - area_preview) /
++                                                  area_preview;
+                                 if (mscore > score) {
+                                         state_io.mode_preview =
+                                                 state_io.camera->modes[m];

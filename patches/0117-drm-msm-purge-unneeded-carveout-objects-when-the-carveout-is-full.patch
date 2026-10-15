@@ -1,0 +1,92 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] drm/msm: purge unneeded carveout objects when the carveout is full
+
+Without an IOMMU for the display, every buffer comes from the VRAM
+carveout. Mesa keeps freed buffers in its cache and marks them
+MSM_MADV_DONTNEED, so the kernel can take them back, but only the
+shrinker does that, and it runs when the system is short of memory. A
+full carveout is not that, so an allocation failed with -ENOSPC while
+the carveout held tens of megabytes of buffers nobody needed: Megapixels
+switching from its capture textures back to its preview ones got
+GL_OUT_OF_MEMORY with 23MB of its own old textures purgeable.
+
+Purge carveout objects from the dontneed LRU, oldest first, and retry
+until the allocation fits or nothing more can be purged.
+
+---
+--- a/drivers/gpu/drm/msm/msm_gem.c	2026-10-15 19:53:35.633666892 +0400
++++ b/drivers/gpu/drm/msm/msm_gem.c	2026-10-15 19:54:18.969694247 +0400
+@@ -156,12 +156,19 @@
+ 	if (!p)
+ 		return ERR_PTR(-ENOMEM);
+ 
+-	spin_lock(&priv->vram.lock);
+-	ret = drm_mm_insert_node_generic(&priv->vram.mm, msm_obj->vram_node,
+-					 npages,
+-					 msm_gem_pgsize_align(obj->size) >> PAGE_SHIFT,
+-					 0, 0);
+-	spin_unlock(&priv->vram.lock);
++	/*
++	 * A full carveout can still hold objects userspace keeps in its cache
++	 * and has marked as not needed. Purge those, oldest first, before
++	 * giving up.
++	 */
++	do {
++		spin_lock(&priv->vram.lock);
++		ret = drm_mm_insert_node_generic(&priv->vram.mm, msm_obj->vram_node,
++						 npages,
++						 msm_gem_pgsize_align(obj->size) >> PAGE_SHIFT,
++						 0, 0);
++		spin_unlock(&priv->vram.lock);
++	} while (ret == -ENOSPC && msm_gem_purge_vram(obj->dev, npages));
+ 	if (ret) {
+ 		kvfree(p);
+ 		return ERR_PTR(ret);
+--- a/drivers/gpu/drm/msm/msm_gem_shrinker.c	2026-04-01 20:06:17.000000000 +0400
++++ b/drivers/gpu/drm/msm/msm_gem_shrinker.c	2026-10-15 19:54:18.970075662 +0400
+@@ -58,6 +58,35 @@
+ }
+ 
+ static bool
++purge_vram(struct drm_gem_object *obj)
++{
++	if (!to_msm_bo(obj)->vram_node)
++		return false;
++
++	return purge(obj);
++}
++
++/**
++ * msm_gem_purge_vram - purge VRAM carveout objects marked as not needed
++ * @dev: the drm device
++ * @nr_to_scan: how many pages to free
++ *
++ * The shrinker only runs when the system is short of memory, which a full
++ * carveout is not, so get_pages_vram() calls this before it fails.
++ *
++ * Returns the number of pages freed.
++ */
++unsigned long
++msm_gem_purge_vram(struct drm_device *dev, unsigned long nr_to_scan)
++{
++	struct msm_drm_private *priv = dev->dev_private;
++	unsigned long remaining = 0;
++
++	return drm_gem_lru_scan(&priv->lru.dontneed, nr_to_scan, &remaining,
++				purge_vram);
++}
++
++static bool
+ evict(struct drm_gem_object *obj)
+ {
+ 	if (is_unevictable(to_msm_bo(obj)))
+--- a/drivers/gpu/drm/msm/msm_drv.h	2026-04-01 20:06:17.000000000 +0400
++++ b/drivers/gpu/drm/msm/msm_drv.h	2026-10-15 19:54:18.970209390 +0400
+@@ -274,6 +274,7 @@
+ unsigned long msm_gem_shrinker_shrink(struct drm_device *dev, unsigned long nr_to_scan);
+ #endif
+ 
++unsigned long msm_gem_purge_vram(struct drm_device *dev, unsigned long nr_to_scan);
+ int msm_gem_shrinker_init(struct drm_device *dev);
+ void msm_gem_shrinker_cleanup(struct drm_device *dev);
+ 

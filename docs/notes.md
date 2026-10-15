@@ -1452,7 +1452,14 @@ five minutes: trigger, then read `/sys/class/devcoredump/devcd*/data` at once.
 
 **Megapixels** finds `sony,xperia-amami.conf` by the device-tree compatible. Getting a
 frame with `megapixels-getframe` works at 2624x1976 and 5248x3936, and the preview runs at
-2624x1976 (the 1312x988 mode never worked, see the stream-on reset above).
+2624x1976 (the 1312x988 mode never worked, see the stream-on reset above). That needed
+`preview-mode-nearest-the-preview-size.patch`: Megapixels scored each mode with an
+integer division and a best score starting at 0, so a mode more than twice the preview's
+area could never be picked, and with 1312x988 gone it previewed at 5248x3936. Its
+textures then took 156MB of the 192MB carveout and the first photo failed with
+`GL_OUT_OF_MEMORY` (the `glCheckFramebufferStatus()` assertion). At 2624x1976 it holds
+53MB, and a capture still peaks near the carveout's size; `0117` lets the allocation
+purge Mesa's cached buffers rather than fail.
 Without a colour profile its preview is green. It looks for a DNG profile named
 `<compatible>,<camera>.dcp`, where the camera is the config section name with its case
 kept: `sony,xperia-amami,Rear.dcp`.

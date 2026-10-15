@@ -38,7 +38,8 @@ that makes mainline do the same.
     recipe/           the kernel APKBUILD and config exactly as built
     recipe/libcamera/ libcamera patches and the IMX200 tuning file
     recipe/mesa/      Mesa with the Adreno 330 fix for GTK4's GL renderer
-    recipe/megapixels/ Megapixels with its colour profile handling fixed
+    recipe/megapixels/ Megapixels with its colour profile handling and preview mode
+                      choice fixed
     recipe/libmegapixels/ libmegapixels with frame rates through vertical blanking
                       and the config's black level
     recipe/libdng/    libdng with DNG white balance and black level written correctly
@@ -154,6 +155,9 @@ data for features that are not worth their cost yet.
   interrupts are reported, submissions are framed the way kgsl frames them, the GPU's
   memories are kept through a collapse, and the SMMU's BFB registers are written on
   every resume.
+- `0117` purges the carveout buffers Mesa has cached and marked as not needed when an
+  allocation does not fit, instead of failing. Only the shrinker purged them, and it runs
+  on system memory pressure, which a full carveout is not.
 
 **Audio** (`0039`-`0044`, `0049`-`0068`)
 

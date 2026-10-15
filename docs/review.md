@@ -140,3 +140,19 @@ Verified on r226: canaries intact in all three modes; every mode streams with th
 registers, the 2x digital gain and the lens state as set, and the lens powers down with
 the sensor afterwards; Megapixels previews at 2624x1976 and libcamera r8 streams 720p at
 33 fps. The colour check of a daylight photo is still to do.
+
+### Follow-up: Megapixels crashed taking photos (r227)
+
+Removing 1312x988 broke Megapixels. It picks its preview mode by a score with an integer
+division and a best score starting at 0, so no mode more than twice the preview's area
+can win; with 2624x1976 the smallest mode, it fell back to previewing at 5248x3936. Its
+textures took 156MB of the 192MB carveout, and a photo aborted on
+`glCheckFramebufferStatus()` after `GL_OUT_OF_MEMORY`. The slow night auto exposure noted
+above was this full-resolution preview. `recipe/megapixels` r7 scores in floating point
+from -INFINITY and the preview runs at 2624x1976, holding 53MB.
+
+Photos then failed one time in two, on the switch back to preview: the capture peaks at
+185MB, and the carveout ran out while it held 23MB of Mesa's cached buffers marked
+`MSM_MADV_DONTNEED`, which only the shrinker purges, on system memory pressure. `0117`
+purges them from the allocation that does not fit. Verified on r227: four photos in a
+row, no `get_pages` failures, every DNG and JPEG written.

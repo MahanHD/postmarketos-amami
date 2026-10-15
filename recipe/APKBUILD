@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=226
+pkgrel=227
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -122,6 +122,7 @@ source="
 	0114-drm-msm-divide-by-all-of-the-elapsed-time-in-retire-submit.patch
 	0115-media-camss-capture-into-contiguous-buffers-without-an-iommu.patch
 	0116-media-camss-vfe-4-1-stop-rdi-writes-at-the-end-of-the-buffer.patch
+	0117-drm-msm-purge-unneeded-carveout-objects-when-the-carveout-is-full.patch
 	9000-debug-regmap-allow-write-debugfs.patch
 	9001-debug-sns-reg-extra-group.patch
 	9002-debug-scan-offload-ie-trim.patch
@@ -251,6 +252,7 @@ f70efd8bedb66e985182e8b5ac3453b78c257176aa10aa2308e612ae778ae48d4da86f7e47df0083
 a20af1bd13103cb4d80c59dd2710424b9d9999d89b6daef9ae358f13f79bc03c517164d3eed7ecf8aca1bf882687d79ee176221038893d68fb684627436c4a05  0114-drm-msm-divide-by-all-of-the-elapsed-time-in-retire-submit.patch
 0f347a93e63e75d4358351c36d7bc75f95d45c1ef228485f57a9799a085583aba4be34132a034acc62b22a7352894cd5e7a339e2f7f2850529c4bdd835e7a6ed  0115-media-camss-capture-into-contiguous-buffers-without-an-iommu.patch
 b99e6389e15f203813403bfa484f42d6b9f9c7815dfc52a23a104f344eb7c94f82140da984e385d5af88018d3803a34f017a763f14f28b10cfd7b76475fae932  0116-media-camss-vfe-4-1-stop-rdi-writes-at-the-end-of-the-buffer.patch
+274482a7b9c5e1c6cc99c211ef43cfee90eb72aca643da98094d2aeae7fce4a4711dd44187421670bf73820df6f0d16bb76659709d24354cef042162fd9162e2  0117-drm-msm-purge-unneeded-carveout-objects-when-the-carveout-is-full.patch
 bc846a809fa4aac7142d6b242f602e436109287c0176a3df9d3d6f2711d6d8d8c2d1a15e55c0f80c2dff719484b2d1c5bd3c09799bd91dd9ffd5a95e4795b0cf  9000-debug-regmap-allow-write-debugfs.patch
 ef932ace6d9144afd9cb89d97895a0a448f8e09d666b214ffdf87fb6b3e7d4d3874956c62431483daff46b0bce41682a8f69311c1446209e14a980c2d82bf271  9001-debug-sns-reg-extra-group.patch
 c5c81ae047103cff73fc74aee1bd27a5a212f3af60c98e6aece8867995325d3c3194c66ef44ddc0dd55620e4286b3744a99e5dbe645c7b20bfe227e23ee8864b  9002-debug-scan-offload-ie-trim.patch

@@ -5,11 +5,11 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-15)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 226, with the boot image
-from 222 (`uname -v` prints `#223`; nothing built in or in the device tree changed since). `0105` (kgsl's power-on fixup) stays parked (GPU
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 227, with the boot image
+from 227 (`uname -v` prints `#228`). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r8 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libdng r1,
-libmegapixels r2 and Megapixels r6 (`recipe/libdng`, `recipe/libmegapixels`,
+libmegapixels r2 and Megapixels r7 (`recipe/libdng`, `recipe/libmegapixels`,
 `recipe/megapixels`), with
 `userspace/megapixels/*` in `/usr/share/megapixels/config/`. The GPU runs behind its
 IOMMU since r204 (`0034`-`0036`); the display still uses the VRAM carveout, and so do all
@@ -98,8 +98,12 @@ Snapshot's cairo stopgap is gone.
    buffer. Making 8 MHz (an M/N MCLK, which `0090` removed because it came out wrong)
    would let the sensor run stock's tables as they are, 4x4 modes included.
 6. **A cheap preview mode.** The 1312x988 mode is gone (it never delivered 1312-pixel
-   lines), so previews run at 2624 wide and Megapixels' auto exposure takes about a
-   minute to settle at night, dropping frames on the way.
+   lines), so Megapixels previews at 2624x1976. It keeps about 7 of the 30 frames a
+   second (460 dropped in 20 s with the phone otherwise idle), at 180% CPU; where the
+   time goes is not measured yet.
+7. **Megapixels' post-processing.** Each photo runs `dcraw_emu` and ImageMagick on the
+   full 20 MP frame, and photos taken in a row process in parallel: four pushed 1.6 GB
+   into swap and took ten minutes.
 
 ## CPU above 1.5 GHz
 

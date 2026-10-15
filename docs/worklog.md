@@ -3941,6 +3941,15 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
 - Verified on r226: canaries intact in every mode, all three modes stream with the
   registers, digital gain and lens state as set, Megapixels previews (night, at 2624x1976),
   libcamera r8 streams 720p at 33 fps.
+- Megapixels then crashed on every photo (2026-10-15). With 1312x988 gone its preview
+  mode score (integer division, best score starting at 0) chose nothing and it fell back
+  to previewing at 5248x3936, 156MB of the 192MB carveout; the photo hit
+  `GL_OUT_OF_MEMORY` and the `glCheckFramebufferStatus()` assertion (core dump, assert
+  located by disassembly: `movw r3, #0x8cd5`). Megapixels r7 fixes the score. Photos
+  still failed half the time, the carveout full while 23MB of Mesa's cached buffers sat
+  purgeable; `0117` (r227) purges them before an allocation fails. Four photos in a row
+  then worked. The black photos in that test were a dark scene: a 0.3 s raw capture at
+  full gain showed it dimly.
 
 ## Parked patches
 
