@@ -9,11 +9,14 @@ The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 227, with the boot 
 from 227 (`uname -v` prints `#228`). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r8 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libdng r1,
-libmegapixels r2 and Megapixels r7 (`recipe/libdng`, `recipe/libmegapixels`,
+libmegapixels r2 and Megapixels r8 (`recipe/libdng`, `recipe/libmegapixels`,
 `recipe/megapixels`), with
 `userspace/megapixels/*` in `/usr/share/megapixels/config/`. The GPU runs behind its
 IOMMU since r204 (`0034`-`0036`); the display still uses the VRAM carveout, and so do all
-GPU buffers, which are cleared on allocation since r206 (`0106`). Install the package for module changes and rebuild the boot image with
+GPU buffers, which are cleared on allocation since r206 (`0106`). The carveout is 256 MB
+since boot image 227 (`msm.vram=256m cma=320M` in `tools/mkbootimg.py`): a 20 MP capture
+in Megapixels needs nearly all of 192 MB. LightDM logs back in when a session ends
+(`userspace/lightdm`). Install the package for module changes and rebuild the boot image with
 `tools/mkbootimg.py` for anything built in or in the device tree.
 
 Working: display, touch, GPU (GTK4's GL renderer included), WiFi, Bluetooth, charging and
@@ -101,9 +104,18 @@ Snapshot's cairo stopgap is gone.
    lines), so Megapixels previews at 2624x1976. It keeps about 7 of the 30 frames a
    second (460 dropped in 20 s with the phone otherwise idle), at 180% CPU; where the
    time goes is not measured yet.
-7. **Megapixels' post-processing.** Each photo runs `dcraw_emu` and ImageMagick on the
-   full 20 MP frame, and photos taken in a row process in parallel: four pushed 1.6 GB
-   into swap and took ten minutes.
+7. **Megapixels' post-processing** takes about 2.5 minutes a photo (`dcraw_emu` and
+   ImageMagick on the full 20 MP frame). Since r8 photos queue instead of running at once
+   and the burst is the two frames the script reads, so taking several no longer fills
+   the RAM-backed /tmp or the swap.
+8. **Frames sometimes land shifted.** After about a minute of streaming a stream can end
+   up with every frame shifted down by some rows (96 in two of three 1500-frame raw runs;
+   about 440 in Megapixels' preview), the bottom wrapped to the top. Fresh starts, and
+   starved streams, stay aligned. Suspected: `0116`'s line-based write masters count lines
+   rather than resyncing at frame start, so one disturbed frame leaves the offset in
+   place. `tools/camera/rowwatch.c` records every frame to catch the moment. The likely
+   fix is to keep the sensor's oversized first frames from the VFE altogether (V4L2's
+   `g_skip_frames`, honoured by camss), which would also let `0116` go.
 
 ## CPU above 1.5 GHz
 

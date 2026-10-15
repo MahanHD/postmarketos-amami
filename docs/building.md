@@ -116,6 +116,15 @@ this phone's config and colour profile:
 Snapshot saves to the XDG pictures folder and refuses to take a photo without one, hence
 `xdg-user-dirs`. Reboot after upgrading libcamera, so WirePlumber loads the new one.
 
+On a development phone it saves time to have the desktop come back on its own. The
+image sets up autologin, but LightDM applies it only when it starts, so a session that
+ends (a logout, or a crash of the session) leaves the greeter up. `userspace/lightdm`
+restarts LightDM when a session ends:
+
+    sudo install -m 755 userspace/lightdm/relogin.sh /etc/lightdm/
+    sudo install -m 644 userspace/lightdm/60-relogin.conf /etc/lightdm/lightdm.conf.d/
+    sudo systemctl restart lightdm
+
 Bluetooth needs the service from `userspace/`, which gives the controller the
 factory address out of the TA partition. Without it bluetoothd reports no
 default controller at all:

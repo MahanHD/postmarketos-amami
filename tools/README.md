@@ -158,6 +158,10 @@ from.
 - `canary.c` checks whether the VFE writes past a capture buffer: two of four buffers
   are never queued and keep a 0xa5 pattern unless something overwrites them. This is
   how the frame-based RDI overflow behind `0116` was measured.
+- `rowwatch.c` streams and records a row profile, sequence number and timestamp for
+  every frame; `rowwatch.py` (host) reports when frames land shifted in their buffer.
+  `starve.c` streams with a reader too slow for the VFE, to check that running out of
+  buffers does not shift frames.
 - `sensor-reg.sh` reads or writes sensor registers over `/dev/i2c-3` during a stream
   (needs i2c-tools). Reading the sensor back is how exposure and gain were ruled out
   when the picture was black.

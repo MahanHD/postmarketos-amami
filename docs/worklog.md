@@ -3950,6 +3950,15 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
   purgeable; `0117` (r227) purges them before an allocation fails. Four photos in a row
   then worked. The black photos in that test were a dark scene: a 0.3 s raw capture at
   full gain showed it dimly.
+- The same evening: the preview shifted, photos took minutes and the Xfce session died.
+  Megapixels wrote every burst frame (up to 11 x 26 MB) to the RAM-backed /tmp, which
+  filled; four Xfce processes then aborted on libwnck's `default_icon_at_size` assertion.
+  Megapixels r8: a two-frame burst (the script reads `1.dng`) and `flock` around
+  `postprocess.sh`; three quick photos then took 2.5 minutes each, in turn, with no swap.
+  192 MB of carveout still ran out on photos in a row (`get_pages` -28 with `0117`), so
+  boot image 227 runs `msm.vram=256m cma=320M`. LightDM restarts itself after a session
+  ends so autologin runs again. The shift: 30 stream starts and six starved streams
+  stayed aligned, but two of three 1500-frame runs ended 96 rows down; not solved.
 
 ## Parked patches
 

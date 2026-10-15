@@ -47,7 +47,8 @@ that makes mainline do the same.
     tools/camera/     capture and analysis scripts for the rear camera
     tools/re/         disassembler and emulator for stock's ARM libraries
     userspace/        MAC address service, journald setting, camera udev rule,
-                      libcamera configuration and the Megapixels config
+                      libcamera configuration, the Megapixels config and the
+                      LightDM relogin hook
     docs/building.md  building, flashing and the first-boot setup
     docs/notes.md     what each part needed and why, with the measurements
     docs/next-steps.md  current state and what comes next

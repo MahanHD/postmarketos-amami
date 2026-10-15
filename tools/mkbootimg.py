@@ -50,7 +50,11 @@ PAGE_SIZE = 2048
 # plymouth.enable=0     - plymouth wedges the boot on this device
 # msm.vram / carveout   - keep even when an IOMMU is in use: if it fails to probe,
 #                         msm_use_mmu() goes false and this is the fallback that
-#                         still gives a display instead of nothing
+#                         still gives a display instead of nothing. The display
+#                         has no IOMMU, so every GPU buffer comes from it too:
+#                         256m because a 20MP capture in Megapixels needs
+#                         nearly all of 192m. cma= holds it plus 64MB for the
+#                         camera's contiguous buffers (0115).
 # panic_on_rcu_stall +  - the panic net, so an unattended wedge reboots and leaves
 # panic=10                a pstore record instead of hanging forever
 # rcu_exp_cpu_stall_timeout - MILLISECONDS, unlike its sibling which is seconds.
@@ -61,7 +65,7 @@ PAGE_SIZE = 2048
 # "deep" the default and an ordinary idle suspend takes the collapse path. Pinning
 # it to s2idle keeps "deep" opt-in via /sys/power/mem_sleep.
 BASE_CMDLINE = (
-    "plymouth.enable=0 msm.vram=192m msm.allow_vram_carveout=1 "
+    "plymouth.enable=0 msm.vram=256m cma=320M msm.allow_vram_carveout=1 "
     "sysctl.kernel.panic_on_rcu_stall=1 panic=10 "
     "rcupdate.rcu_exp_cpu_stall_timeout=21000 mem_sleep_default=s2idle"
 )

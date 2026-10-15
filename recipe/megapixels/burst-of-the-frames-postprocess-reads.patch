@@ -1,0 +1,48 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] io_pipeline: capture only the frames postprocess.sh reads
+
+The burst grows with the analogue gain, up to 11 frames, for
+postprocessors that stack them. The stock postprocess.sh develops one
+frame, 1.dng, and skips the first after the mode switch. On a 20MP
+sensor each frame is a 26MB DNG written to /tmp, which on postmarketOS
+is held in RAM: a few photos in a row filled its 939MB, pushed a 2GB
+phone deep into swap and left bursts behind whenever a postprocess run
+did not finish.
+
+Capture two frames.
+
+---
+--- a/src/io_pipeline.c	2026-10-15 21:28:55.821616376 +0400
++++ b/src/io_pipeline.c	2026-10-15 21:29:17.805311224 +0400
+@@ -168,22 +168,22 @@
+ static void
+ capture(MPPipeline *pipeline, const void *data)
+ {
+-        float gain_norm;
+-
+         // Disable the autogain/exposure while taking the burst
+         mp_camera_control_set_int32(&state_io.gain.auto_control, 0);
+         mp_camera_control_set_int32(&state_io.exposure.auto_control,
+                                     V4L2_EXPOSURE_MANUAL);
+ 
+-        // Get current gain to calculate a burst length;
+-        // with low gain there's 3, with the max automatic gain of the ov5640
+-        // the value seems to be 248 which creates a 5 frame burst
+-        // for manual gain you can go up to 11 frames
+         state_io.gain.value = mp_camera_control_get_int32(&state_io.gain.control);
+         state_io.dgain.value = mp_camera_control_get_int32(&state_io.dgain.control);
+-        gain_norm = (float)state_io.gain.value / (float)state_io.gain.max;
+-        state_io.burst_length = (int)fmax(sqrtf(gain_norm) * 10, 2) + 1;
+-        state_io.burst_length = MAX(1, state_io.burst_length);
++
++        /*
++         * Capture the two frames postprocess.sh reads: it skips the first
++         * after the mode switch and develops 1.dng. Upstream grows the burst
++         * with the gain, to 11 frames, for postprocessors that stack them;
++         * none does here, and at 20MP each frame is 26MB in a /tmp held in
++         * RAM.
++         */
++        state_io.burst_length = 2;
+         state_io.captures_remaining = state_io.burst_length;
+ 
+         // Change camera mode for capturing

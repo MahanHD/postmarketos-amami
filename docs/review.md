@@ -156,3 +156,10 @@ Photos then failed one time in two, on the switch back to preview: the capture p
 `MSM_MADV_DONTNEED`, which only the shrinker purges, on system memory pressure. `0117`
 purges them from the allocation that does not fit. Verified on r227: four photos in a
 row, no `get_pages` failures, every DNG and JPEG written.
+
+The same evening Megapixels' bursts filled the 939 MB RAM-backed /tmp (up to 11 frames of
+26 MB a photo, of which `postprocess.sh` reads one) and photos developed in parallel; the
+Xfce session aborted on a libwnck icon assertion in the middle of that. Megapixels r8
+captures two frames and queues the development, LightDM logs back in after a session
+ends, and the carveout is 256 MB, since 192 MB still ran out on photos taken in a row.
+The preview's occasional shift is open (`next-steps.md`, camera item 8).

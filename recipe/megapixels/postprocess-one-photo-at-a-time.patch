@@ -1,0 +1,24 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] postprocess.sh: develop one photo at a time
+
+Each run of dcraw_emu and ImageMagick on a 20MP frame takes hundreds
+of megabytes and minutes on this phone. Photos taken in a row were all
+developed at once; four pushed 1.6GB into swap and took ten minutes.
+Take a lock, so they queue.
+
+---
+--- a/data/postprocess.sh	2026-10-15 21:28:55.818320782 +0400
++++ b/data/postprocess.sh	2026-10-15 21:29:17.805768963 +0400
+@@ -24,6 +24,12 @@
+ 	exit 2
+ fi
+ 
++# Develop one photo at a time. Each takes hundreds of megabytes, and photos
++# taken in a row would otherwise all run at once and push the phone into swap.
++if [ -z "$MP_POSTPROCESS_LOCKED" ] && command -v flock > /dev/null; then
++	MP_POSTPROCESS_LOCKED=1 exec flock "${XDG_RUNTIME_DIR:-/tmp}/megapixels-postprocess.lock" "$0" "$@"
++fi
++
+ BURST_DIR="$1"
+ TARGET_NAME="$2"
+ SAVE_DNG="$3"
