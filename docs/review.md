@@ -7,7 +7,7 @@ compares it with stock where that applies, fixes what it finds and records it he
 | Pass | Area | State |
 |---|---|---|
 | 1 | GPU and GPU memory (`0089`, `0105`-`0114`, `debug/9021`) | done, r220 |
-| 2 | Camera stack: imx200 driver, camss patches, `recipe/libcamera`, `recipe/libdng`, `recipe/libmegapixels`, `recipe/megapixels`, `userspace/megapixels` | to do |
+| 2 | Camera stack: imx200 driver, camss patches, `recipe/libcamera`, `recipe/libdng`, `recipe/libmegapixels`, `recipe/megapixels`, `userspace/megapixels` | done, r226 |
 | 3 | amami and msm8974 device tree: CPU rail and OPPs, regulators, the DT patches | to do |
 | 4 | The other kernel patches, by subsystem: display, sensors, charging, CPU hotplug, WiFi/BT, audio | to do |
 | 5 | Tools, recipes and docs: stale or contradicting text, tools nobody uses | to do |
@@ -82,3 +82,61 @@ Found for later passes:
 - 97 of the 107 patches (83 of those built) have no From/Subject header; their reasons
   live in `README.md` and the docs. Needed before anything goes upstream (pass 4).
 - `0087` (amami camss) applies with fuzz 2 at a 338 line offset in every build (pass 3).
+
+## Pass 2: camera stack
+
+`/code-review` (medium) over `0085`-`0087`, `0090`-`0104`, `recipe/libcamera`,
+`recipe/libdng`, `recipe/libmegapixels`, `recipe/megapixels`, `userspace/` and
+`tools/camera/`. Ten candidates:
+
+| # | Finding | Verdict | Done |
+|---|---|---|---|
+| 1 | `imx200` starts streaming before it writes the mode, so the first frame or two of a binned stream arrive at full size into buffers sized for the mode | real, and worse than it looked: the VFE wrote them past the buffer | new `0116`; see below |
+| 2 | the mode tables reset the digital gain after the controls were applied | real; worse again, stream-on reset exposure, gain and frame length too | `0103`: controls after the mode, after stream-on |
+| 3 | autofocus kept the lens powered by resending its position every 20 frames, longer than the lens's 3 s power-down at night frame rates | real | `0103` links the lens to the sensor (runtime PM device link); `recipe/libcamera` `0007` drops the resend |
+| 4 | autofocus credits a sharpness sample to the position just requested, while frames in flight were exposed at the old one | plausible, not shown | none yet; AF converges in practice |
+| 5 | `reference_ == 0` means "not set", so an all-black scene never sets one | real, harmless (no rescan in the dark) | none |
+| 6 | the shipped kernel carries debug patches: `9006`, `9009`, `9010` (the camera depends on them), `9007`, `9008` | real | `9006`/`9009`/`9010` became `0115`; `9007`/`9008` out of the build |
+| 7 | a failure after stream-on left the sensor streaming | real | `0103` puts it back to standby |
+| 8 | the IMX200 parts of the CCS patches are dead since `0104` | real | `0091`-`0096` and `0098` out of the build (kept for the IMX132) |
+| 9 | the AF range in `imx200.yaml` is this unit's EEPROM values | valid | none: there is no interface to pass the EEPROM's range to libcamera |
+| 10 | `settle-sweep.py` counted interrupts on two CPUs of four | real | counts every online CPU |
+
+### Stream-on and 0x3004-0x3005
+
+The finding behind #1 was that stream-on resets the readout registers. Stock writes
+0x3004-0x3005 first in every mode table, and with it set the registers survive
+stream-on (read back over `i2c-3` with the sensor powered by hand). But 0x3004-0x3005
+selects one of the sensor's own clock presets: every value except the reset 0x007f gave
+frames of pure noise or none (`debug/9022` tried each), with or without stock's 0x0108
+lane count, because the presets are made for stock's 8 MHz clock and this port runs the
+sensor from 19.2 MHz through the SMIA PLL registers. 0x007f means "no preset", and with
+it every stream-on reloads the readout defaults. So the mode has to be written after
+stream-on, as before, and the oversized first frames have to be contained where they
+land.
+
+### The VFE wrote past its buffers
+
+camss runs RDI write masters frame-based, and in that mode the image size and buffer
+configuration registers are ignored: an oversized frame is stored from the buffer
+address on, however long it is. Measured with a canary (`tools/camera/canary.c`: four
+buffers, two of them never queued and filled with 0xa5): a full-size frame into a
+2624x1976 stream overwrote 5.8 MB of a buffer that was never queued, and stock's
+`WR_BUFFER_CFG` on its own did not stop it. In line-based mode with the image size set,
+the canary survived and correctly sized frames came out identical. `0116` writes the
+VFE 4.1 RDI masters line-based and aligns RDI `bytesperline` to 16 bytes, as the PIX path
+already is. On r226 the canaries stay intact in every mode.
+
+### The 1312x988 mode never worked
+
+The stock 4x4 modes (1312x988) depend on the output width taking effect at stream-on.
+Written after it, binning switches but the sensor keeps sending 2624-pixel lines: the
+raw data has a period of 3280 bytes, the VFE completes one frame in four, and the
+stream after it wedges camss. Every 1312 frame since the mode-after-stream-on change was
+garbage, r220 included (the SMIA scaler cannot be switched on mid-stream either). The
+mode is gone from `0103`, and Megapixels previews at 2624x1976.
+
+Verified on r226: canaries intact in all three modes; every mode streams with the
+registers, the 2x digital gain and the lens state as set, and the lens powers down with
+the sensor afterwards; Megapixels previews at 2624x1976 and libcamera r8 streams 720p at
+33 fps. The colour check of a daylight photo is still to do.

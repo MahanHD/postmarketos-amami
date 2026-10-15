@@ -75,7 +75,7 @@
  };
 --- /dev/null
 +++ b/src/ipa/simple/algorithms/af.cpp
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,158 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
 + * Contrast detection autofocus
@@ -107,8 +107,6 @@
 +/* While holding, rescan after this many samples this far from the reference */
 +static constexpr double kDrift = 0.7;
 +static constexpr unsigned int kDriftSamples = 3;
-+/* While holding, resend the position this often (in statistics samples) */
-+static constexpr unsigned int kRefreshSamples = 5;
 +
 +int Af::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
 +{
@@ -210,7 +208,6 @@
 +		state_ = State::Hold;
 +		reference_ = 0;
 +		drift_ = 0;
-+		holdCount_ = 0;
 +		moveTo(context, best().position);
 +		break;
 +
@@ -226,14 +223,8 @@
 +		else
 +			drift_ = 0;
 +
-+		if (drift_ >= kDriftSamples) {
++		if (drift_ >= kDriftSamples)
 +			state_ = State::Idle;
-+			break;
-+		}
-+
-+		/* Keep the lens powered: it switches off when left alone */
-+		if (++holdCount_ % kRefreshSamples == 0)
-+			moveTo(context, position_);
 +		break;
 +	}
 +}
@@ -245,7 +236,7 @@
 +} /* namespace libcamera */
 --- /dev/null
 +++ b/src/ipa/simple/algorithms/af.h
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,67 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
 + * Contrast detection autofocus
@@ -308,7 +299,6 @@
 +	std::vector<Sample> samples_;
 +	double reference_ = 0;
 +	unsigned int drift_ = 0;
-+	unsigned int holdCount_ = 0;
 +};
 +
 +} /* namespace ipa::soft::algorithms */

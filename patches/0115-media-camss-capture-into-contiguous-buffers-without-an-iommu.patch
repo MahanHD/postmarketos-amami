@@ -1,0 +1,67 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] media: camss: capture into contiguous buffers without an IOMMU
+
+The VFE is given one DMA address per plane. Behind an IOMMU a dma-sg buffer
+is mapped to one range, so that is enough; without one, the VFE would write a
+scattered buffer straight past its first segment. That is why CAMSS depends
+on IOMMU_DMA, which 32-bit ARM does not have, so msm8974 could not build it.
+
+When the device has no IOMMU, use dma-contig buffers, which are one address
+by construction, and drop the IOMMU_DMA dependency. With an IOMMU nothing
+changes.
+
+Replaces debug/9006, 9009 and 9010.
+
+--- a/drivers/media/platform/qcom/camss/Kconfig
++++ b/drivers/media/platform/qcom/camss/Kconfig
+@@ -2,8 +2,9 @@
+ 	tristate "Qualcomm V4L2 Camera Subsystem driver"
+ 	depends on V4L_PLATFORM_DRIVERS
+ 	depends on VIDEO_DEV
+-	depends on (ARCH_QCOM && IOMMU_DMA) || COMPILE_TEST
++	depends on ARCH_QCOM || COMPILE_TEST
+ 	select MEDIA_CONTROLLER
+ 	select VIDEO_V4L2_SUBDEV_API
+ 	select VIDEOBUF2_DMA_SG
++	select VIDEOBUF2_DMA_CONTIG
+ 	select V4L2_FWNODE
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -13,6 +13,7 @@
+ #include <media/v4l2-device.h>
+ #include <media/v4l2-ioctl.h>
+ #include <media/v4l2-mc.h>
++#include <media/videobuf2-dma-contig.h>
+ #include <media/videobuf2-dma-sg.h>
+ 
+ #include "camss-video.h"
+@@ -155,6 +156,12 @@
+ 	unsigned int i;
+ 
+ 	for (i = 0; i < format->num_planes; i++) {
++		/* A contiguous buffer is one DMA address already */
++		if (vb->vb2_queue->mem_ops == &vb2_dma_contig_memops) {
++			buffer->addr[i] = vb2_dma_contig_plane_dma_addr(vb, i);
++			continue;
++		}
++
+ 		sgt = vb2_dma_sg_plane_desc(vb, i);
+ 		if (!sgt)
+ 			return -EFAULT;
+@@ -714,7 +721,15 @@
+ 
+ 	q = &video->vb2_q;
+ 	q->drv_priv = video;
+-	q->mem_ops = &vb2_dma_sg_memops;
++	/*
++	 * The VFE takes one DMA address per plane, so scattered buffers only
++	 * work behind an IOMMU, which maps them to one range. Without one (the
++	 * 32-bit SoCs, which have no IOMMU_DMA) take contiguous buffers instead.
++	 */
++	if (device_iommu_mapped(video->camss->dev))
++		q->mem_ops = &vb2_dma_sg_memops;
++	else
++		q->mem_ops = &vb2_dma_contig_memops;
+ 	q->ops = &msm_video_vb2_q_ops;
+ 	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+ 	q->io_modes = VB2_DMABUF | VB2_MMAP | VB2_READ;

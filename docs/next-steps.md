@@ -3,13 +3,14 @@
 Where the port stands and what comes next, in order. The history behind every item
 is in `worklog.md`; the settled findings are in `notes.md`.
 
-## Current state (2026-10-12)
+## Current state (2026-10-15)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 220, with the boot image
-from 220 (`uname -v` prints `#221`). `0105` (kgsl's power-on fixup) stays parked (GPU
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 226, with the boot image
+from 222 (`uname -v` prints `#223`; nothing built in or in the device tree changed since). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
-from this repo: libcamera r7 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libmegapixels
-r1 and Megapixels r2 (`recipe/libmegapixels`, `recipe/megapixels`), with
+from this repo: libcamera r8 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libdng r1,
+libmegapixels r2 and Megapixels r6 (`recipe/libdng`, `recipe/libmegapixels`,
+`recipe/megapixels`), with
 `userspace/megapixels/*` in `/usr/share/megapixels/config/`. The GPU runs behind its
 IOMMU since r204 (`0034`-`0036`); the display still uses the VRAM carveout, and so do all
 GPU buffers, which are cleared on allocation since r206 (`0106`). Install the package for module changes and rebuild the boot image with
@@ -26,8 +27,8 @@ The camera loads at boot and works in GNOME Snapshot through libcamera and PipeW
 in Megapixels. `capture.sh` still works for raw frames; at night it needs `VBLANK=30000`,
 a long exposure and gain 240, or the frame is black.
 
-**Review in progress:** `review.md` holds a pass-by-pass review of the whole port; pass 1
-(GPU) is done, pass 2 (camera) is next.
+**Review in progress:** `review.md` holds a pass-by-pass review of the whole port; passes 1
+(GPU) and 2 (camera) are done, pass 3 (device tree) is next.
 
 **Where to pick up:** the GPU power-on hang is fixed (`0111`, item 4: two hour-long
 soaks on r214 with 0 hangs, against 3 to 9 before) and the CPU runs to 1.5 GHz
@@ -91,11 +92,14 @@ Snapshot's cairo stopgap is gone.
    capture buffers.
 4. **Tuning.** White balance and exposure are libcamera's simple defaults. The EEPROM's
    remaining bytes and stock's `exposure_ctrl.dat` may hold better starting points.
-5. **The first binned frames** come out at full size, because stream-on resets the mode.
-   This also wedges camss when Megapixels starts the 2624x1976 mode, so that mode is left
-   out of its config until the sensor's mode switching is understood (stock's 0x3004
-   group is the lead).
-6. **Stream reliability.** A stream after a failed one can still wedge camss.
+5. **The first binned frames** still come out at full size: stream-on reloads the
+   readout registers, and the clock presets that would keep them (0x3004-0x3005) are made
+   for stock's 8 MHz clock (review pass 2). `0116` stops the VFE writing them past the
+   buffer. Making 8 MHz (an M/N MCLK, which `0090` removed because it came out wrong)
+   would let the sensor run stock's tables as they are, 4x4 modes included.
+6. **A cheap preview mode.** The 1312x988 mode is gone (it never delivered 1312-pixel
+   lines), so previews run at 2624 wide and Megapixels' auto exposure takes about a
+   minute to settle at night, dropping frames on the way.
 
 ## CPU above 1.5 GHz
 
@@ -116,8 +120,8 @@ broken (PLL op minimum above maximum), so it needs a quirk of its own first.
 
 ## Later
 
-- The CAMSS IOMMU, to replace the contiguous-buffer workaround (`debug/9009`,
-  `debug/9010`).
+- The CAMSS IOMMU, which would let CAMSS use scattered buffers (`0115` takes
+  contiguous ones without it).
 - Small cleanups: `THERMAL_EMULATION`, the leftover half of the CPU wedge work, the
   cosmetic 307200 kHz warning, and `/boot` mounting as an unchecked filesystem.
 - Audio stays parked.

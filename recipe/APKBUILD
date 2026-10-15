@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=220
+pkgrel=226
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -104,14 +104,7 @@ source="
 	0087-arm-dts-amami-enable-the-camss.patch
 	0089-drm-msm-do-not-shmem-truncate-a-vram-object-on-purge.patch
 	0090-clk-qcom-mmcc-msm8974-list-only-mclk-rates-without-mn.patch
-	0091-media-ccs-ignore-ccs-only-limits-on-smia-sensors.patch
-	0092-media-ccs-initialise-the-binner-and-pixel-array-state.patch
-	0093-media-ccs-keep-the-pixel-array-and-sink-formats-in-the-state.patch
-	0094-media-ccs-add-a-lane-speed-quirk-for-sony-imx200.patch
-	0095-media-ccs-start-the-sensor-only-from-the-source-subdev.patch
-	0096-media-ccs-give-quirk-register-tables-their-width.patch
 	0097-media-camss-let-the-board-set-the-csiphy-hs-settle-time.patch
-	0098-media-ccs-write-the-imx200-stock-init-and-window-tables.patch
 	0099-media-camss-size-the-msm8974-csid-and-vfe-clocks-for-16-bit-paths.patch
 	0100-arm-dts-amami-add-the-rear-camera.patch
 	0101-media-i2c-add-a-driver-for-the-rohm-bu64296-lens-actuator.patch
@@ -127,11 +120,8 @@ source="
 	0112-arm-dts-amami-give-the-cpus-their-rail-and-run-them-up-to-1-5ghz.patch
 	0113-drm-msm-never-evict-a-vram-carveout-object.patch
 	0114-drm-msm-divide-by-all-of-the-elapsed-time-in-retire-submit.patch
-	9006-debug-camss-allow-arm32-bringup.patch
-	9007-debug-amami-describe-the-front-camera.patch
-	9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
-	9009-debug-camss-refuse-non-contiguous-buffers-without-iommu.patch
-	9010-debug-camss-use-contiguous-buffers-without-iommu.patch
+	0115-media-camss-capture-into-contiguous-buffers-without-an-iommu.patch
+	0116-media-camss-vfe-4-1-stop-rdi-writes-at-the-end-of-the-buffer.patch
 	9000-debug-regmap-allow-write-debugfs.patch
 	9001-debug-sns-reg-extra-group.patch
 	9002-debug-scan-offload-ie-trim.patch
@@ -243,19 +233,12 @@ e80b56e3403220953b4607c702d0b64affbae64795f2aada4322bed5bc878c5c639ca089e18e18a6
 fcaa804c0665860a8383f45d345753de9e9745217b64a8efbd058db93537faa52dbbc51649b500c3e65a989004da965f4c82f8bf27965faf96719854143d40d6  0087-arm-dts-amami-enable-the-camss.patch
 9f7c28264d1c4e99c2b05a6a0cb6c720a06d603b2990dd80b18e9f708eebb2dbccad1f919e0282e1d7996b9127fba484a65f753ee5d1c2f9b42657b6a964198f  0089-drm-msm-do-not-shmem-truncate-a-vram-object-on-purge.patch
 5796eea285c9c26948e1c672d5b52f1e29e381750b0da8161998661fa59c58f4ce2104020341e67839cac7046a95e226afb40266273b0c3c9e4b8f0214c7f773  0090-clk-qcom-mmcc-msm8974-list-only-mclk-rates-without-mn.patch
-1e3748a0dd8638b0702787dbd16d2981170b78cea6dc302d7ab847e8fc1fa1cbeb6e2c7ea50fe02dd6e6048f35d55c057ae963edb7bdc51755b71ce6afebe06d  0091-media-ccs-ignore-ccs-only-limits-on-smia-sensors.patch
-57ddec076e4d3df8f3a92be725db9b7353344d25c06e72fd51eb2a4bf1887cfe278f478292876803f3db88e1cc67ca1571e1379acab48198ee40eee4a5ba7fdd  0092-media-ccs-initialise-the-binner-and-pixel-array-state.patch
-9fc5d4bf0833a2eff4a689fabe0e9428c1643cde4bffb1c3b6c7a4086b4b81f0b95e61dd03051c0c54b67cb9b115c35e85ea8fd3baf7a4fd1fbf33d92f8b5fc9  0093-media-ccs-keep-the-pixel-array-and-sink-formats-in-the-state.patch
-48796e3251ec8daee533feb903b3537ba8ac3713907f42e7453af1709847b2728556f3aa5318678a9db2d3400c842b73c491e6fe0b4d24694c95975142a77c8c  0094-media-ccs-add-a-lane-speed-quirk-for-sony-imx200.patch
-17b35a2bcfa007503cb0f3fe846362f0b82464264dacc4b4660b9825731eea67ae4f843ee53def662e693a544ea1e90107c0578061003259c75716274dd0da71  0095-media-ccs-start-the-sensor-only-from-the-source-subdev.patch
-62bb2837c84ab1b04075f4a47ce4d7b735c4185b8207719e92442b43e7c308e622e40750b3d17d05845320f9b0e15058d41cf2aeea4362efd05c4976775f8979  0096-media-ccs-give-quirk-register-tables-their-width.patch
 3272f4e2450a1cda02ed465a351388e850be0493abcc092e9630a139d40e240272eac0df5e3eeb0b5eda27f8cbc6acdd06d96ff95fffdcdaf8729297048bb30b  0097-media-camss-let-the-board-set-the-csiphy-hs-settle-time.patch
-3c29c8e7912d3b249fc7275ea50904376b8238d8dc9874108978a3189badb2591d6e88852a74eee77f1949118106edda60347c3414006bcd113abb471ab9227a  0098-media-ccs-write-the-imx200-stock-init-and-window-tables.patch
 cfc3e9f7ad56d3af5f44b778f968f7df1361d7e7a0fa84555f712d716773a00ed084c952ebc60e53c114d53a3e93834fbdc9860d9804182aa1c3f68b500a3da4  0099-media-camss-size-the-msm8974-csid-and-vfe-clocks-for-16-bit-paths.patch
 138882dd979b7227def914bd80e9dd42e77442c6142983183466a76f8892bd543d065b783db32e767e9726bbee9b99cbae18ec39674490200047c497ce87bc1d  0100-arm-dts-amami-add-the-rear-camera.patch
-ff6994392d5439350f85a962ebd0767bbfd239eb7addfb246f386959dba19e1f04e49449688fcbfa6147c7d1807629cfd9c58ccd642316e98d82e2a83ac6de16  0101-media-i2c-add-a-driver-for-the-rohm-bu64296-lens-actuator.patch
+81a0764d8dd8defb576f189c292fed9c74ac53aa6438a5da95206003520066b4cb7c1defa2696286457cd13118a385528b36b182e23a8beb18cdcd567dc82014  0101-media-i2c-add-a-driver-for-the-rohm-bu64296-lens-actuator.patch
 078ea3499e898ce3b058332e8897415ba50d21049622a7733462ce3a56637d50f125fb1ea13843b8d41f4e9865b22861db56701166413cafd469fee96f4436ab  0102-arm-dts-amami-add-the-rear-camera-focus-actuator.patch
-cb576f77dfe883b4cf63a3ca855b90781e736d20f6959bb095fb3e93cdeb28aac1ce5a5114019748a454f8918fb32ba9e427f57055b5451496a9a64af95d19d9  0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
+c0ecdb51983af9278c0811857743053eda104321aa367bc3bc0727e592dcb26abffa52a1a166b97ae5f7cdaa4dc75fdfdda4c1e49ab9fd9f7a06606f93daed65  0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
 6f2fbfa9942e3875dd89ee0ea4632c5693ea33997febcf4ab79269cd14ab1f1fe58831acd115f76e225972cc924f148a438ac5dea8ab6af9ef6a915cab79f560  0104-arm-dts-amami-drive-the-rear-camera-with-the-imx200-driver.patch
 593a9532010566e10595b58814f2b576e383a9b380fac1ac5a067e50c7cec5b2446ca5d630f83e1279badad1ab156472e2d85751d9129fbc63d71f23fc17d1fb  0106-drm-msm-clear-carveout-buffers-when-they-are-allocated.patch
 71335be6ac0ccbac11e337ba6a524148e6207b045fd15168ddcb47268f31626ceb7fcad01464181cc67c1ab0de426b31d060fe883c16132141aa1306091f6950  0107-drm-msm-a3xx-report-the-gpu-s-error-interrupts.patch
@@ -266,11 +249,8 @@ a86fd4730caa19de47dea5e6d6c743d6de8a6a97b941f2cec648b144feee8bdaf4cf9fae5622371c
 62da61579d6ac5de5beedcd88c74f19853c0af0f45ff7c517e842feb5ce69964494ff0c5c35d0d1d69efaa5b72b7999cef38eeb88d493d77d1554fcb3e8ba172  0112-arm-dts-amami-give-the-cpus-their-rail-and-run-them-up-to-1-5ghz.patch
 f70efd8bedb66e985182e8b5ac3453b78c257176aa10aa2308e612ae778ae48d4da86f7e47df008392745db0cd8c67008940936ff298df4a2d486e796ed416a0  0113-drm-msm-never-evict-a-vram-carveout-object.patch
 a20af1bd13103cb4d80c59dd2710424b9d9999d89b6daef9ae358f13f79bc03c517164d3eed7ecf8aca1bf882687d79ee176221038893d68fb684627436c4a05  0114-drm-msm-divide-by-all-of-the-elapsed-time-in-retire-submit.patch
-33d0a8c71b69ccf92e17f7ddaf27baa00c6fb5045533847f87cd9d7a22cce83017388e4c409dd275c4a0ad1594db169791dff0c54b52fc92d46cad5b806960e4  9006-debug-camss-allow-arm32-bringup.patch
-5ca89212cb516c0b6319e8bdfc2aecdce9f1fe5dd9cb8f1d04175530268990d87a7e8a5f38db5a623dd549012dc7d55c61bc87cab792b6bdb24279567a2dc469  9007-debug-amami-describe-the-front-camera.patch
-4c5f60e1629f4a8b84338ecc96ec35cb6588aaef916a2bc4c61dafcece1cc62c9e99e40bf33155188e89e27f60e30f7630e6317facac4aa69cc45a99ea9d0dcb  9008-debug-imx219-accept-19m2-xclk-for-id-only.patch
-380f83fc1d862cd307b03953af29bdfae9cb016e87b46bc907bf4d80c9a34249383d671ff398b5cef7d012a6c793918098513ad023ad87951d9b4a2d00583b70  9009-debug-camss-refuse-non-contiguous-buffers-without-iommu.patch
-6ce5c4a3e245eb267b92c1cd1083dcf37ff12a3d0b3f7b74d54338a86eadeff93ba0e012a0c8084e1814aedec522a3fb12d22372c0dbda86bb60e9c0beeed234  9010-debug-camss-use-contiguous-buffers-without-iommu.patch
+0f347a93e63e75d4358351c36d7bc75f95d45c1ef228485f57a9799a085583aba4be34132a034acc62b22a7352894cd5e7a339e2f7f2850529c4bdd835e7a6ed  0115-media-camss-capture-into-contiguous-buffers-without-an-iommu.patch
+b99e6389e15f203813403bfa484f42d6b9f9c7815dfc52a23a104f344eb7c94f82140da984e385d5af88018d3803a34f017a763f14f28b10cfd7b76475fae932  0116-media-camss-vfe-4-1-stop-rdi-writes-at-the-end-of-the-buffer.patch
 bc846a809fa4aac7142d6b242f602e436109287c0176a3df9d3d6f2711d6d8d8c2d1a15e55c0f80c2dff719484b2d1c5bd3c09799bd91dd9ffd5a95e4795b0cf  9000-debug-regmap-allow-write-debugfs.patch
 ef932ace6d9144afd9cb89d97895a0a448f8e09d666b214ffdf87fb6b3e7d4d3874956c62431483daff46b0bce41682a8f69311c1446209e14a980c2d82bf271  9001-debug-sns-reg-extra-group.patch
 c5c81ae047103cff73fc74aee1bd27a5a212f3af60c98e6aece8867995325d3c3194c66ef44ddc0dd55620e4286b3744a99e5dbe645c7b20bfe227e23ee8864b  9002-debug-scan-offload-ie-trim.patch

@@ -1354,14 +1354,21 @@ table, the PLL that CCS arrived at from 19.2 MHz, and four of stock's modes with
 register tables. Things it had to learn:
 
 - Writes made within a few milliseconds of releasing reset are lost; it waits 20 ms.
-- **Starting the stream resets the readout registers** (binning, window, output size)
-  to full resolution. Read back 50 ms after `0x0100 = 1`, `0x0391` had gone from 0x22 to
-  0x11. Written after stream-on they hold, so the driver writes the mode then; the first
-  frame or two of a binned stream still come out at full size. Restarting the stream to
-  avoid that reset the phone.
+- **Starting the stream resets the readout registers** (binning, window, output size,
+  frame length, exposure, gain) to full resolution. Read back 50 ms after `0x0100 = 1`,
+  `0x0391` had gone from 0x22 to 0x11, on every stream-on. The cause is 0x3004-0x3005:
+  stock writes it first in each mode table, and it selects one of the sensor's own clock
+  presets, which keep the registers. Those presets are made for stock's 8 MHz clock; at
+  19.2 MHz every value except the reset 0x007f gives noise or no frames. With 0x007f the
+  mode has to be written after stream-on, the controls after the mode, and the first
+  frame or two still come out at full size. Before `0116` the VFE wrote those past the
+  end of the buffer, which is what "restarting the stream reset the phone" was.
+- **Only 2x2 binning switches after stream-on.** The output width does not, nor the
+  SMIA scaler, so stock's 4x4 modes (1312x988) kept sending 2624-pixel lines: every
+  1312 frame was garbage, and the stream after one wedged camss. The mode is gone.
 - Measured line times: 14.93 us at full resolution and 10.11 us in every binned mode, so
   the pixel rate is 395.5 MHz or 583.9 MHz. Frame rates: 16.8 fps at 5248x3936, 48.8 at
-  2624x1976, 64.7 at 2624x1480 and 95.9 at 1312x988.
+  2624x1976 and 64.7 at 2624x1480.
 - **Lens shading on the sensor, as stock does it.** `libcammw` uploads 63 16-bit gains
   per channel (8.8 fixed point, so the 9x7 grid exactly) to 0x4800 and 0x48fc, two
   channels interleaved in each, then sets 0x0700 = 1, 0x4500 = 0x1f and 0x3a63 = 1. The
@@ -1444,8 +1451,8 @@ is no hang, but Megapixels' preview then freezes after a few frames, and with
 five minutes: trigger, then read `/sys/class/devcoredump/devcd*/data` at once.
 
 **Megapixels** finds `sony,xperia-amami.conf` by the device-tree compatible. Getting a
-frame with `megapixels-getframe` works at 1312x988 and 5248x3936; the 2624x1976 mode
-wedges camss (its first frames come out at full size, see the stream-on reset above).
+frame with `megapixels-getframe` works at 2624x1976 and 5248x3936, and the preview runs at
+2624x1976 (the 1312x988 mode never worked, see the stream-on reset above).
 Without a colour profile its preview is green. It looks for a DNG profile named
 `<compatible>,<camera>.dcp`, where the camera is the config section name with its case
 kept: `sony,xperia-amami,Rear.dcp`.

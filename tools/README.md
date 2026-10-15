@@ -155,6 +155,9 @@ from.
   first, because touching those registers with the clock off can hang the bus.
 - `settle-sweep.py` steps through settle values during a stream and reports PHY errors,
   VFE interrupts and the CSID packet and ECC counters for each.
+- `canary.c` checks whether the VFE writes past a capture buffer: two of four buffers
+  are never queued and keep a 0xa5 pattern unless something overwrites them. This is
+  how the frame-based RDI overflow behind `0116` was measured.
 - `sensor-reg.sh` reads or writes sensor registers over `/dev/i2c-3` during a stream
   (needs i2c-tools). Reading the sensor back is how exposure and gain were ruled out
   when the picture was black.

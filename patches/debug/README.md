@@ -63,7 +63,7 @@ question that will come up again.
 `9005` dumps the MPM's vMPM enable masks at suspend. Each answered one question in the
 GPU IOMMU and deep suspend work. None of them is in the build.
 
-## 9006 - CAMSS on arm32
+## 9006 - CAMSS on arm32 (now `0115`)
 
 `VIDEO_QCOM_CAMSS` depends on `IOMMU_DMA`, which 32-bit ARM cannot select. This drops
 the dependency so the driver can be built for bring-up. Real use wants the CAMSS IOMMU.
@@ -80,7 +80,7 @@ linked sensor before registering anything.
 Lets imx219 accept a 19.2 MHz clock and dump a sensor's ID header and EEPROM. It is how
 both sensors were identified, before they moved to the CCS driver.
 
-## 9009 and 9010 - buffers without an IOMMU
+## 9009 and 9010 - buffers without an IOMMU (now `0115`)
 
 Without an IOMMU the VFE only gets the first segment of a scatter-gather buffer and
 writes the whole frame from there. `9009` refuses such buffers; `9010` switches CAMSS
@@ -103,3 +103,20 @@ programmed its own, when the `imx200_pll` module parameter is set. The sensor ig
 them (same frame rate, CCS's values on readback), so it is out of the build. Kept as the
 starting point for trying it before CCS's PLL setup instead.
 
+
+## 9021 - switch the GPU's memory retention at run time
+
+Out of the build since review pass 1; the GPU hangs it was for were the shrinker
+(`0113`).
+
+## 9022 - write IMX200 registers just before stream-on
+
+Adds an `imx200` module parameter, `dbg_regs`, a list of `0xAAAAVV` values (16-bit
+address, 8-bit value) written after the mode tables and before the controls:
+
+    echo 0x300400,0x30057f > /sys/module/imx200/parameters/dbg_regs
+
+This is how 0x3004-0x3005 was pinned down (review pass 2): one build, then each
+candidate is a capture instead of a kernel build. It was written against the driver
+order of r223 (mode before stream-on), so it needs rebasing onto the current
+`0103` before it goes back into a build.

@@ -40,6 +40,8 @@ that makes mainline do the same.
     recipe/mesa/      Mesa with the Adreno 330 fix for GTK4's GL renderer
     recipe/megapixels/ Megapixels with its colour profile handling fixed
     recipe/libmegapixels/ libmegapixels with frame rates through vertical blanking
+                      and the config's black level
+    recipe/libdng/    libdng with DNG white balance and black level written correctly
     tools/            helper scripts (boot image, firmware unpacking, probes)
     tools/camera/     capture and analysis scripts for the rear camera
     tools/re/         disassembler and emulator for stock's ARM libraries
@@ -159,7 +161,7 @@ The ADSP audio services, a SLIMbus controller for msm8974, and a WCD9320 (Taiko)
 codec driver, which mainline did not have. The codec probes and all of its
 registers work, but no samples move over SLIMbus in either direction yet.
 
-**Camera** (`0085`-`0104`)
+**Camera** (`0085`-`0104`, `0115`, `0116`)
 
 - `0085`-`0087` add msm8974 support to CAMSS. The block matches msm8916's, which
   mainline already supports.
@@ -168,25 +170,27 @@ registers work, but no samples move over SLIMbus in either direction yet.
 - `0091`-`0096` fix the generic CCS sensor driver for these Sony SMIA parts:
   junk in CCS-only limit registers, sub-device state broken by the 6.16 conversion,
   the IMX200's identification and PLL model, the sensor being started twice, and
-  the helper every quirk register table goes through.
+  the helper every quirk register table goes through. Out of the build since the
+  IMX200 has its own driver; kept for the front camera (IMX132), which will need CCS.
 - `0097` lets the board set the CSIPHY settle time; the IMX200 needs far less than
   the D-PHY formula gives.
-- `0098` writes the IMX200's init and readout-window tables from the stock firmware,
-  and turns off the sensor's own lens-shading correction, which starts enabled with an
-  empty table.
+- `0098` writes the IMX200's init and readout-window tables from the stock firmware
+  through CCS (out of the build, like `0091`-`0096`).
 - `0099` sizes the msm8974 CSID and VFE clocks for their 16-bit data paths; camss
   assumed wider ones, and four-lane frames came through corrupted or not at all.
 - `0100` adds the rear camera to amami's device tree.
 - `0101` is a driver for the rear module's focus actuator, a ROHM BU64296GWX, with the
   protocol taken from Sony's camera library, and `0102` wires it up.
 - `0103` is a driver for the IMX200 itself, built from the stock firmware's tables. It
-  gives libcamera a normal sensor with four modes, from 1312x988 at 96 fps to 5248x3936
-  at 16.8 fps, and programs the lens shading from the module's EEPROM as stock does.
-  `0104` switches the device tree to it. `0091`-`0098` (CCS) stay for reference.
+  gives libcamera a normal sensor with three modes, 2624x1480, 2624x1976 and 5248x3936,
+  programs the lens shading from the module's EEPROM as stock does, and keeps the focus
+  lens powered while the sensor is. `0104` switches the device tree to it.
+- `0115` lets CAMSS run without an IOMMU by capturing into contiguous buffers, and
+  `0116` stops the VFE writing past a buffer when a frame is larger than its format,
+  which the IMX200's first frames are (see `docs/review.md`, pass 2).
 
-The debug patches that matter right now are the camera ones: `9006` (CAMSS on
-arm32), `9007` (the front sensor, not yet working) and `9010` (contiguous buffers
-without an IOMMU).
+No camera debug patch is in the build any more; `9007` (the front sensor, not yet
+working) is the one to start from for the IMX132.
 
 Patches that touch shared msm8974 files should help the Z1 (`honami`) and Z Ultra
 (`togari`) too, though neither has been tested. Several are not specific to this

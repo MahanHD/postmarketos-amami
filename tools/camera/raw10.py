@@ -24,7 +24,8 @@ import numpy as np
 
 # SIZE=WxH in the environment for the smaller sensor modes
 W, H = map(int, os.environ.get("SIZE", "5248x3936").split("x"))
-STRIDE = W * 10 // 8
+# camss pads each RDI line to a multiple of 16 bytes (0116)
+STRIDE = int(os.environ.get("STRIDE", (W * 10 // 8 + 15) // 16 * 16))
 BLACK = 64
 SAT = 1000
 
@@ -36,7 +37,7 @@ def frames(path):
 
 
 def unpack(fr):
-    g = fr.reshape(H, W // 4, 5).astype(np.uint16)
+    g = fr[:, :W * 10 // 8].reshape(H, W // 4, 5).astype(np.uint16)
     px = np.empty((H, W), np.uint16)
     for k in range(4):
         px[:, k::4] = (g[:, :, k] << 2) | ((g[:, :, 4] >> (2 * k)) & 3)

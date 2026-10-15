@@ -12,8 +12,10 @@ P = 0xc00
 def r(mm, o): return struct.unpack_from("<I", mm, o)[0]
 def w(mm, o, v): struct.pack_into("<I", mm, o, v)
 def irqs(name):
-    for l in open("/proc/interrupts"):
-        if l.rstrip().endswith(name): return sum(int(x) for x in l.split()[1:3])
+    # one column per online CPU, as the header line lists them
+    f = open("/proc/interrupts"); n = len(f.readline().split())
+    for l in f:
+        if l.rstrip().endswith(name): return sum(int(x) for x in l.split()[1:1 + n])
     return 0
 lanes = (0, 1, 2, 3, 4)
 orig = r(m, P + 0x008)

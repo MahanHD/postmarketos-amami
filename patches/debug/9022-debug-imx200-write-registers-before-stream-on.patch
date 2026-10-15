@@ -1,0 +1,37 @@
+--- a/drivers/media/i2c/imx200.c
++++ b/drivers/media/i2c/imx200.c
+@@ -593,6 +593,14 @@
+ 	return ret;
+ }
+ 
++/*
++ * debug/9022: registers to write after the mode and before the controls, as
++ * 0xAAAAVV (16-bit address, 8-bit value), e.g. 0x922904.
++ */
++static unsigned int dbg_regs[32];
++static int dbg_nregs;
++module_param_array(dbg_regs, uint, &dbg_nregs, 0644);
++
+ static int imx200_enable_streams(struct v4l2_subdev *sd,
+ 				 struct v4l2_subdev_state *state, u32 pad,
+ 				 u64 streams_mask)
+@@ -623,6 +631,19 @@
+ 	if (ret)
+ 		goto err_rpm_put;
+ 
++	{
++		int i;
++
++		for (i = 0; i < dbg_nregs; i++) {
++			dev_info(imx200->dev, "debug write %04x = %02x\n",
++				 dbg_regs[i] >> 8, dbg_regs[i] & 0xff);
++			cci_write(imx200->regmap, CCI_REG8(dbg_regs[i] >> 8),
++				  dbg_regs[i] & 0xff, &ret);
++		}
++		if (ret)
++			goto err_rpm_put;
++	}
++
+ 	/* After the mode, whose tables reset the digital gain */
+ 	ret = __v4l2_ctrl_handler_setup(imx200->sd.ctrl_handler);
+ 	if (ret)

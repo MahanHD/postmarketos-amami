@@ -3917,6 +3917,31 @@ with the gains instead of their inverse; and `postprocess.sh` ran `dcraw_emu` wi
 `-w`. Converting the first photo's DNG with any white balance gives normal colour, so the
 matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug above.
 
+### Review pass 2, camera, 2026-10-15
+
+`/code-review` (medium) over the camera stack; findings and verdicts in `review.md`.
+
+- r222 wrote stock's 0x3004-0x3005 so the mode would survive stream-on, as the hand test
+  over `i2c-3` showed it does. Every frame came out as noise. Bisected on r223 with
+  `debug/9022` (registers written just before stream-on, set at run time): the noise
+  follows 0x3004-0x3005 alone, every value but the reset 0x007f does it, and 0x0108 does
+  not rescue it. The presets are stock's clocking (8 MHz MCLK); this port's 19.2 MHz
+  needs 0x007f, so the mode stays after stream-on.
+- A canary (`tools/camera/canary.c`) showed the full-size first frames written past the
+  buffer: 5.8 MB of a never-queued buffer overwritten. Frame-based RDI ignores the size
+  registers; line-based with the size set stops at the buffer. `0116` (r224-r226).
+- 1312x988 turned out never to have worked: the output width only takes effect at
+  stream-on, so the sensor sent 2624-pixel lines (3280-byte period in the raw data), the
+  VFE finished one frame in four and the next stream wedged. Same on r220. The mode is
+  gone (r226) and Megapixels previews at 2624x1976.
+- The lens is linked to the sensor for runtime PM, so it stays powered while streaming;
+  libcamera r8 drops the AF position resend.
+- Debug patches out of the shipped kernel: `9006`/`9009`/`9010` became `0115`; `9007`,
+  `9008` and the IMX200 CCS patches dropped from the build.
+- Verified on r226: canaries intact in every mode, all three modes stream with the
+  registers, digital gain and lens state as set, Megapixels previews (night, at 2624x1976),
+  libcamera r8 streams 720p at 33 fps.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

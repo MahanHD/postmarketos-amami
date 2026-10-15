@@ -29,7 +29,7 @@
  obj-$(CONFIG_VIDEO_IMX274) += imx274.o
 --- /dev/null
 +++ b/drivers/media/i2c/imx200.c
-@@ -0,0 +1,1095 @@
+@@ -0,0 +1,1118 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Sony IMX200 camera sensor driver
@@ -43,10 +43,12 @@
 +
 +#include <linux/clk.h>
 +#include <linux/delay.h>
++#include <linux/device.h>
 +#include <linux/gpio/consumer.h>
 +#include <linux/i2c.h>
 +#include <linux/module.h>
 +#include <linux/pm_runtime.h>
++#include <linux/property.h>
 +#include <linux/regulator/consumer.h>
 +
 +#include <media/v4l2-cci.h>
@@ -176,6 +178,17 @@
 +	{ CCI_REG8(0x562f), 0xff }, { CCI_REG8(0x9915), 0x00 }, { CCI_REG8(0x9931), 0x10 },
 +};
 +
++/*
++ * Stock's per-mode tables, less the lane, data format and D-PHY timing
++ * registers the driver sets itself, the frame length and exposure its controls
++ * set, and 0x3004-0x3005 and 0x9229. Stock starts each table with 0x3004-0x3005,
++ * which selects one of the sensor's own clock presets; those are made for
++ * stock's 8 MHz clock, and with the 19.2 MHz one here every value but the reset
++ * 0x007f gives frames of noise or none at all. With 0x007f the sensor runs from
++ * the SMIA PLL registers, and starting the stream reloads every readout register
++ * (binning, window, output size, frame length, exposure) with its
++ * full-resolution default.
++ */
 +static const struct cci_reg_sequence imx200_mode_5248_3936_regs[] = {
 +	{ CCI_REG8(0x0381), 0x01 }, { CCI_REG8(0x0383), 0x01 }, { CCI_REG8(0x0385), 0x01 },
 +	{ CCI_REG8(0x0387), 0x01 }, { CCI_REG8(0x0390), 0x00 }, { CCI_REG8(0x0391), 0x11 },
@@ -284,42 +297,6 @@
 +	{ CCI_REG8(0x9915), 0x00 }, { CCI_REG8(0x9931), 0x10 },
 +};
 +
-+static const struct cci_reg_sequence imx200_mode_1312_988_regs[] = {
-+	{ CCI_REG8(0x0381), 0x01 }, { CCI_REG8(0x0383), 0x01 }, { CCI_REG8(0x0385), 0x01 },
-+	{ CCI_REG8(0x0387), 0x03 }, { CCI_REG8(0x0390), 0x01 }, { CCI_REG8(0x0391), 0x42 },
-+	{ CCI_REG8(0x0392), 0x00 }, { CCI_REG8(0x0401), 0x00 }, { CCI_REG8(0x0404), 0x01 },
-+	{ CCI_REG8(0x0405), 0x00 }, { CCI_REG8(0x0406), 0x01 }, { CCI_REG8(0x0407), 0x00 },
-+	{ CCI_REG8(0x0700), 0x00 }, { CCI_REG8(0x980a), 0x00 }, { CCI_REG8(0x991b), 0x01 },
-+	{ CCI_REG8(0x9030), 0x44 }, { CCI_REG8(0x9034), 0x0f }, { CCI_REG8(0x9035), 0x88 },
-+	{ CCI_REG8(0x9036), 0x0f }, { CCI_REG8(0x9037), 0x8f }, { CCI_REG8(0x9904), 0x01 },
-+	{ CCI_REG8(0x991f), 0x11 }, { CCI_REG8(0x901d), 0x00 }, { CCI_REG8(0x9909), 0x00 },
-+	{ CCI_REG8(0x991e), 0x00 }, { CCI_REG8(0x13c0), 0x00 }, { CCI_REG8(0x13c1), 0x00 },
-+	{ CCI_REG8(0x13c2), 0x05 }, { CCI_REG8(0x13c3), 0x20 }, { CCI_REG8(0x13c4), 0x00 },
-+	{ CCI_REG8(0x020e), 0x01 }, { CCI_REG8(0x020f), 0x00 }, { CCI_REG8(0x0210), 0x01 },
-+	{ CCI_REG8(0x0211), 0x00 }, { CCI_REG8(0x0212), 0x01 }, { CCI_REG8(0x0213), 0x00 },
-+	{ CCI_REG8(0x0214), 0x01 }, { CCI_REG8(0x0215), 0x00 }, { CCI_REG8(0x0230), 0x00 },
-+	{ CCI_REG8(0x0231), 0x00 }, { CCI_REG8(0x0233), 0x00 }, { CCI_REG8(0x0234), 0x00 },
-+	{ CCI_REG8(0x0235), 0x40 }, { CCI_REG8(0x0238), 0x01 }, { CCI_REG8(0x0239), 0x08 },
-+	{ CCI_REG8(0xad34), 0x14 }, { CCI_REG8(0xad35), 0x7f }, { CCI_REG8(0xad36), 0x00 },
-+	{ CCI_REG8(0xad37), 0x00 }, { CCI_REG8(0xad38), 0x0f }, { CCI_REG8(0xad39), 0x5d },
-+	{ CCI_REG8(0xad3a), 0x00 }, { CCI_REG8(0xad3b), 0x00 }, { CCI_REG8(0xad3c), 0x14 },
-+	{ CCI_REG8(0xad3d), 0x7f }, { CCI_REG8(0xad3e), 0x0f }, { CCI_REG8(0xad3f), 0x5d },
-+	{ CCI_REG8(0xa303), 0x00 }, { CCI_REG8(0xa403), 0x00 }, { CCI_REG8(0xbb03), 0x00 },
-+	{ CCI_REG8(0xa602), 0x00 }, { CCI_REG8(0xa703), 0x01 }, { CCI_REG8(0xa903), 0x01 },
-+	{ CCI_REG8(0xaa03), 0x01 }, { CCI_REG8(0xab03), 0x00 }, { CCI_REG8(0xac03), 0x01 },
-+	{ CCI_REG8(0xad03), 0x01 }, { CCI_REG8(0xae03), 0x01 }, { CCI_REG8(0xb803), 0x00 },
-+	{ CCI_REG8(0xb903), 0x01 }, { CCI_REG8(0xa956), 0x01 }, { CCI_REG8(0x4003), 0x05 },
-+	{ CCI_REG8(0x4004), 0x05 }, { CCI_REG8(0x4005), 0x05 }, { CCI_REG8(0x4006), 0x28 },
-+	{ CCI_REG8(0x4007), 0x28 }, { CCI_REG8(0x4008), 0x28 }, { CCI_REG8(0x400c), 0x05 },
-+	{ CCI_REG8(0x400d), 0x05 }, { CCI_REG8(0x400e), 0x05 }, { CCI_REG8(0x400f), 0x28 },
-+	{ CCI_REG8(0x4010), 0x28 }, { CCI_REG8(0x4011), 0x28 }, { CCI_REG8(0xa913), 0x00 },
-+	{ CCI_REG8(0xae8b), 0x30 }, { CCI_REG8(0xac13), 0x00 }, { CCI_REG8(0xac3f), 0x00 },
-+	{ CCI_REG8(0xb812), 0x01 }, { CCI_REG8(0x3506), 0x00 }, { CCI_REG8(0x3507), 0x01 },
-+	{ CCI_REG8(0x3508), 0x00 }, { CCI_REG8(0x3509), 0x01 }, { CCI_REG8(0x3008), 0x01 },
-+	{ CCI_REG8(0x3009), 0x71 }, { CCI_REG8(0x300a), 0x51 }, { CCI_REG8(0x3d11), 0x40 },
-+	{ CCI_REG8(0x9915), 0x00 }, { CCI_REG8(0x9931), 0x10 },
-+};
-+
 +/*
 + * Clocks for a 19.2 MHz external clock and a 288 MHz link, as the CCS driver
 + * computes them, plus the link rate request it writes. 0x0304 is left at its
@@ -352,8 +329,11 @@
 +}
 +
 +/*
-+ * Stock modes 0, 5, 2 and 1: full resolution, 2x2 binned, 2x2 binned and
-+ * cropped to 16:9, and 4x4 (binned and skipped) for previews.
++ * Stock modes 0, 5 and 2: full resolution, 2x2 binned, and 2x2 binned and
++ * cropped to 16:9. Stock's 4x4 modes (1312x988) are left out: their output
++ * width only takes effect from stream-on, and the mode can only be written
++ * after it (see imx200_mode_5248_3936_regs), so the sensor kept sending
++ * 2624-pixel lines.
 + */
 +static const struct imx200_mode imx200_modes[] = {
 +	IMX200_MODE(5248, 3936, 0, 0, 5248, 3936, 3992,
@@ -362,8 +342,6 @@
 +		    IMX200_PIXEL_RATE_BINNED, imx200_mode_2624_1976_regs),
 +	IMX200_MODE(2624, 1480, 0, 488, 5248, 2960, 1528,
 +		    IMX200_PIXEL_RATE_BINNED, imx200_mode_2624_1480_regs),
-+	IMX200_MODE(1312, 988, 0, 0, 5248, 3952, 1036,
-+		    IMX200_PIXEL_RATE_BINNED, imx200_mode_1312_988_regs),
 +};
 +
 +static const s64 imx200_link_freq_menu[] = {
@@ -577,9 +555,10 @@
 +}
 +
 +/*
-+ * The readout mode: binning, window and output size. Starting the stream
-+ * resets these to the full-resolution defaults, so they are written once the
-+ * sensor is streaming; the first frame or two still come out at full size.
++ * The readout mode: binning, window, output size and lens shading. Starting
++ * the stream resets the readout registers (see imx200_mode_5248_3936_regs), so
++ * this runs once the sensor is streaming, and the first frame or two still
++ * come out at full size. The VFE stops each one at the end of its buffer.
 + */
 +static int imx200_set_mode(struct imx200 *imx200,
 +			   const struct imx200_mode *mode)
@@ -641,21 +620,25 @@
 +	if (ret)
 +		goto err_rpm_put;
 +
-+	ret = __v4l2_ctrl_handler_setup(imx200->sd.ctrl_handler);
-+	if (ret)
-+		goto err_rpm_put;
-+
 +	ret = cci_write(imx200->regmap, IMX200_REG_MODE_SELECT,
 +			IMX200_MODE_STREAMING, NULL);
 +	if (ret)
 +		goto err_rpm_put;
 +
++	/* Stream-on reset the mode; the mode tables reset the digital gain */
 +	ret = imx200_set_mode(imx200, mode);
 +	if (ret)
-+		goto err_rpm_put;
++		goto err_standby;
++
++	ret = __v4l2_ctrl_handler_setup(imx200->sd.ctrl_handler);
++	if (ret)
++		goto err_standby;
 +
 +	return 0;
 +
++err_standby:
++	cci_write(imx200->regmap, IMX200_REG_MODE_SELECT, IMX200_MODE_STANDBY,
++		  NULL);
 +err_rpm_put:
 +	dev_err(imx200->dev, "failed to start streaming: %d\n", ret);
 +	pm_runtime_put_autosuspend(imx200->dev);
@@ -974,6 +957,42 @@
 +		 imx200->lsc[0]);
 +}
 +
++static void imx200_unlink_lens(void *link)
++{
++	device_link_del(link);
++}
++
++/*
++ * The focus actuator holds the lens only while it is powered, and powers
++ * itself down a few seconds after it was last moved. Keep it on for as long
++ * as the sensor is, so a focused lens stays where it was put while streaming.
++ */
++static int imx200_link_lens(struct imx200 *imx200)
++{
++	struct fwnode_handle *fwnode;
++	struct device_link *link;
++	struct device *lens;
++
++	fwnode = fwnode_find_reference(dev_fwnode(imx200->dev), "lens-focus", 0);
++	if (IS_ERR(fwnode))
++		return 0;
++
++	lens = bus_find_device_by_fwnode(&i2c_bus_type, fwnode);
++	fwnode_handle_put(fwnode);
++	if (!lens)
++		return dev_err_probe(imx200->dev, -EPROBE_DEFER,
++				     "waiting for the lens\n");
++
++	link = device_link_add(imx200->dev, lens,
++			       DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
++	put_device(lens);
++	if (!link)
++		return dev_err_probe(imx200->dev, -EINVAL,
++				     "failed to link the lens\n");
++
++	return devm_add_action_or_reset(imx200->dev, imx200_unlink_lens, link);
++}
++
 +static int imx200_probe(struct i2c_client *client)
 +{
 +	struct device *dev = &client->dev;
@@ -1022,6 +1041,10 @@
 +	if (IS_ERR(imx200->reset_gpio))
 +		return dev_err_probe(dev, PTR_ERR(imx200->reset_gpio),
 +				     "failed to get the reset GPIO\n");
++
++	ret = imx200_link_lens(imx200);
++	if (ret)
++		return ret;
 +
 +	ret = imx200_power_on(dev);
 +	if (ret)

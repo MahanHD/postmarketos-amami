@@ -1,17 +1,17 @@
 #!/bin/sh
 # Capture RAW10 frames from the rear IMX200 with the imx200 driver. Run as root
-# on the phone. After a stream that fails or times out, the next one tends to
-# wedge camss; after good ones, several streams per boot work.
+# on the phone.
 #
 #   capture.sh [frames] [exposure] [analogue_gain] [test_pattern]
 #
-# SIZE picks the sensor mode: 5248x3936 (default), 2624x1976, 2624x1480 or
-# 1312x988. Writes OUT (default /home/mahan/capture.raw, packed RAW10) and a log.
+# SIZE picks the sensor mode: 5248x3936 (default), 2624x1976 or 2624x1480.
+# Writes OUT (default /home/mahan/capture.raw, packed RAW10) and a log.
 # VBLANK=lines stretches the frame, which raises the exposure ceiling (exposure
 # can be at most the frame length); indoors at night it takes about 30000 lines
 # and analogue gain 240 to see anything.
 # FOCUS=0..1023 sets the lens (higher is closer; about 256 for distant scenes,
-# 512 for near objects); without it the lens stays unpowered at rest.
+# 512 for near objects); without it the lens holds its rest position. The lens
+# is powered for as long as the sensor is.
 # The camera modules are loaded with --ignore-install, so this works with the
 # bring-up blacklist in place. See docs/notes.md, "Camera".
 set -u
@@ -29,9 +29,6 @@ for i in $(seq 30); do [ -e /dev/media0 ] && break; sleep 1; done
 M=/dev/media0
 if [ -n "${FOCUS:-}" ]; then
 	LENS=$(media-ctl -d $M -e "bu64296 3-000c")
-	# the lens powers down a few seconds after the last position written;
-	# hold it for the whole capture
-	echo 120000 > /sys/bus/i2c/devices/3-000c/power/autosuspend_delay_ms
 	v4l2-ctl -d "$LENS" -c focus_absolute="$FOCUS"
 	sleep 0.2
 fi
@@ -50,5 +47,4 @@ v4l2-ctl -d "$S" -c exposure=$EXPO,analogue_gain=$AGAIN
 
 timeout 60 v4l2-ctl -d "$V" --stream-mmap=2 --stream-count="$CNT" --stream-to="$OUT" 2>>"$LOG"
 echo "size=$SIZE bytes=$(stat -c %s "$OUT")" >> "$LOG"
-[ -n "${FOCUS:-}" ] && echo 3000 > /sys/bus/i2c/devices/3-000c/power/autosuspend_delay_ms
 sync
