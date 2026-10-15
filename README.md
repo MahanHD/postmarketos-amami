@@ -188,8 +188,9 @@ registers work, but no samples move over SLIMbus in either direction yet.
   protocol taken from Sony's camera library, and `0102` wires it up.
 - `0103` is a driver for the IMX200 itself, built from the stock firmware's tables. It
   gives libcamera a normal sensor with three modes, 2624x1480, 2624x1976 and 5248x3936,
-  programs the lens shading from the module's EEPROM as stock does, and keeps the focus
-  lens powered while the sensor is. `0104` switches the device tree to it.
+  programs the lens shading from the module's EEPROM as stock does, keeps the focus
+  lens powered while the sensor is, and has camss drop the first five frames of a stream,
+  which come out at full size or half switched. `0104` switches the device tree to it.
 - `0115` lets CAMSS run without an IOMMU by capturing into contiguous buffers, and
   `0116` stops the VFE writing past a buffer when a frame is larger than its format,
   which the IMX200's first frames are (see `docs/review.md`, pass 2).

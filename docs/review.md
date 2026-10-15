@@ -162,4 +162,10 @@ The same evening Megapixels' bursts filled the 939 MB RAM-backed /tmp (up to 11 
 Xfce session aborted on a libwnck icon assertion in the middle of that. Megapixels r8
 captures two frames and queues the development, LightDM logs back in after a session
 ends, and the carveout is 256 MB, since 192 MB still ran out on photos taken in a row.
-The preview's occasional shift is open (`next-steps.md`, camera item 8).
+The shifted preview was the start-up frames: on the fade test pattern (`rowwatch`,
+15,000 frames) every stream had bad frames up to the third, fourth or fifth and none
+after, and Megapixels, starved of GPU memory, kept showing one. `0103` reports 5 through
+`g_skip_frames` (r228), and camss drops them in hardware; every frame delivered is now
+aligned, and Megapixels' preview on the test pattern is unchanged across three photos.
+The 96-row shift seen earlier in two long raw runs was not reproduced on the test
+pattern and was most likely the scene moving under the profile comparison.

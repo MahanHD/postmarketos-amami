@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=227
+pkgrel=228
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -239,7 +239,7 @@ cfc3e9f7ad56d3af5f44b778f968f7df1361d7e7a0fa84555f712d716773a00ed084c952ebc60e53
 138882dd979b7227def914bd80e9dd42e77442c6142983183466a76f8892bd543d065b783db32e767e9726bbee9b99cbae18ec39674490200047c497ce87bc1d  0100-arm-dts-amami-add-the-rear-camera.patch
 81a0764d8dd8defb576f189c292fed9c74ac53aa6438a5da95206003520066b4cb7c1defa2696286457cd13118a385528b36b182e23a8beb18cdcd567dc82014  0101-media-i2c-add-a-driver-for-the-rohm-bu64296-lens-actuator.patch
 078ea3499e898ce3b058332e8897415ba50d21049622a7733462ce3a56637d50f125fb1ea13843b8d41f4e9865b22861db56701166413cafd469fee96f4436ab  0102-arm-dts-amami-add-the-rear-camera-focus-actuator.patch
-c0ecdb51983af9278c0811857743053eda104321aa367bc3bc0727e592dcb26abffa52a1a166b97ae5f7cdaa4dc75fdfdda4c1e49ab9fd9f7a06606f93daed65  0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
+78c07ae742181224cf5d9029eee71b9e88060b0bd4f86011a335846d7a5740f496812a46e7fe43380c6e5024be7d8ad3f74ef9a9a7839c18b91892daab4d8b5f  0103-media-i2c-add-a-driver-for-the-sony-imx200.patch
 6f2fbfa9942e3875dd89ee0ea4632c5693ea33997febcf4ab79269cd14ab1f1fe58831acd115f76e225972cc924f148a438ac5dea8ab6af9ef6a915cab79f560  0104-arm-dts-amami-drive-the-rear-camera-with-the-imx200-driver.patch
 593a9532010566e10595b58814f2b576e383a9b380fac1ac5a067e50c7cec5b2446ca5d630f83e1279badad1ab156472e2d85751d9129fbc63d71f23fc17d1fb  0106-drm-msm-clear-carveout-buffers-when-they-are-allocated.patch
 71335be6ac0ccbac11e337ba6a524148e6207b045fd15168ddcb47268f31626ceb7fcad01464181cc67c1ab0de426b31d060fe883c16132141aa1306091f6950  0107-drm-msm-a3xx-report-the-gpu-s-error-interrupts.patch

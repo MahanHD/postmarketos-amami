@@ -3958,7 +3958,14 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
   192 MB of carveout still ran out on photos in a row (`get_pages` -28 with `0117`), so
   boot image 227 runs `msm.vram=256m cma=320M`. LightDM restarts itself after a session
   ends so autologin runs again. The shift: 30 stream starts and six starved streams
-  stayed aligned, but two of three 1500-frame runs ended 96 rows down; not solved.
+  stayed aligned, but two of three 1500-frame runs ended 96 rows down. On the fade test
+  pattern (scene-independent; `rowwatch`, five runs of 3000 frames) nothing shifted
+  mid-stream; only frames 0 to 4 at the start were bad. The preview had frozen on one
+  while the carveout was full. r228: `0103` gains `g_skip_frames` = 5, which camss
+  already turns into a frame-drop pattern; six test-pattern streams were aligned from
+  the first frame delivered, at a steady 33 ms, and so was Megapixels across three
+  photos. One 2624x1480 start failed on a CCI timeout writing the lens and left camss
+  wedged until reboot; after it, all three modes streamed.
 
 ## Parked patches
 

@@ -29,7 +29,7 @@
  obj-$(CONFIG_VIDEO_IMX274) += imx274.o
 --- /dev/null
 +++ b/drivers/media/i2c/imx200.c
-@@ -0,0 +1,1118 @@
+@@ -0,0 +1,1138 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Sony IMX200 camera sensor driver
@@ -794,9 +794,29 @@
 +	.disable_streams = imx200_disable_streams,
 +};
 +
++/*
++ * The mode can only be written after stream-on (see imx200_enable_streams()),
++ * and the frames already under way then come out at full size or switch mode
++ * part way through. Over five streams on the fade test pattern the last bad
++ * frame was the third, fourth or fifth; camss drops these without writing them.
++ */
++#define IMX200_SKIP_FRAMES	5
++
++static int imx200_g_skip_frames(struct v4l2_subdev *sd, u32 *frames)
++{
++	*frames = IMX200_SKIP_FRAMES;
++
++	return 0;
++}
++
++static const struct v4l2_subdev_sensor_ops imx200_sensor_ops = {
++	.g_skip_frames = imx200_g_skip_frames,
++};
++
 +static const struct v4l2_subdev_ops imx200_subdev_ops = {
 +	.video = &imx200_video_ops,
 +	.pad = &imx200_pad_ops,
++	.sensor = &imx200_sensor_ops,
 +};
 +
 +static const struct v4l2_subdev_internal_ops imx200_internal_ops = {

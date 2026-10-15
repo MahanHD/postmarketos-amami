@@ -1361,8 +1361,12 @@ register tables. Things it had to learn:
   presets, which keep the registers. Those presets are made for stock's 8 MHz clock; at
   19.2 MHz every value except the reset 0x007f gives noise or no frames. With 0x007f the
   mode has to be written after stream-on, the controls after the mode, and the first
-  frame or two still come out at full size. Before `0116` the VFE wrote those past the
-  end of the buffer, which is what "restarting the stream reset the phone" was.
+  frames still come out at full size or change mode part way through: up to the fifth,
+  measured on the fade test pattern with `tools/camera/rowwatch.c`. Before `0116` the VFE
+  wrote those past the end of the buffer, which is what "restarting the stream reset the
+  phone" was. Since r228 the driver reports 5 through `g_skip_frames`, and camss drops
+  them with the write masters' frame-drop pattern, so none reaches a buffer; `0116` stays
+  as the bound for any oversized frame.
 - **Only 2x2 binning switches after stream-on.** The output width does not, nor the
   SMIA scaler, so stock's 4x4 modes (1312x988) kept sending 2624-pixel lines: every
   1312 frame was garbage, and the stream after one wedged camss. The mode is gone.

@@ -5,8 +5,8 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-15)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 227, with the boot image
-from 227 (`uname -v` prints `#228`). `0105` (kgsl's power-on fixup) stays parked (GPU
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 228, with the boot image
+from 227 (`uname -v` prints `#228`; only the imx200 module changed since). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r8 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libdng r1,
 libmegapixels r2 and Megapixels r8 (`recipe/libdng`, `recipe/libmegapixels`,
@@ -95,10 +95,10 @@ Snapshot's cairo stopgap is gone.
    capture buffers.
 4. **Tuning.** White balance and exposure are libcamera's simple defaults. The EEPROM's
    remaining bytes and stock's `exposure_ctrl.dat` may hold better starting points.
-5. **The first binned frames** still come out at full size: stream-on reloads the
-   readout registers, and the clock presets that would keep them (0x3004-0x3005) are made
-   for stock's 8 MHz clock (review pass 2). `0116` stops the VFE writing them past the
-   buffer. Making 8 MHz (an M/N MCLK, which `0090` removed because it came out wrong)
+5. **The first frames of a stream** come out at full size or half switched: stream-on
+   reloads the readout registers, and the clock presets that would keep them
+   (0x3004-0x3005) are made for stock's 8 MHz clock (review pass 2). Since r228 camss
+   drops the first five (`g_skip_frames`), and `0116` bounds any oversized frame. Making 8 MHz (an M/N MCLK, which `0090` removed because it came out wrong)
    would let the sensor run stock's tables as they are, 4x4 modes included.
 6. **A cheap preview mode.** The 1312x988 mode is gone (it never delivered 1312-pixel
    lines), so Megapixels previews at 2624x1976. It keeps about 7 of the 30 frames a
@@ -108,14 +108,10 @@ Snapshot's cairo stopgap is gone.
    ImageMagick on the full 20 MP frame). Since r8 photos queue instead of running at once
    and the burst is the two frames the script reads, so taking several no longer fills
    the RAM-backed /tmp or the swap.
-8. **Frames sometimes land shifted.** After about a minute of streaming a stream can end
-   up with every frame shifted down by some rows (96 in two of three 1500-frame raw runs;
-   about 440 in Megapixels' preview), the bottom wrapped to the top. Fresh starts, and
-   starved streams, stay aligned. Suspected: `0116`'s line-based write masters count lines
-   rather than resyncing at frame start, so one disturbed frame leaves the offset in
-   place. `tools/camera/rowwatch.c` records every frame to catch the moment. The likely
-   fix is to keep the sensor's oversized first frames from the VFE altogether (V4L2's
-   `g_skip_frames`, honoured by camss), which would also let `0116` go.
+8. **A failed stream start wedges camss** until reboot (every later start returns
+   EINVAL). Seen once on r228 after a CCI timeout writing the lens position; the notes
+   record the same after any failed or timed-out start. Recovery after a failed start is
+   unwritten.
 
 ## CPU above 1.5 GHz
 
