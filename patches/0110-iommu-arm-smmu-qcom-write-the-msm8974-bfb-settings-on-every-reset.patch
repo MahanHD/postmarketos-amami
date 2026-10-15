@@ -8,70 +8,105 @@ so on stock the GPU SMMU gets the table again after every power collapse.
 TrustZone does not own this SMMU, so nothing else writes it; with
 arm-smmu the GPU SMMU has never had these values.
 
-Add a reset hook to the msm8974 implementation that writes the table from
-the device tree, and give the GPU SMMU node the twelve values from the
-kgsl_iommu node of Sony's stock device tree. arm-smmu calls the hook at
-probe and on every runtime resume.
+Read the table from the device tree once, in the msm8974 cfg_probe hook,
+rejecting one whose lengths differ or whose registers fall outside the
+global register space, and write it from a reset hook, which arm-smmu
+calls at probe and on every runtime resume. Give amami's GPU SMMU the
+twelve values from the kgsl_iommu node of Sony's stock device tree; they
+belong to the board, since LineageOS's tree has a different table for the
+same SoC.
 
 ---
---- a/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi	2026-10-12 07:41:26.768439919 +0400
-+++ b/arch/arm/boot/dts/qcom/qcom-msm8974.dtsi	2026-10-12 07:41:26.822439976 +0400
-@@ -2663,6 +2663,17 @@
- 			clock-names = "iface", "bus", "core";
- 
- 			power-domains = <&mmcc OXILICX_GDSC>;
-+
-+			/*
-+			 * Implementation defined settings, verbatim from the
-+			 * kgsl_iommu node of Sony's stock device tree.
-+			 */
-+			qcom,iommu-bfb-regs = <0x204c 0x2050 0x2514 0x2540
-+					       0x256c 0x20ac 0x215c 0x220c
-+					       0x2314 0x2394 0x2414 0x2008>;
-+			qcom,iommu-bfb-data = <0x3 0x0 0x4 0x10
-+					       0x0 0x0 0x0 0x20
-+					       0x0 0x1 0x81 0x0>;
- 		};
- 
- 		sram@fdd00000 {
---- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c	2026-10-12 07:41:26.762439913 +0400
-+++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c	2026-10-12 07:41:26.820654016 +0400
-@@ -746,10 +746,47 @@
- 			  reg & ~ARM_SMMU_SCTLR_AFE);
- }
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-15 10:20:56.504343261 +0400
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-15 10:21:22.385309518 +0400
+@@ -51,6 +51,18 @@
+ 	};
+ };
  
 +/*
++ * Implementation defined settings for the GPU's SMMU, verbatim from the
++ * kgsl_iommu node of Sony's stock device tree (LineageOS has a different
++ * table for the same SoC, so they stay with this board).
++ */
++&gpu_smmu {
++	qcom,iommu-bfb-regs = <0x204c 0x2050 0x2514 0x2540 0x256c 0x20ac
++			       0x215c 0x220c 0x2314 0x2394 0x2414 0x2008>;
++	qcom,iommu-bfb-data = <0x3 0x0 0x4 0x10 0x0 0x0
++			       0x0 0x20 0x0 0x1 0x81 0x0>;
++};
++
+ &gpu {
+ 	status = "okay";
+ };
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c	2026-10-15 10:20:56.503343259 +0400
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c	2026-10-15 10:21:22.384883910 +0400
+@@ -693,6 +693,45 @@
+ }
+ 
+ /*
 + * Downstream's msm_iommu-v1 writes a table of implementation defined registers
 + * (qcom,iommu-bfb-regs and -data) every time it programs the SMMU, and kgsl
 + * detaches and reattaches the GPU's SMMU on every power cycle, so the table is
 + * rewritten after every power collapse. TrustZone does not own these SMMUs, so
-+ * nothing else writes it. Do the same from the reset hook, which runs at probe
-+ * and on every runtime resume.
++ * nothing else writes it. Read and check the table once here; the reset hook,
++ * which runs at probe and on every runtime resume, writes it.
 + */
++static int msm8974_smmu_bfb_probe(struct arm_smmu_device *smmu)
++{
++	struct qcom_smmu *qsmmu = to_qcom_smmu(smmu);
++	struct device_node *np = smmu->dev->of_node;
++	u32 global_size = smmu->numpage << smmu->pgshift;
++	int n, i;
++
++	n = of_property_count_u32_elems(np, "qcom,iommu-bfb-regs");
++	if (n <= 0)
++		return 0;
++	if (of_property_count_u32_elems(np, "qcom,iommu-bfb-data") != n)
++		return dev_err_probe(smmu->dev, -EINVAL,
++				     "qcom,iommu-bfb-regs and -data differ in length\n");
++
++	qsmmu->bfb = devm_kcalloc(smmu->dev, 2 * n, sizeof(*qsmmu->bfb), GFP_KERNEL);
++	if (!qsmmu->bfb)
++		return -ENOMEM;
++	of_property_read_u32_array(np, "qcom,iommu-bfb-regs", qsmmu->bfb, n);
++	of_property_read_u32_array(np, "qcom,iommu-bfb-data", qsmmu->bfb + n, n);
++
++	for (i = 0; i < n; i++) {
++		if (qsmmu->bfb[i] % 4 || qsmmu->bfb[i] >= global_size)
++			return dev_err_probe(smmu->dev, -EINVAL,
++					     "bfb register 0x%x is outside the global space\n",
++					     qsmmu->bfb[i]);
++	}
++	qsmmu->bfb_count = n;
++
++	return 0;
++}
++
++/*
+  * msm8974's IDR1.NUMPAGENDXB reports four pages, which would put context bank n at
+  * base + 0x4000 + n * 0x1000. Downstream addresses the banks at 0xfdb18000 on a
+  * base of 0xfdb10000, i.e. base + 0x8000, so the register under-reports. Probe both
+@@ -722,7 +761,7 @@
+ 	dev_info(smmu->dev, "context banks forced to base + 0x%x\n",
+ 		 smmu->numpage << smmu->pgshift);
+ 
+-	return 0;
++	return msm8974_smmu_bfb_probe(smmu);
+ }
+ 
+ /*
+@@ -746,10 +785,23 @@
+ 			  reg & ~ARM_SMMU_SCTLR_AFE);
+ }
+ 
 +static int msm8974_smmu_reset(struct arm_smmu_device *smmu)
 +{
-+	struct device_node *np = smmu->dev->of_node;
-+	int nregs, ndata, i;
++	struct qcom_smmu *qsmmu = to_qcom_smmu(smmu);
++	int i;
 +
-+	nregs = of_property_count_u32_elems(np, "qcom,iommu-bfb-regs");
-+	ndata = of_property_count_u32_elems(np, "qcom,iommu-bfb-data");
-+	if (nregs <= 0 && ndata <= 0)
-+		return 0;
-+	if (nregs != ndata) {
-+		dev_err_once(smmu->dev, "bfb regs/data length mismatch (%d vs %d)\n",
-+			     nregs, ndata);
-+		return -EINVAL;
-+	}
-+
-+	for (i = 0; i < nregs; i++) {
-+		u32 off, val;
-+
-+		of_property_read_u32_index(np, "qcom,iommu-bfb-regs", i, &off);
-+		of_property_read_u32_index(np, "qcom,iommu-bfb-data", i, &val);
-+		writel_relaxed(val, smmu->base + off);
-+	}
-+
-+	dev_dbg(smmu->dev, "applied %d bfb settings\n", nregs);
++	for (i = 0; i < qsmmu->bfb_count; i++)
++		writel_relaxed(qsmmu->bfb[qsmmu->bfb_count + i],
++			       smmu->base + qsmmu->bfb[i]);
 +
 +	return 0;
 +}
@@ -84,3 +119,15 @@ probe and on every runtime resume.
  	.write_s2cr = msm8974_smmu_write_s2cr,
  	.write_sctlr = msm8974_smmu_write_sctlr,
  	.tlb_sync = qcom_smmu_tlb_sync,
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h	2026-10-15 10:20:56.504343261 +0400
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h	2026-10-15 10:21:11.426009885 +0400
+@@ -12,6 +12,9 @@
+ 	bool bypass_quirk;
+ 	u8 bypass_cbndx;
+ 	u32 stall_enabled;
++	/* msm8974: implementation defined registers, then their values */
++	u32 *bfb;
++	int bfb_count;
+ };
+ 
+ enum qcom_smmu_impl_reg_offset {

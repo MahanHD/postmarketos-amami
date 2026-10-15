@@ -145,7 +145,7 @@ data for features that are not worth their cost yet.
   handed out with their old contents: garbage in the a3xx submit stats ("Division by
   zero" in `retire_submits`), and data from one process readable by the next one to
   allocate (`tools/gpu-bo-reuse.py`).
-- `0111` soft resets the GPU before every runtime suspend. Its GDSCs stay on while the
+- `0111` soft resets the GPU at the start of every hw_init. Its GDSCs stay on while the
   SMMU that shares them is busy, so the GPU could come back with its old state and hang
   on the first job, a few times an hour. kgsl resets it in the same case.
 - `0107`-`0110` match stock where drm differed, without changing the hang rate: error

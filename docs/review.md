@@ -6,7 +6,7 @@ compares it with stock where that applies, fixes what it finds and records it he
 
 | Pass | Area | State |
 |---|---|---|
-| 1 | GPU and GPU memory (`0089`, `0105`-`0113`, `debug/9021`) | done, r219 |
+| 1 | GPU and GPU memory (`0089`, `0105`-`0114`, `debug/9021`) | done, r220 |
 | 2 | Camera stack: imx200 driver, camss patches, `recipe/libcamera`, `recipe/libdng`, `recipe/libmegapixels`, `recipe/megapixels`, `userspace/megapixels` | to do |
 | 3 | amami and msm8974 device tree: CPU rail and OPPs, regulators, the DT patches | to do |
 | 4 | The other kernel patches, by subsystem: display, sensors, charging, CPU hotplug, WiFi/BT, audio | to do |
@@ -54,6 +54,28 @@ Checked and left as they are:
 
 Verified on r219: two debugfs shrinks and six minutes with no Xorg hang, three injected
 hangs all recovered with canaries before and after, no warnings.
+
+### `/code-review` of pass 1 (medium, the eight built GPU patches)
+
+Ten candidates, each checked against the source:
+
+| # | Finding | Verdict | Done |
+|---|---|---|---|
+| 1 | `retire_submit()` divides with `do_div()`, which takes only the low 32 bits of the 64-bit `elapsed`, so `if (elapsed)` does not stop a division by zero | real, upstream | new `0114`: `div64_u64()` |
+| 2 | a purge's `put_iova_vmas()` frees the vma `vram_node` points into and leaves it dangling | real, latent (only tested, never dereferenced) | `0089` clears it |
+| 3 | recovery replays through `funcs->submit()`, which does not update `cur_ctx_seqno`, so every replayed submit runs its context restore | real, and right: the GPU was just reset, so its context state is gone | none |
+| 4 | `0111` reset before `msm_gpu_pm_suspend()`; if suspend then failed, the core stayed reset with `needs_hw_init` false | real | `0111` reworked |
+| 5 | `0111` missed a core the bootloader left powered, which kgsl's check covers | real | `0111` now resets at the start of every hw_init, kgsl's placement, and takes devfreq's baseline again under its lock; recovery goes through it too |
+| 6 | `0110` read the device tree on every resume, ignored its own error and wrote offsets unchecked | real, minor | `0110` reads and checks the table once in `cfg_probe` |
+| 7 | `0107` decoded four interrupts `A3XX_INT0_MASK` leaves off | real (kgsl's mask is the same) | branches dropped |
+| 8 | `0110` put Sony's BFB values in the shared msm8974 dtsi | real: LineageOS's table differs | moved to amami's dts |
+| 9 | clearing `cur_ctx_seqno` belongs in shared `adreno_hw_init()`, not per generation | valid | for upstreaming; only a3xx can be tested here |
+| 10 | `0106` clears and syncs every carveout allocation | true, but clearing on free would cost the same | none |
+
+Verified on r220: the twelve BFB registers read back stock's values after a resume
+(honami's dtb has none); ten soak cycles with the SMMU pinned, so every resume skipped the
+power collapse: 0 hangs, no warnings, 190 s suspended; five injected hangs recovered, and
+two debugfs shrinks were followed by five minutes without a hang.
 
 Found for later passes:
 

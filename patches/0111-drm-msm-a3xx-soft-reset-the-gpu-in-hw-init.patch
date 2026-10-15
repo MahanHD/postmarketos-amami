@@ -1,0 +1,88 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] drm/msm/a3xx: soft reset the GPU in hw_init
+
+The GPU's runtime suspend gates its clocks and marks it for hw_init, but
+the oxili GDSCs only collapse once every device in the domain has
+suspended, and the GPU's SMMU shares it with a 20 ms autosuspend. So a
+GPU that suspends and resumes while the SMMU is busy comes back with no
+power collapse and whatever state the last session left: hw_init then
+reloads the microcode and sends CP_ME_INIT to a core that was never
+reset, and the first job after it can hang. Pinning the SMMU on, so the
+GDSCs never collapse, makes that happen several times a minute.
+
+kgsl handles this in _adreno_start(): if either GPU regulator (the GX or
+CX GDSC) is still enabled, it soft resets the core with RBBM_SW_RESET_CMD
+before a3xx_start(). drm only did that in a3xx_recover().
+
+Reset at the start of every hw_init. That covers the same cases kgsl's
+check does, a GPU the bootloader left on included, and recovery, which
+goes through hw_init too, no longer needs its own reset. After a real
+collapse the reset changes nothing. The reset clears the RBBM power
+counter devfreq takes its baseline from in msm_gpu_pm_resume(), so take
+the baseline again under devfreq's lock; otherwise busy time goes
+backwards and trips a WARN.
+
+---
+--- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-15 10:22:01.939459745 +0400
++++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-15 10:22:14.700401849 +0400
+@@ -27,6 +27,7 @@
+ 
+ static void a3xx_dump(struct msm_gpu *gpu);
+ static bool a3xx_idle(struct msm_gpu *gpu);
++static u64 a3xx_gpu_busy(struct msm_gpu *gpu, unsigned long *out_sample_rate);
+ 
+ /* CP_SET_CONSTANT's address for a register in the 0x2000 block, as kgsl has it */
+ #define CP_REG(reg) ((0x4 << 16) | ((reg) - 0x2000))
+@@ -121,6 +122,32 @@
+ 	return a3xx_idle(gpu);
+ }
+ 
++/*
++ * Reset the core, as kgsl's _adreno_start() does whenever it finds the GPU's
++ * regulators still on. Here the core can come to hw_init without having lost
++ * power: runtime suspend only gates its clocks, and the GDSCs collapse only once
++ * the SMMU, which shares them, has suspended too; recovery never collapses them;
++ * and the bootloader may leave them on. hw_init then reloads the microcode on a
++ * core with its old state, and the first job can hang. After a real collapse the
++ * reset changes nothing.
++ *
++ * The reset also clears the busy counter devfreq samples, and devfreq took its
++ * baseline in msm_gpu_pm_resume(). Take it again under devfreq's lock, so no
++ * sample sees the counter go backwards.
++ */
++static void a3xx_soft_reset(struct msm_gpu *gpu)
++{
++	struct msm_gpu_devfreq *df = &gpu->devfreq;
++	unsigned long sample_rate;
++
++	mutex_lock(&df->lock);
++	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 1);
++	gpu_read(gpu, REG_A3XX_RBBM_SW_RESET_CMD);
++	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 0);
++	df->busy_cycles = a3xx_gpu_busy(gpu, &sample_rate);
++	mutex_unlock(&df->lock);
++}
++
+ static int a3xx_hw_init(struct msm_gpu *gpu)
+ {
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+@@ -130,6 +157,8 @@
+ 
+ 	DBG("%s", gpu->name);
+ 
++	a3xx_soft_reset(gpu);
++
+ 	if (adreno_is_a305(adreno_gpu)) {
+ 		/* Set up 16 deep read/write request queues: */
+ 		gpu_write(gpu, REG_A3XX_VBIF_IN_RD_LIM_CONF0, 0x10101010);
+@@ -393,9 +422,7 @@
+ 	if (hang_debug)
+ 		a3xx_dump(gpu);
+ 
+-	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 1);
+-	gpu_read(gpu, REG_A3XX_RBBM_SW_RESET_CMD);
+-	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 0);
++	/* adreno_recover() ends in hw_init, which resets the core */
+ 	adreno_recover(gpu);
+ }
+ 

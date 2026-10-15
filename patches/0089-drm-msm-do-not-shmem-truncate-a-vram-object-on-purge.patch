@@ -8,12 +8,13 @@ after put_pages() had handed its range back to the carveout, and
 file_inode(NULL) faulted inside the shrinker, killing kswapd the first
 time memory got tight while a DONTNEED buffer was cached.
 
-Stop after the purge's common part when there is no shmem file.
+Stop after the purge's common part when there is no shmem file, and clear
+vram_node, which put_iova_vmas() has just left pointing at freed memory.
 
 ---
 --- a/drivers/gpu/drm/msm/msm_gem.c	2026-10-15 09:54:09.791506085 +0400
-+++ b/drivers/gpu/drm/msm/msm_gem.c	2026-10-15 09:54:09.807164107 +0400
-@@ -873,6 +873,18 @@
++++ b/drivers/gpu/drm/msm/msm_gem.c	2026-10-15 10:23:19.427625410 +0400
+@@ -873,6 +873,22 @@
  
  	drm_gem_free_mmap_offset(obj);
  
@@ -24,10 +25,14 @@ Stop after the purge's common part when there is no shmem file.
 +	 * the carveout, and there is nothing for shmem to drop. Without this
 +	 * check file_inode(NULL) faults at offsetof(struct file, f_inode) from
 +	 * inside the shrinker, i.e. in kswapd, the first time memory gets
-+	 * tight while a DONTNEED buffer is cached.
++	 * tight while a DONTNEED buffer is cached. put_iova_vmas() has also
++	 * freed the vma vram_node pointed into; a purged object never gets
++	 * pages again, so drop the pointer rather than leave it dangling.
 +	 */
-+	if (!obj->filp)
++	if (!obj->filp) {
++		msm_obj->vram_node = NULL;
 +		return;
++	}
 +
  	/* Our goal here is to return as much of the memory as
  	 * is possible back to the system as we are called from OOM.

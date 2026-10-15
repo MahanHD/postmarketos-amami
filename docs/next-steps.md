@@ -5,8 +5,8 @@ is in `worklog.md`; the settled findings are in `notes.md`.
 
 ## Current state (2026-10-12)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 219, with the boot image
-from 219 (`uname -v` prints `#220`). `0105` (kgsl's power-on fixup) stays parked (GPU
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 220, with the boot image
+from 220 (`uname -v` prints `#221`). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r7 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libmegapixels
 r1 and Megapixels r2 (`recipe/libmegapixels`, `recipe/megapixels`), with
@@ -64,7 +64,7 @@ Snapshot's cairo stopgap is gone.
    `tools/gpu-soak.sh`) is the GPU coming back from runtime suspend *without* a power
    collapse: the GDSCs stay on while the SMMU, which shares them, is busy, and drm
    restarted the core without resetting it. kgsl resets it in that case. `0111` resets
-   it before every runtime suspend. Pinning the SMMU on forces the case: 22 hangs in 5
+   it at the start of every hw_init. Pinning the SMMU on forces the case: 22 hangs in 5
    cycles on r212, 0 in 10 on r214. This also explains why 5943 power-ons under
    `tools/gpu-pwron-stress.py` never hung: with no buffer maps the SMMU always suspended
    and the GDSCs always collapsed. `0107`-`0110` (error IRQs, kgsl framing, memory

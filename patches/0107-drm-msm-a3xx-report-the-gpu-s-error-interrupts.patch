@@ -7,15 +7,16 @@ hardware fault, all of which are in A3XX_INT0_MASK, leave no trace. The
 CP stops, and the only thing logged is the hangcheck timeout seconds
 later, by which time the cause is gone.
 
-Report them the way the downstream kgsl driver does in
-a3xx_err_callback(), with the same decoding of RBBM_AHB_ERROR_STATUS,
-CP_PROTECT_STATUS and CP_HW_FAULT, and clear the AHB error as it does.
+Report the error interrupts A3XX_INT0_MASK enables, which are the ones
+kgsl enables too, the way the downstream kgsl driver does in
+a3xx_err_callback(): the same decoding of RBBM_AHB_ERROR_STATUS,
+CP_PROTECT_STATUS and CP_HW_FAULT, and clearing the AHB error as it does.
 Recovery is left to hangcheck, as before.
 
 ---
---- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 02:47:05.185861838 +0400
-+++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-12 02:47:05.271402514 +0400
-@@ -416,6 +416,60 @@
+--- a/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-15 10:21:45.417976846 +0400
++++ b/drivers/gpu/drm/msm/adreno/a3xx_gpu.c	2026-10-15 10:21:45.465729942 +0400
+@@ -416,6 +416,52 @@
  	return true;
  }
  
@@ -39,16 +40,8 @@ Recovery is left to hangcheck, as before.
 +		/* Clear the error */
 +		gpu_write(gpu, REG_A3XX_RBBM_AHB_CMD, BIT(3));
 +	}
-+	if (status & A3XX_INT0_RBBM_REG_TIMEOUT)
-+		dev_err_ratelimited(dev, "RBBM: AHB register timeout\n");
-+	if (status & A3XX_INT0_RBBM_ME_MS_TIMEOUT)
-+		dev_err_ratelimited(dev, "RBBM: ME master split timeout\n");
-+	if (status & A3XX_INT0_RBBM_PFP_MS_TIMEOUT)
-+		dev_err_ratelimited(dev, "RBBM: PFP master split timeout\n");
 +	if (status & A3XX_INT0_RBBM_ATB_BUS_OVERFLOW)
 +		dev_err_ratelimited(dev, "RBBM: ATB bus overflow\n");
-+	if (status & A3XX_INT0_VFD_ERROR)
-+		dev_err_ratelimited(dev, "VFD: out of bounds access\n");
 +	if (status & A3XX_INT0_CP_T0_PACKET_IN_IB)
 +		dev_err_ratelimited(dev, "CP: type 0 packet in IB\n");
 +	if (status & A3XX_INT0_CP_OPCODE_ERROR)
@@ -76,7 +69,7 @@ Recovery is left to hangcheck, as before.
  static irqreturn_t a3xx_irq(struct msm_gpu *gpu)
  {
  	uint32_t status;
-@@ -423,7 +477,7 @@
+@@ -423,7 +469,7 @@
  	status = gpu_read(gpu, REG_A3XX_RBBM_INT_0_STATUS);
  	DBG("%s: %08x", gpu->name, status);
  
