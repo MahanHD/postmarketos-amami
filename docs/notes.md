@@ -577,6 +577,19 @@ index.
 carries the individual device's factory sensor calibration. Harvest your own,
 as described in the build notes.
 
+**Some boots come up without sensors, and the ADSP's first run is why (2026-10-16,
+open).** In 14 of 15 boots in the journal the accelerometer appeared exactly when the
+ADSP had raised an exception ("Exception detected", `crash detected in adsp`) about
+0.7 s after starting and been restarted by remoteproc recovery. When the first run
+does not crash, it never brings the sensors up: `qcom_smgr` is refused (0x701 for the
+accelerometer) or times out for as long as it asks, and the phone has no sensor
+devices that boot, about one in four to six. A late registry is ruled out: a test
+kernel that loaded `qcom_sns_reg` before the DSP started had it serving first in six
+boots of six and changed nothing. `0121` makes `qcom_smgr` enumerate from a work item
+for up to a minute instead of failing in probe (a retry loop inside probe held up the
+registry and made it worse), which does not cover this case. Next: stock's ADSP
+bring-up against `qcom_q6v5_pas`'s first start.
+
 ### The proximity sensor reports nothing
 
 *Solved since: `0047` keeps a second subscription open, after which proximity reports
@@ -764,6 +777,18 @@ pulled. **That third parameter is not optional**: `rcu_exp_cpu_stall_timeout` is
 milliseconds and defaults to 20, while its sibling `rcu_cpu_stall_timeout` is in
 seconds, so without it the kernel panics on the harmless ~3-jiffy expedited stall
 this device emits at about 36s of every boot.
+
+**Bringing a core back after hotplug (`0079`-`0081`, reworked in review pass 4).** The
+outgoing core power-collapses through its SPM and TrustZone; the boot CPU later runs
+the release sequence again, which ends by asserting CLAMP and COREPOR_RST and resets
+the SoC if the core is still live. So it now waits for the core's ACC to say it is off:
+`ACC + 0x08` bit 19, the register stock polls (`qcom,cpu-sleep-status` at
+`0xf9088008 + cpu * 0x10000`, mask `0x80000`). Read through `/dev/mem` it is 1 on idle
+and offline cores and 0 on the one running. The SPM and the warm boot address are looked
+up in a CPU hotplug teardown callback on the outgoing core, at offline time: an
+init-time lookup ran before the SPM and SCM had probed, found nothing, and left every
+core parked in WFI for good, which boot checks did not show and `tools/hotplug-stress.sh`
+did.
 
 ## Idle and suspend
 
