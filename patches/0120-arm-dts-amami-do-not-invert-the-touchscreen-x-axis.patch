@@ -1,0 +1,25 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] arm: dts: amami: do not invert the touchscreen's x axis
+
+The rhine dtsi sets touchscreen-inverted-x on the Synaptics controller,
+which suits honami, and on amami mirrors every touch left to right.
+0001 used to drop it in the shared dtsi, changing honami too; drop it
+for amami only.
+
+---
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -975,3 +975,13 @@
+ 	};
+ };
+ 
++
++&touchscreen {
++	rmi4-f11@11 {
++		/*
++		 * The shared rhine dtsi inverts X, which suits honami; on amami's
++		 * panel it mirrors every touch left to right.
++		 */
++		/delete-property/ touchscreen-inverted-x;
++	};
++};

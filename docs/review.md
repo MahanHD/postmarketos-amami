@@ -8,7 +8,7 @@ compares it with stock where that applies, fixes what it finds and records it he
 |---|---|---|
 | 1 | GPU and GPU memory (`0089`, `0105`-`0114`, `debug/9021`) | done, r220 |
 | 2 | Camera stack: imx200 driver, camss patches, `recipe/libcamera`, `recipe/libdng`, `recipe/libmegapixels`, `recipe/megapixels`, `userspace/megapixels` | done, r226 |
-| 3 | amami and msm8974 device tree: CPU rail and OPPs, regulators, the DT patches | to do |
+| 3 | amami and msm8974 device tree: CPU rail and OPPs, regulators, the DT patches | done, r235 |
 | 4 | The other kernel patches, by subsystem: display, sensors, charging, CPU hotplug, WiFi/BT, audio | to do |
 | 5 | Tools, recipes and docs: stale or contradicting text, tools nobody uses | patches and docs cleaned 2026-10-16 (worklog, "Cleanup"); tools to do |
 
@@ -201,3 +201,51 @@ after a photo sent both gains to the 4.0 limit, and the DNG could be written the
 given them back to the debayer, which resets them, and the step itself ignored the colour
 matrix and gamma, so it overshot. Megapixels r13 fixes both; the step now lands on the
 scene's gains in one move, and the next photo's neutral matched its raw data to 0.002.
+
+## Pass 3: device tree
+
+`/code-review` (medium) over the 27 patches that touch the device tree, against the
+bindings and Sony's stock tree. Ten candidates, each checked against the source, stock
+(`14.4.A` kernel-copyleft and the `14.6.A` dtbs) and the phone:
+
+| # | Finding | Verdict | Done |
+|---|---|---|---|
+| 1 | `0024`: the extended BTC window, with no derating, lets the battery charge at full current far into the hot band; stock derates above 45C | real, and the reason for the window was wrong | new `0119`, `0024` rewritten, `0069` gets the battery table; below |
+| 2 | `0004`: `charge-full-design` 3140 mAh, honami's pack | real: Sony's profile for amami (`bms-batterydata-ray.c`) is 2420 mAh; the OCV table was already from it | `0004` |
+| 3 | `0112`: voltages for one bin only, so every other unit loses its whole OPP table | real | every stock bin, plus a worst-case fallback |
+| 4 | `0001`: amami's touchscreen fixes are in the shared rhine dtsi, changing honami | half: honami's stock tree uses the same S3 rail and 200 ms, so those stay shared; the X inversion is amami's | `0001` keeps it, new `0120` drops it for amami |
+| 5 | `0035`: a debug probe writes `0xdeadbee0` into the SMMU on every boot, into global space once the banks move | real | removed; the comment keeps the measurement |
+| 6 | `0110`: the GPU SMMU's BFB table only in amami's dts | valid by design: LineageOS has a different table for the same SoC | none |
+| 7 | `0073`-`0075` route PMIC and tsens interrupts through the MPM in the shared dtsi, needing `QCOM_MPM` | real for other boards (`=y` here) | none until upstreaming |
+| 8 | `0015`/`0034`: unvolted OPPs and the GPU SMMU in the shared dtsi apply to every msm8974 board | real for other boards | none until upstreaming |
+| 9 | `0050`: the codec MCLK pin has no pinctrl state | real, known, audio is parked | none |
+| 10 | properties and compatibles without bindings (smbb, smmu, camss, imx200, bu64296, panel) | real, an upstreaming blocker | the new smbb properties are in the binding |
+
+### The battery window
+
+The SMBB's BTC comparator stops charging outside a window, each edge a fraction of the
+thermistor's reference (hot 35% or 25%, cold 70% or 80%), and charges at full current
+inside it. On the battery thermistor table those edges are about 40C, 57C, 4C and -7C.
+`0024` had set `qcom,jeita-extended-temp-range` because the thermistor "at room
+temperature" read 34%, which the narrow window counts as hot. But 34% is 42C on the
+battery table: the battery was warm, not misread. The extended range moved both edges
+and nothing derated, so the pack charged at 1.3 A to 4.35 V from -7C to 57C. Stock
+(`qpnp-charger`, Sony's amami node) leaves the edges to the hardware and derates in
+software: 650 mA to 4.2 V above 45C, 650 mA below 10C, 2C of hysteresis.
+
+`0119` adds that derating to `qcom_smbb`, polled every 30 s while a charger is
+connected, and lets each window edge be chosen on its own. `0024` takes the extended
+hot edge (the narrow one stops a warm-day battery from charging at all), the narrow
+cold edge (no charging below freezing) and stock's derating. `0069` replaces the
+generic 100k curve, which read 40.7C where the battery table reads 43.3C, with the
+downstream table.
+
+On r234, `0x1249` reads `0x80` (hot 25%, cold 70%). Four loaded cores took the battery
+from 43.7C to 45.3C in about three minutes; the driver logged "warm charging" and
+`current_max`, `voltage_max` and the recharge threshold went from 1.3 A, 4.35 V and
+4.20 V to 650 mA, 4.2 V and 4.04 V. Through 25 minutes of cooling from 46.9C to 44.1C
+it stayed warm, as the hysteresis says. The way back to normal (below 43C) was not
+seen: this room keeps the idle battery near 43.7C. r235 rounds the recharge threshold
+to its 20 mV grid itself (r234 logged the rounding) and stays quiet about the ADC
+for the first polls after boot, when it has not probed yet.
+

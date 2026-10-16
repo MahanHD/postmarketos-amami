@@ -1,0 +1,46 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] arm: dts: amami: handle battery temperature as stock does
+
+The SMBB charges at full current anywhere inside its BTC window, and the
+driver's default window, [35%:70%] of the thermistor reference, ends at
+about 40C on this battery: on a warm day the pack sits there and the phone
+does not charge. Stock (Sony's 14.6.A kernel) leaves the window to the
+hardware and derates in software: 650mA to 4.2V above 45C, 650mA below
+10C. Use the extended hot edge, keep the narrow cold one so it never
+charges below freezing, and derate as stock does (needs 0119, and 0071 for
+the thermistor).
+
+An earlier version set qcom,jeita-extended-temp-range on the reading that
+the battery was too hot at room temperature. It was not at room
+temperature: the same reading is 42C on the battery thermistor's own
+table, and the extended range on both edges, with no derating, charged at
+1.3A to 4.35V up to about 57C and down to about -7C.
+
+---
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-16 12:29:50.729408531 +0400
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-16 12:30:04.748038993 +0400
+@@ -125,6 +125,24 @@
+ 
+ 	monitored-battery = <&battery>;
+ 
++	/*
++	 * Battery temperature handled as Sony's stock kernel does. The hot
++	 * edge of the SMBB's window is the extended one, 25% of the
++	 * reference, about 57C on this battery's thermistor: the narrow 35%
++	 * stops charging at about 40C, where the battery sits on a warm day.
++	 * The cold edge stays at 70%, about 4C, so it never charges below
++	 * freezing. Stock does not set the edges and leaves them to the
++	 * hardware; these are chosen, not read. Between them, stock's
++	 * derating: 650mA to 4.2V above 45C, 650mA below 10C.
++	 */
++	qcom,battery-hot-threshold-percent = <25>;
++	qcom,battery-cold-threshold-percent = <70>;
++	qcom,warm-battery-decidegc = <450>;
++	qcom,cool-battery-decidegc = <100>;
++	qcom,warm-charge-current-limit = <650000>;
++	qcom,warm-charge-voltage-limit = <4200000>;
++	qcom,cool-charge-current-limit = <650000>;
++
+ 	io-channels = <&pm8941_vadc VADC_VBAT_SNS>;
+ 	io-channel-names = "vbat";
+ 

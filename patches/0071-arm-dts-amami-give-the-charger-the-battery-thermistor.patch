@@ -1,8 +1,8 @@
---- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-+++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-@@ -311,8 +311,15 @@
- 	 */
- 	qcom,jeita-extended-temp-range;
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-16 12:30:27.743345627 +0400
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-16 12:30:29.983261305 +0400
+@@ -354,8 +354,15 @@
+ 	qcom,warm-charge-voltage-limit = <4200000>;
+ 	qcom,cool-charge-current-limit = <650000>;
  
 -	io-channels = <&pm8941_vadc VADC_VBAT_SNS>;
 -	io-channel-names = "vbat";

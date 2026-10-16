@@ -1,0 +1,412 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] power: supply: qcom_smbb: derate charging on a warm or cool battery
+
+The SMBB's BTC comparator only knows hot and cold: outside a window it
+stops charging, inside it charges at full current and voltage. Downstream
+drivers narrow that in software, as JEITA asks: Sony's stock kernel for
+the Xperia Z1 Compact charges at 650 mA to 4.2 V above 45 C and at 650 mA
+below 10 C, with 2 C of hysteresis. This driver had nothing of the kind,
+so a board that needs the extended hot edge (the narrow one stops at
+about 40 C, where this phone's battery sits on a warm day) charged at the
+full 1.3 A to 4.35 V up to about 57 C.
+
+Add both:
+
+- qcom,battery-hot-threshold-percent and -cold-threshold-percent choose
+  each edge of the BTC window on its own. qcom,jeita-extended-temp-range
+  moves both, and the extended cold edge allows charging below freezing.
+- qcom,warm-/cool-battery-decidegc and the warm and cool current and
+  voltage limits derate from the battery thermistor, polled every 30 s
+  while a charger is connected. The recharge threshold follows the
+  voltage limit, keeping the configured margin. There is no wake-capable
+  temperature monitor for this PMIC in mainline, so the poll keeps the
+  system awake while a charger is connected.
+
+---
+--- a/Documentation/devicetree/bindings/power/supply/qcom,pm8941-charger.yaml
++++ b/Documentation/devicetree/bindings/power/supply/qcom,pm8941-charger.yaml
+@@ -117,6 +117,49 @@
+       be done externally to fully comply with the JEITA safety guidelines if this flag
+       is set.
+ 
++  qcom,battery-hot-threshold-percent:
++    enum: [25, 35]
++    description: |
++      Hot edge of the battery temperature window, as a percentage of the
++      thermistor's reference. Overrides qcom,jeita-extended-temp-range for
++      this edge.
++
++  qcom,battery-cold-threshold-percent:
++    enum: [70, 80]
++    description: |
++      Cold edge of the battery temperature window, as a percentage of the
++      thermistor's reference. Overrides qcom,jeita-extended-temp-range for
++      this edge.
++
++  qcom,warm-battery-decidegc:
++    $ref: /schemas/types.yaml#/definitions/int32
++    description: |
++      Battery temperature in tenths of a degree C above which charging is
++      derated to the warm limits. Needs a "batt-therm" io-channel and
++      qcom,cool-battery-decidegc.
++
++  qcom,cool-battery-decidegc:
++    $ref: /schemas/types.yaml#/definitions/int32
++    description: |
++      Battery temperature in tenths of a degree C below which charging is
++      derated to the cool limits.
++
++  qcom,warm-charge-current-limit:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: Charge current limit in uA while the battery is warm.
++
++  qcom,warm-charge-voltage-limit:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: Charge voltage limit in uV while the battery is warm.
++
++  qcom,cool-charge-current-limit:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: Charge current limit in uA while the battery is cool.
++
++  qcom,cool-charge-voltage-limit:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: Charge voltage limit in uV while the battery is cool.
++
+   usb-charge-current-limit:
+     $ref: /schemas/types.yaml#/definitions/uint32
+     minimum: 100000
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -26,7 +26,9 @@
+ #include <linux/platform_device.h>
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
++#include <linux/pm_wakeup.h>
+ #include <linux/slab.h>
++#include <linux/workqueue.h>
+ #include <linux/extcon-provider.h>
+ #include <linux/regulator/driver.h>
+ 
+@@ -132,6 +134,22 @@
+ 	struct mutex btherm_lock;
+ 	struct iio_channel *btherm;
+ 	struct power_supply_battery_info *batt_info;
++
++	/* optional: charge gentler while the battery is warm or cool */
++	bool jeita;
++	struct mutex jeita_lock;
++	struct delayed_work jeita_work;
++	unsigned int temp_misses;
++	enum smbb_temp_zone {
++		SMBB_TEMP_NORMAL,
++		SMBB_TEMP_WARM,
++		SMBB_TEMP_COOL,
++	} temp_zone;
++	int warm_decidegc;
++	int cool_decidegc;
++	unsigned int norm_imax, norm_vmax, vdet_margin;
++	unsigned int warm_imax, warm_vmax;
++	unsigned int cool_imax, cool_vmax;
+ };
+ 
+ static const unsigned int smbb_usb_extcon_cable[] = {
+@@ -380,6 +398,197 @@
+ 	dev_dbg(chg->dev, "status = %03lx\n", chg->status);
+ }
+ 
++/*
++ * JEITA derating. The SMBB only knows hot and cold: its BTC comparator stops
++ * charging outside a window and charges at full current and voltage inside
++ * it. Downstream drivers narrow that in software, charging at a lower current
++ * (and, when warm, to a lower voltage) between the window's edges and a warm
++ * and a cool temperature, with 2 C of hysteresis. This does the same from the
++ * battery thermistor, every 30 s while a charger is connected.
++ *
++ * The recharge threshold moves with the voltage limit, keeping the margin the
++ * board configured between them, so a lower limit does not leave the
++ * threshold at or above it and the charger cycling.
++ *
++ * There is no wake-capable temperature monitor for this PMIC in mainline, so
++ * the poll keeps the system awake while a charger is connected; otherwise a
++ * battery warming up in suspend would go on charging at full current.
++ */
++#define SMBB_JEITA_PERIOD	msecs_to_jiffies(30000)
++#define SMBB_JEITA_HYST_DECIDEGC	20
++
++static int smbb_battery_temp(struct smbb_charger *chg, int *decidegc);
++
++static void smbb_jeita_apply(struct smbb_charger *chg)
++{
++	unsigned int imax = chg->norm_imax;
++	unsigned int vmax = chg->norm_vmax;
++	unsigned int vdet;
++
++	if (chg->temp_zone == SMBB_TEMP_WARM) {
++		imax = min(imax, chg->warm_imax);
++		vmax = min(vmax, chg->warm_vmax);
++	} else if (chg->temp_zone == SMBB_TEMP_COOL) {
++		imax = min(imax, chg->cool_imax);
++		vmax = min(vmax, chg->cool_vmax);
++	}
++
++	/* On the threshold's 20mV grid, rounded down as the write would */
++	vdet = smbb_vbat_det_fn(smbb_hw_lookup(vmax - chg->vdet_margin,
++					       smbb_vbat_det_fn));
++
++	/* Lower the threshold before the limit, raise it after */
++	if (vmax < chg->attr[ATTR_BAT_VMAX]) {
++		smbb_charger_attr_write(chg, ATTR_CHG_VDET, vdet);
++		smbb_charger_attr_write(chg, ATTR_BAT_VMAX, vmax);
++	} else {
++		smbb_charger_attr_write(chg, ATTR_BAT_VMAX, vmax);
++		smbb_charger_attr_write(chg, ATTR_CHG_VDET, vdet);
++	}
++	smbb_charger_attr_write(chg, ATTR_BAT_IMAX, imax);
++}
++
++static enum smbb_temp_zone smbb_jeita_zone(struct smbb_charger *chg, int temp)
++{
++	switch (chg->temp_zone) {
++	case SMBB_TEMP_WARM:
++		if (temp >= chg->warm_decidegc - SMBB_JEITA_HYST_DECIDEGC)
++			return SMBB_TEMP_WARM;
++		break;
++	case SMBB_TEMP_COOL:
++		if (temp <= chg->cool_decidegc + SMBB_JEITA_HYST_DECIDEGC)
++			return SMBB_TEMP_COOL;
++		break;
++	default:
++		break;
++	}
++
++	if (temp > chg->warm_decidegc)
++		return SMBB_TEMP_WARM;
++	if (temp < chg->cool_decidegc)
++		return SMBB_TEMP_COOL;
++	return SMBB_TEMP_NORMAL;
++}
++
++static void smbb_jeita_work(struct work_struct *work)
++{
++	static const char * const names[] = { "normal", "warm", "cool" };
++	struct smbb_charger *chg = container_of(to_delayed_work(work),
++						struct smbb_charger, jeita_work);
++	enum smbb_temp_zone zone;
++	int temp, rc;
++
++	rc = smbb_battery_temp(chg, &temp);
++	if (rc) {
++		/*
++		 * Keep the current limits and try again. -ENODATA is the ADC
++		 * not having probed yet, normal for a while after boot, so say
++		 * nothing about it for the first ten polls.
++		 */
++		if (rc != -ENODATA || ++chg->temp_misses == 10)
++			dev_warn_ratelimited(chg->dev,
++					     "battery temperature unreadable: %d\n", rc);
++	} else {
++		mutex_lock(&chg->jeita_lock);
++		zone = smbb_jeita_zone(chg, temp);
++		if (zone != chg->temp_zone) {
++			chg->temp_zone = zone;
++			smbb_jeita_apply(chg);
++			dev_info(chg->dev, "battery at %d.%d C: %s charging\n",
++				 temp / 10, abs(temp % 10), names[zone]);
++		}
++		mutex_unlock(&chg->jeita_lock);
++	}
++
++	schedule_delayed_work(&chg->jeita_work, SMBB_JEITA_PERIOD);
++}
++
++/*
++ * A limit set from userspace becomes the normal one; the derated limits
++ * still cap it while the battery is warm or cool.
++ */
++static int smbb_jeita_set_limit(struct smbb_charger *chg,
++				enum smbb_attr which, unsigned int val)
++{
++	const struct smbb_charger_attr *prop = &smbb_charger_attrs[which];
++
++	if (val < prop->min || val > prop->max)
++		return -EINVAL;
++	if (which == ATTR_BAT_VMAX &&
++	    val < smbb_charger_attrs[ATTR_CHG_VDET].min + chg->vdet_margin)
++		return -EINVAL;
++
++	mutex_lock(&chg->jeita_lock);
++	if (which == ATTR_BAT_IMAX)
++		chg->norm_imax = val;
++	else
++		chg->norm_vmax = val;
++	smbb_jeita_apply(chg);
++	mutex_unlock(&chg->jeita_lock);
++
++	return 0;
++}
++
++/* Poll while a charger is connected, and only then */
++static void smbb_jeita_update(struct smbb_charger *chg)
++{
++	if (!chg->jeita)
++		return;
++
++	if (chg->status & (STATUS_USBIN_VALID | STATUS_DCIN_VALID)) {
++		pm_stay_awake(chg->dev);
++		mod_delayed_work(system_wq, &chg->jeita_work, 0);
++	} else {
++		cancel_delayed_work_sync(&chg->jeita_work);
++		pm_relax(chg->dev);
++	}
++}
++
++static int smbb_jeita_parse(struct smbb_charger *chg)
++{
++	struct device_node *np = chg->dev->of_node;
++
++	if (of_property_read_s32(np, "qcom,warm-battery-decidegc",
++				 &chg->warm_decidegc) ||
++	    of_property_read_s32(np, "qcom,cool-battery-decidegc",
++				 &chg->cool_decidegc))
++		return 0;
++
++	if (chg->warm_decidegc - chg->cool_decidegc <
++	    2 * SMBB_JEITA_HYST_DECIDEGC) {
++		dev_err(chg->dev, "warm and cool battery temperatures overlap\n");
++		return -EINVAL;
++	}
++
++	chg->norm_imax = chg->attr[ATTR_BAT_IMAX];
++	chg->norm_vmax = chg->attr[ATTR_BAT_VMAX];
++	if (chg->attr[ATTR_CHG_VDET] >= chg->norm_vmax) {
++		dev_err(chg->dev, "recharge threshold not below the voltage limit\n");
++		return -EINVAL;
++	}
++	chg->vdet_margin = chg->norm_vmax - chg->attr[ATTR_CHG_VDET];
++
++	chg->warm_imax = chg->cool_imax = chg->norm_imax;
++	chg->warm_vmax = chg->cool_vmax = chg->norm_vmax;
++	of_property_read_u32(np, "qcom,warm-charge-current-limit", &chg->warm_imax);
++	of_property_read_u32(np, "qcom,warm-charge-voltage-limit", &chg->warm_vmax);
++	of_property_read_u32(np, "qcom,cool-charge-current-limit", &chg->cool_imax);
++	of_property_read_u32(np, "qcom,cool-charge-voltage-limit", &chg->cool_vmax);
++
++	if (min(chg->warm_vmax, chg->cool_vmax) - chg->vdet_margin <
++	    smbb_charger_attrs[ATTR_CHG_VDET].min) {
++		dev_err(chg->dev, "derated voltage limit too low\n");
++		return -EINVAL;
++	}
++
++	mutex_init(&chg->jeita_lock);
++	INIT_DELAYED_WORK(&chg->jeita_work, smbb_jeita_work);
++	chg->temp_zone = SMBB_TEMP_NORMAL;
++	chg->jeita = true;
++
++	return devm_device_init_wakeup(chg->dev);
++}
++
+ static irqreturn_t smbb_usb_valid_handler(int irq, void *_data)
+ {
+ 	struct smbb_charger *chg = _data;
+@@ -387,6 +596,7 @@
+ 	smbb_set_line_flag(chg, irq, STATUS_USBIN_VALID);
+ 	extcon_set_state_sync(chg->edev, EXTCON_USB,
+ 				chg->status & STATUS_USBIN_VALID);
++	smbb_jeita_update(chg);
+ 	power_supply_changed(chg->usb_psy);
+ 
+ 	return IRQ_HANDLED;
+@@ -397,6 +607,7 @@
+ 	struct smbb_charger *chg = _data;
+ 
+ 	smbb_set_line_flag(chg, irq, STATUS_DCIN_VALID);
++	smbb_jeita_update(chg);
+ 	if (!chg->dc_disabled)
+ 		power_supply_changed(chg->dc_psy);
+ 
+@@ -794,10 +1005,16 @@
+ 
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+-		rc = smbb_charger_attr_write(chg, ATTR_BAT_IMAX, val->intval);
++		if (chg->jeita)
++			rc = smbb_jeita_set_limit(chg, ATTR_BAT_IMAX, val->intval);
++		else
++			rc = smbb_charger_attr_write(chg, ATTR_BAT_IMAX, val->intval);
+ 		break;
+ 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+-		rc = smbb_charger_attr_write(chg, ATTR_BAT_VMAX, val->intval);
++		if (chg->jeita)
++			rc = smbb_jeita_set_limit(chg, ATTR_BAT_VMAX, val->intval);
++		else
++			rc = smbb_charger_attr_write(chg, ATTR_BAT_VMAX, val->intval);
+ 		break;
+ 	default:
+ 		rc = -EINVAL;
+@@ -966,6 +1183,7 @@
+ 	struct power_supply_config dc_cfg = {};
+ 	struct smbb_charger *chg;
+ 	struct regulator_config config = { };
++	u32 btc_hot, btc_cold;
+ 	int rc, i;
+ 
+ 	chg = devm_kzalloc(&pdev->dev, sizeof(*chg), GFP_KERNEL);
+@@ -1012,6 +1230,10 @@
+ 		}
+ 	}
+ 
++	rc = smbb_jeita_parse(chg);
++	if (rc)
++		return rc;
++
+ 	bat_cfg.drv_data = chg;
+ 	bat_cfg.fwnode = dev_fwnode(&pdev->dev);
+ 	chg->bat_psy = devm_power_supply_register(&pdev->dev,
+@@ -1103,16 +1325,31 @@
+ 	chg->jeita_ext_temp = of_property_read_bool(pdev->dev.of_node,
+ 			"qcom,jeita-extended-temp-range");
+ 
+-	/* Set temperature range to [35%:70%] or [25%:80%] accordingly */
++	/*
++	 * The temperature range is [35%:70%] or [25%:80%] of the thermistor's
++	 * reference, and each edge can also be chosen on its own: a board can
++	 * need the extended hot edge without charging below freezing.
++	 */
++	btc_hot = chg->jeita_ext_temp ? 25 : 35;
++	btc_cold = chg->jeita_ext_temp ? 80 : 70;
++	of_property_read_u32(pdev->dev.of_node,
++			     "qcom,battery-hot-threshold-percent", &btc_hot);
++	of_property_read_u32(pdev->dev.of_node,
++			     "qcom,battery-cold-threshold-percent", &btc_cold);
++	if ((btc_hot != 25 && btc_hot != 35) ||
++	    (btc_cold != 70 && btc_cold != 80)) {
++		dev_err(&pdev->dev, "battery thresholds must be 25 or 35%% (hot) and 70 or 80%% (cold)\n");
++		return -EINVAL;
++	}
++
+ 	rc = regmap_update_bits(chg->regmap, chg->addr + SMBB_BAT_BTC_CTRL,
+ 			BTC_CTRL_COLD_EXT | BTC_CTRL_HOT_EXT_N,
+-			chg->jeita_ext_temp ?
+-				BTC_CTRL_COLD_EXT :
+-				BTC_CTRL_HOT_EXT_N);
++			(btc_hot == 35 ? BTC_CTRL_HOT_EXT_N : 0) |
++			(btc_cold == 80 ? BTC_CTRL_COLD_EXT : 0));
+ 	if (rc) {
+ 		dev_err(&pdev->dev,
+-			"unable to set %s temperature range\n",
+-			chg->jeita_ext_temp ? "JEITA extended" : "normal");
++			"unable to set the %u%%:%u%% temperature range\n",
++			btc_hot, btc_cold);
+ 		return rc;
+ 	}
+ 
+@@ -1142,6 +1379,9 @@
+ 
+ 	chg = platform_get_drvdata(pdev);
+ 
++	if (chg->jeita)
++		cancel_delayed_work_sync(&chg->jeita_work);
++
+ 	regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL, CTRL_EN, 0);
+ }
+ 

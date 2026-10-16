@@ -17,9 +17,9 @@ belong to the board, since LineageOS's tree has a different table for the
 same SoC.
 
 ---
---- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-15 10:20:56.504343261 +0400
-+++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-15 10:21:22.385309518 +0400
-@@ -51,6 +51,18 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -52,6 +52,18 @@
  	};
  };
  
@@ -38,8 +38,8 @@ same SoC.
  &gpu {
  	status = "okay";
  };
---- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c	2026-10-15 10:20:56.503343259 +0400
-+++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c	2026-10-15 10:21:22.384883910 +0400
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
 @@ -693,6 +693,45 @@
  }
  
@@ -85,8 +85,8 @@ same SoC.
 +/*
   * msm8974's IDR1.NUMPAGENDXB reports four pages, which would put context bank n at
   * base + 0x4000 + n * 0x1000. Downstream addresses the banks at 0xfdb18000 on a
-  * base of 0xfdb10000, i.e. base + 0x8000, so the register under-reports. Probe both
-@@ -722,7 +761,7 @@
+  * base of 0xfdb10000, i.e. base + 0x8000, so the register under-reports. Measured:
+@@ -711,7 +750,7 @@
  	dev_info(smmu->dev, "context banks forced to base + 0x%x\n",
  		 smmu->numpage << smmu->pgshift);
  
@@ -95,7 +95,7 @@ same SoC.
  }
  
  /*
-@@ -746,10 +785,23 @@
+@@ -735,10 +774,23 @@
  			  reg & ~ARM_SMMU_SCTLR_AFE);
  }
  
@@ -119,8 +119,8 @@ same SoC.
  	.write_s2cr = msm8974_smmu_write_s2cr,
  	.write_sctlr = msm8974_smmu_write_sctlr,
  	.tlb_sync = qcom_smmu_tlb_sync,
---- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h	2026-10-15 10:20:56.504343261 +0400
-+++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h	2026-10-15 10:21:11.426009885 +0400
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h
 @@ -12,6 +12,9 @@
  	bool bypass_quirk;
  	u8 bypass_cbndx;

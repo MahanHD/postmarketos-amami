@@ -5,8 +5,8 @@ Where the port stands and what comes next, in order. The settled findings are in
 
 ## Current state (2026-10-16)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 233 (`uname -v` prints
-`#234`), with boot image 233. The recipe applies exactly the patches in `patches/`; work
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 235 (`uname -v` prints
+`#236`), with boot image 235. The recipe applies exactly the patches in `patches/`; work
 out of the build with a way back is in `patches/parked/`, diagnostics in
 `patches/debug/`. There is no phone backup (`backups/README.md`).
 
@@ -21,7 +21,7 @@ in Megapixels needs nearly all of 192 MB. `devcore-collect` (`tools/`) runs from
 and saves any GPU hang dump; none but deliberately injected ones since the fixes.
 
 Working: display, touch, GPU (GTK4's GL renderer included), WiFi, Bluetooth, charging
-and battery reporting, all sensors, the notification LED, CPU frequency scaling to
+with stock's temperature derating (`0119`) and battery reporting, all sensors, the notification LED, CPU frequency scaling to
 1497.6 MHz and GPU frequency scaling with thermal limits, CPU hotplug, suspend
 (s2idle), and the rear camera in GNOME Snapshot and Megapixels with correct colour.
 
@@ -40,11 +40,17 @@ while the real fix is under way. And start from the other firmwares, above all s
 reverse engineer them, then use what they yield, combine it, and improve on it where we
 can.
 
-## 1. Review passes 3 to 5
+## 1. Review passes 4 and 5
 
-`review.md` holds a pass-by-pass review of the whole port. Passes 1 (GPU) and 2
-(camera) are done, and the 2026-10-16 cleanup did part of pass 5. Next is pass 3, the
-amami and msm8974 device tree, then pass 4, the remaining kernel patches by subsystem.
+`review.md` holds a pass-by-pass review of the whole port. Passes 1 (GPU), 2 (camera)
+and 3 (device tree) are done, and the 2026-10-16 cleanup did the patches-and-docs half
+of pass 5. Next is pass 4, the remaining kernel patches by subsystem, then the tools.
+Pass 3 left a list for upstreaming, not for this phone: shared-dtsi changes that need
+other boards' configs or voltages (MPM routing, the unvolted OPPs, the GPU SMMU) and
+bindings for the new compatibles and properties.
+
+The charger's return from warm to normal derating (below 43C) has not been seen on the
+phone yet, only the switch to warm; `dmesg` logs "normal charging" when it happens.
 
 ## 2. Camera, rear (IMX200)
 

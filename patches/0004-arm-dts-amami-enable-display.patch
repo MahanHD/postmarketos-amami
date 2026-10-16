@@ -1,6 +1,6 @@
 --- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
 +++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-@@ -1,11 +1,37 @@
+@@ -1,11 +1,38 @@
  // SPDX-License-Identifier: GPL-2.0
  #include "qcom-msm8974-sony-xperia-rhine.dtsi"
 +#include <dt-bindings/gpio/gpio.h>
@@ -13,15 +13,16 @@
  
 +
 +	/*
-+	 * Sony LIS1529ERPC. The OCV table is the 25 degC column of
-+	 * qcom,pc-temp-ocv-lut in the downstream batterydata-rhine-amami.dtsi.
++	 * Sony LIS1529ERPC. Capacity and the OCV table (its 25 degC column)
++	 * are Sony's battery profile for amami, bms-batterydata-ray.c in
++	 * the stock kernel source (14.4.A).
 +	 */
 +	battery: battery {
 +		compatible = "simple-battery";
 +		device-chemistry = "lithium-ion";
 +		voltage-min-design-microvolt = <3400000>;
 +		voltage-max-design-microvolt = <4350000>;
-+		charge-full-design-microamp-hours = <3140000>;
++		charge-full-design-microamp-hours = <2420000>;
 +
 +		ocv-capacity-celsius = <25>;
 +		ocv-capacity-table-0 =
@@ -38,7 +39,7 @@
  	gpio-keys {
  		key-camera-snapshot {
  			label = "camera_snapshot";
-@@ -23,8 +49,92 @@
+@@ -23,8 +50,92 @@
  	};
  };
  

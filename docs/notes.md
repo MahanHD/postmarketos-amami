@@ -251,11 +251,14 @@ Fixing both gives a working ammeter, and the two independent sense resistors -
 internal and the 10 mOhm external one named in the device tree - agree within 5-7%,
 which is the reason to believe the numbers:
 
-| state | current | runtime on a 3140 mAh pack |
+| state | current | runtime on a 2420 mAh pack |
 |---|---|---|
-| idle, screen off | 252 mA | 12.5 h |
-| idle, screen on | 400 mA | 7.8 h |
-| four cores loaded, screen on | 689 mA | 4.6 h |
+| idle, screen off | 252 mA | 9.6 h |
+| idle, screen on | 400 mA | 6.1 h |
+| four cores loaded, screen on | 689 mA | 3.5 h |
+
+(2420 mAh is the design capacity in Sony's battery profile for amami; this column
+first used 3140 mAh, honami's, until review pass 3.)
 
 The panel and its backlight cost **148 mA**, 37% of idle draw. Resolution is about
 0.55 mA per ADC count.
@@ -272,15 +275,12 @@ at exactly zero, `status` reads Discharging and `capacity` barely moves, which l
 convincingly like a broken charger. On a wall charger the same kernel reports
 `Charging`/`Fast` and pushes ~268 mA in at 92%, tapering towards the 4.35 V VMAX.
 
-That is only half the story though - `0024` had to come first. `qcom_smbb` always
-enables the SMBB's temperature comparators and picks their window from a single
-device tree bool, and the default narrow [35%:70%] band read amami's perfectly
-ordinary 642 mV `BAT_THERM` as too hot. That comparator gates the charger in
-hardware, not just in reporting, so `health = Overheat` was a genuine block rather
-than a cosmetic complaint. With `qcom,jeita-extended-temp-range` the band widens to
-[25%:80%], `BAT_IF` real-time status reads 0x03 and health reports Good. Both changes
-were needed; since they landed together the attribution is not cleanly proven, but
-the mechanism says the fix was necessary and the supply was the other half.
+The other half was the temperature window. `qcom_smbb` enables the SMBB's temperature
+comparators, and the default narrow window stops charging at about 40C. `BAT_THERM`
+read 642 mV, 36.0% of the reference, about 39C on the battery's own table: a warm
+battery right at the edge, not, as first written here, an ordinary reading misjudged.
+The comparator gates the charger in hardware, so `health = Overheat` was a real block.
+How the window and the derating are set now is under "Battery temperature" below.
 
 The 642 mV figure is worth trusting because the VADC was calibrated against its own
 `REF_625MV`, `REF_1250MV` and `GND_REF` channels - 97.41 uV per count - and the same
@@ -304,38 +304,41 @@ Measuring draw needs the USB cable **out**. On USB the battery floats: the exter
 sense resistor sees only noise, current does not respond to load at all, and
 `capacity` barely moves. Use WiFi for the session instead.
 
-### Battery temperature, and why the jeita band had to be widened
+### Battery temperature: the window, the derating, and a misreading
 
-`0024` sets `qcom,jeita-extended-temp-range`, and that turns out to be the correct
-setting for this battery rather than a workaround.
+The PM8941's battery temperature comparator (BTC) stops charging outside a window,
+each edge a fixed fraction of the thermistor's reference: hot at 35% or 25%, cold at
+70% or 80%. Inside the window it charges at full current. On this battery's
+thermistor network (the downstream table, now `SCALE_BATT_THERM` in `0069`, read
+ratiometrically on an 1800 mV scale) the edges are:
 
-The PM8941's battery temperature comparator comes with two fixed windows, expressed as
-percentages of the thermistor's reference: [35%:70%] or [25%:80%]. Calibrating the
-VADC from its own `REF_625MV`, `REF_1250MV` and `GND_REF` channels gives 97.37
-uV/count, and against `VDD_VADC` at 1781.7 mV the thermistor reads:
+| edge | % of reference | battery |
+|---|---|---|
+| hot, narrow | 35% | about 40C |
+| hot, extended | 25% | about 57C |
+| cold, narrow | 70% | about 4C |
+| cold, extended | 80% | about -7C |
 
-| | raw | mV | % of reference |
-|---|---|---|---|
-| at rest | 30949 | 606.5 | 34.0% |
-| after ten minutes of four-core load | 30499 | 562.7 | 31.6% |
+Stock (Sony's 14.6.A kernel, `qpnp-charger`) never writes the edges, so they are
+whatever the hardware or bootloader leaves, and derates in software from the
+thermistor: 650 mA to 4.2 V above 45C, 650 mA below 10C, 2C of hysteresis. Mainline's
+`qcom_smbb` had no derating at all. `0119` adds it, and lets each edge be chosen on its
+own; amami (`0024`) uses the extended hot edge, the narrow cold edge, and stock's
+derating. On the phone, `0x1249` (`BAT_IF_BTC_CTRL`) reads back the chosen edges.
 
-**606.5 mV is already below the narrow band's 35% floor of 623.6 mV**, so that window
-inhibits charging at ordinary room temperature - permanently, not marginally. The
-extended window's floor is 25%, or 445.4 mV.
+**The misreading this replaces.** `0024` first set `qcom,jeita-extended-temp-range`,
+on the reasoning that the thermistor read 34.0% of the reference "at rest" and that
+the narrow window therefore stopped charging at ordinary room temperature. Neither
+part held. The phone was not at room temperature: 34.0% is about 42C on the
+battery's own table (and 33.4% on 2026-10-16 was 43C, with the SoC at 55C and the
+PMIC at 47.5C, on USB in a warm room). The generic 100k curve `0069` used before put
+the same readings near 40C as well. And the extended range moved both edges with no
+derating, so the battery charged at 1.3 A to 4.35 V up to about 57C and down to about
+-7C. Found in review pass 3.
 
-The load moved it 43.8 mV for a 7.1 C rise in PMIC die temperature, about -6.2 mV/C,
-and `BAT_THERM` kept falling for a while after the CPU started cooling, so the battery
-warmed by less than that and the true slope per battery-degree is steeper. Either way
-there is 26 C or more of headroom before the extended hot threshold trips, putting it
-somewhere near 50 C, which is about where charging should stop anyway.
-
-The reason a normal reading sits so low is that those thresholds are sized for
-Qualcomm's reference battery and amami's thermistor is not it. Worth knowing on top:
-**mainline has no `SCALE_BATT_THERM`**. Downstream declares this channel with
-`qcom,scale-function = <1>`, a dedicated battery-thermistor table; mainline offers only
-`DEFAULT`, `THERM_100K_PULLUP`, `PMIC_THERM`, `XOTHERM` and the HW_CALIB variants.
-That is why `LR_MUX1_BAT_THERM` has no `_input` attribute and why `qcom_smbb` reports
-no battery `temp` at all.
+Calibration of these numbers: the VADC from its own `REF_625MV`, `REF_1250MV` and
+`GND_REF` channels gives 97.37 uV/count, and `VDD_VADC` reads 1781.7 mV.
+`LR_MUX1_BAT_THERM` reads `in_temp48_input` in millidegrees on the battery table.
 
 ## WiFi and Bluetooth
 

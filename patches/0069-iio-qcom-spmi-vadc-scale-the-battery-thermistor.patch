@@ -1,28 +1,216 @@
---- a/drivers/iio/adc/qcom-spmi-vadc.c
-+++ b/drivers/iio/adc/qcom-spmi-vadc.c
-@@ -609,7 +609,24 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] iio: adc: qcom-spmi-vadc: scale the battery thermistor
+
+LR_MUX1_BAT_THERM had no scaling, so it showed up as a raw voltage and
+nothing could read a battery temperature. Downstream msm8974 kernels scale
+it with a battery-thermistor table (qcom,scale-function = <1>,
+adcmap_btm_threshold2 in qpnp-adc-common.c) that mainline does not carry.
+Add that table as SCALE_BATT_THERM and use it for the channel.
+
+An earlier version of this patch used the generic 100k pullup curve. On
+the Xperia Z1 Compact that read 40.7C where the downstream table reads
+43.3C, and a charger that derates on temperature needs the real figure.
+
+---
+--- a/drivers/iio/adc/qcom-vadc-common.c	2026-04-01 20:06:17.000000000 +0400
++++ b/drivers/iio/adc/qcom-vadc-common.c	2026-10-16 12:26:38.656572018 +0400
+@@ -100,6 +100,127 @@
+ 	{ 46,	125000 },
+ };
+ 
++/*
++ * The battery thermistor network of Qualcomm's msm8974 reference design,
++ * against the ratiometric voltage on an 1800 mV scale: adcmap_btm_threshold2
++ * from the downstream qpnp-adc-common.c, which downstream kernels, Sony's
++ * stock one for the Xperia Z1 Compact among them, use for LR_MUX1_BAT_THERM
++ * (qcom,scale-function = <1>). Converted from tenths of a degree to
++ * millidegrees.
++ */
++static const struct vadc_map_pt adcmap_batt_therm[] = {
++	{1686,	-30000 },
++	{1679,	-29000 },
++	{1672,	-28000 },
++	{1665,	-27000 },
++	{1658,	-26000 },
++	{1650,	-25000 },
++	{1641,	-24000 },
++	{1633,	-23000 },
++	{1624,	-22000 },
++	{1615,	-21000 },
++	{1605,	-20000 },
++	{1595,	-19000 },
++	{1585,	-18000 },
++	{1574,	-17000 },
++	{1563,	-16000 },
++	{1552,	-15000 },
++	{1540,	-14000 },
++	{1528,	-13000 },
++	{1515,	-12000 },
++	{1502,	-11000 },
++	{1488,	-10000 },
++	{1475,	-9000 },
++	{1461,	-8000 },
++	{1446,	-7000 },
++	{1431,	-6000 },
++	{1416,	-5000 },
++	{1401,	-4000 },
++	{1385,	-3000 },
++	{1368,	-2000 },
++	{1352,	-1000 },
++	{1335,	0 },
++	{1318,	1000 },
++	{1301,	2000 },
++	{1283,	3000 },
++	{1265,	4000 },
++	{1247,	5000 },
++	{1229,	6000 },
++	{1211,	7000 },
++	{1192,	8000 },
++	{1174,	9000 },
++	{1155,	10000 },
++	{1136,	11000 },
++	{1117,	12000 },
++	{1098,	13000 },
++	{1079,	14000 },
++	{1060,	15000 },
++	{1041,	16000 },
++	{1023,	17000 },
++	{1004,	18000 },
++	{985,	19000 },
++	{966,	20000 },
++	{948,	21000 },
++	{929,	22000 },
++	{911,	23000 },
++	{893,	24000 },
++	{875,	25000 },
++	{857,	26000 },
++	{840,	27000 },
++	{823,	28000 },
++	{806,	29000 },
++	{789,	30000 },
++	{772,	31000 },
++	{756,	32000 },
++	{740,	33000 },
++	{724,	34000 },
++	{709,	35000 },
++	{694,	36000 },
++	{679,	37000 },
++	{665,	38000 },
++	{650,	39000 },
++	{636,	40000 },
++	{623,	41000 },
++	{610,	42000 },
++	{597,	43000 },
++	{584,	44000 },
++	{572,	45000 },
++	{560,	46000 },
++	{548,	47000 },
++	{536,	48000 },
++	{525,	49000 },
++	{514,	50000 },
++	{504,	51000 },
++	{494,	52000 },
++	{484,	53000 },
++	{474,	54000 },
++	{465,	55000 },
++	{456,	56000 },
++	{447,	57000 },
++	{438,	58000 },
++	{430,	59000 },
++	{422,	60000 },
++	{414,	61000 },
++	{406,	62000 },
++	{399,	63000 },
++	{391,	64000 },
++	{385,	65000 },
++	{378,	66000 },
++	{371,	67000 },
++	{365,	68000 },
++	{359,	69000 },
++	{353,	70000 },
++	{347,	71000 },
++	{342,	72000 },
++	{336,	73000 },
++	{331,	74000 },
++	{326,	75000 },
++	{321,	76000 },
++	{316,	77000 },
++	{312,	78000 },
++	{307,	79000 },
++};
++
+ static const struct vadc_map_pt adcmap7_die_temp[] = {
+ 	{ 857300, 160000 },
+ 	{ 820100, 140000 },
+@@ -443,6 +564,23 @@
+ 	return 0;
+ }
+ 
++static int qcom_vadc_scale_batt_therm(const struct vadc_linear_graph *calib_graph,
++				      const struct u32_fract *prescale,
++				      bool absolute, u16 adc_code,
++				      int *result_mdec)
++{
++	s64 voltage = 0;
++
++	qcom_vadc_scale_calib(calib_graph, adc_code, absolute, &voltage);
++
++	if (absolute)
++		voltage = div64_s64(voltage, 1000);
++
++	return qcom_vadc_map_voltage_temp(adcmap_batt_therm,
++					  ARRAY_SIZE(adcmap_batt_therm),
++					  voltage, result_mdec);
++}
++
+ static int qcom_vadc_scale_die_temp(const struct vadc_linear_graph *calib_graph,
+ 				    const struct u32_fract *prescale,
+ 				    bool absolute,
+@@ -650,6 +788,10 @@
+ 		return qcom_vadc_scale_therm(calib_graph, prescale,
+ 					     absolute, adc_code,
+ 					     result);
++	case SCALE_BATT_THERM:
++		return qcom_vadc_scale_batt_therm(calib_graph, prescale,
++						  absolute, adc_code,
++						  result);
+ 	case SCALE_PMIC_THERM:
+ 		return qcom_vadc_scale_die_temp(calib_graph, prescale,
+ 						absolute, adc_code,
+--- a/drivers/iio/adc/qcom-spmi-vadc.c	2026-10-16 12:25:55.889996024 +0400
++++ b/drivers/iio/adc/qcom-spmi-vadc.c	2026-10-16 12:26:38.657354866 +0400
+@@ -609,7 +609,14 @@
  	VADC_CHAN_NO_SCALE(P_MUX15_1_3, 1)
  	VADC_CHAN_NO_SCALE(P_MUX16_1_3, 1)
  
 -	VADC_CHAN_NO_SCALE(LR_MUX1_BAT_THERM, 0)
 +	/*
-+	 * The battery thermistor, left unscaled here, which is why it turns up
-+	 * as in_voltage48_raw with no _input attribute and why nothing can read
-+	 * a battery temperature on this SoC: qcom_smbb only reads the PMIC's own
-+	 * BTC comparator for health and has no POWER_SUPPLY_PROP_TEMP.
-+	 *
-+	 * Downstream scales it with qcom,scale-function = <1>, a dedicated
-+	 * battery-thermistor table that mainline does not carry. Of what mainline
-+	 * does have, the 100k pullup table is the closest fit, and on amami it
-+	 * lands in the right place: the channel sits at 624mV, which the table
-+	 * puts at about 39C, against a PMIC die reading 45C on the same phone.
-+	 *
-+	 * Treat the result as indicative rather than calibrated - it is the
-+	 * generic curve for a 100k part, not this battery's own. RAW is still
-+	 * exposed, so the millivolts remain available for anyone who wants to do
-+	 * better.
++	 * The battery thermistor. Left unscaled, it turned up as
++	 * in_voltage48_raw only, and nothing could read a battery temperature.
++	 * Downstream scales it with its battery-thermistor table, and the
++	 * generic 100k pullup curve is not a substitute: on the Xperia Z1
++	 * Compact it read 40.7C where that table, stock's, reads 43.3C.
 +	 */
-+	VADC_CHAN_TEMP(LR_MUX1_BAT_THERM, 0, SCALE_THERM_100K_PULLUP)
++	VADC_CHAN_TEMP(LR_MUX1_BAT_THERM, 0, SCALE_BATT_THERM)
  	VADC_CHAN_VOLT(LR_MUX2_BAT_ID, 0, SCALE_DEFAULT)
  	VADC_CHAN_NO_SCALE(LR_MUX3_XO_THERM, 0)
  	VADC_CHAN_NO_SCALE(LR_MUX4_AMUX_THM1, 0)
+--- a/include/linux/iio/adc/qcom-vadc-common.h	2026-04-01 20:06:17.000000000 +0400
++++ b/include/linux/iio/adc/qcom-vadc-common.h	2026-10-16 12:26:38.656895290 +0400
+@@ -89,6 +89,8 @@
+  * SCALE_PMIC_THERM: Returns result in milli degree's Centigrade.
+  * SCALE_XOTHERM: Returns XO thermistor voltage in millidegC.
+  * SCALE_PMI_CHG_TEMP: Conversion for PMI CHG temp
++ * SCALE_BATT_THERM: Returns temperature in millidegC, using the battery
++ *	thermistor table of the msm8974 reference design.
+  * SCALE_HW_CALIB_DEFAULT: Default scaling to convert raw adc code to
+  *	voltage (uV) with hardware applied offset/slope values to adc code.
+  * SCALE_HW_CALIB_THERM_100K_PULLUP: Returns temperature in millidegC using
+@@ -112,6 +114,7 @@
+ 	SCALE_PMIC_THERM,
+ 	SCALE_XOTHERM,
+ 	SCALE_PMI_CHG_TEMP,
++	SCALE_BATT_THERM,
+ 	SCALE_HW_CALIB_DEFAULT,
+ 	SCALE_HW_CALIB_THERM_100K_PULLUP,
+ 	SCALE_HW_CALIB_XOTHERM,

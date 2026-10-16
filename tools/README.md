@@ -50,6 +50,12 @@ while stock pairs with the TrustZone image the phone actually boots. And treat e
 as a source of candidates rather than truth - stock lists SPI 241 for all three GPU
 context banks, which is only correct for whichever one lands on `IRPTNDX` 1.
 
+`dtbdiff.py` compares two device tree blobs property by property, also without
+`dtc`. Run it on the old and new amami dtb after any device tree change, to see that
+it changed what was meant and nothing else:
+
+    tools/dtbdiff.py old/qcom-msm8974-sony-xperia-rhine-amami.dtb new/qcom-msm8974-sony-xperia-rhine-amami.dtb
+
 `s2idle-test.sh` measures suspended draw on a phone with no coulomb counter. It
 runs an awake window with the IADC sampled directly, then an `rtcwake` suspend of
 the same length, and reads both endpoints at the *same* load state - awake, screen

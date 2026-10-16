@@ -84,7 +84,8 @@ with a known way back is in `patches/parked/`, and diagnostic patches are in
 **Bring-up and display**
 
 - `0001` enables the WCNSS remoteproc (WiFi and Bluetooth) and fixes two
-  touchscreen problems: the wrong I/O rail and a startup delay far too short.
+  touchscreen problems shared with the Z1: the wrong I/O rail and a startup delay far
+  too short. `0120` stops amami inverting the touchscreen's X axis.
 - `0003` is the panel driver, generated from Sony's command blobs with
   `tools/convert_cmds.py`, and `0004` wires the display into amami's device tree.
 - `0011` stops MDP5 carrying a stale hardware pipe across suspend, which made every
@@ -103,8 +104,10 @@ with a known way back is in `patches/parked/`, and diagnostic patches are in
 **Power, battery and thermal**
 
 - `0005` and `0070` give the charger a voltage, a percentage and a temperature.
-  `0069` and `0071` scale and wire the battery thermistor, and `0024` widens the
-  temperature band without which the charger refuses to charge.
+  `0069` and `0071` scale and wire the battery thermistor, with the downstream
+  battery table. `0119` derates charging on a warm or cool battery as stock does
+  (650 mA to 4.2 V above 45C, 650 mA below 10C), which mainline did not do at all, and
+  `0024` sets it up for amami with stock's limits.
 - `0023` fixes the current ADC, which reported zero below an amp and had the sign
   wrong on discharge. Every power measurement depends on it.
 - `0012` and `0016` give the GPU and CPU thermal zones something to throttle.
@@ -116,8 +119,9 @@ with a known way back is in `patches/parked/`, and diagnostic patches are in
 - `0022` gives each Krait core its own cpufreq policy. Sharing one dragged
   power-collapsed cores into every frequency change and wedged them.
 - `0112` describes the CPU rail (pm8841 s5, held at the 900mV the bootloader sets)
-  and gives each frequency this chip's stock voltage, which takes the cores from
-  960 MHz to 1497.6 MHz, the highest rate that voltage covers.
+  and gives each frequency stock's voltage for every chip bin, which takes this
+  unit's cores from 960 MHz to 1497.6 MHz, the highest rate that voltage covers; each
+  unit gets as far as 900mV covers for its bin.
 - `0079`-`0081` make CPU hotplug work: the dying core collapses properly, is
   released again on the way back, and is allowed to leave the collapse loop.
 - `0072`-`0076` are the L2 SAW, the MPM wakeup controller and its routing. They

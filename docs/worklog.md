@@ -4054,6 +4054,39 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
 - `cam` at 2624x1976 fails ("Wanted 4, got 2"): the soft ISP's crop makes it pick the
   5248x3936 mode. Existing behaviour, added to the camera list.
 
+### Review pass 3, device tree, 2026-10-16
+
+- `/code-review` medium over the 27 DT patches: ten candidates (table in `review.md`).
+  Each checked against Sony's `14.4.A` kernel-copyleft source and the `14.6.A` dtbs.
+- Battery: `0024`'s extended BTC window rested on "34% at room temperature", which
+  the downstream battery table (`adcmap_btm_threshold2`, ratiometric x 1800 mV) puts at
+  42C; on the day, 33.4% = 43.3C with the SoC at 55C. Stock: no BTC edges written,
+  derating 650 mA / 4.2 V above 45C and 650 mA below 10C (`warm-bat-decidegc` 450,
+  `cool-bat-decidegc` 100, no `warm-disable-charging`). New `0119`, `0024` rewritten
+  (renamed, `handle-battery-temperature-as-stock-does`), `0069` with the battery table
+  (`SCALE_BATT_THERM`), `0070` comment, `0071` regenerated.
+- Capacity: amami builds `bms-batterydata-ray.c` (fcc 2420); 3140 is `salomon`
+  (honami). `0004`'s OCV table matched ray's 25C column row for row. The "56% health"
+  in the 2026-09 entries is about 72% against 2420.
+- `0112`: all 21 bins (decoded from stock's `qcom,speedN-pvsM-bin-v0`), plus a plain
+  `opp-microvolt` at each rate's worst bin; the upper OPPs open to every speed bin.
+  This unit's column reproduced the old values exactly.
+- Touchscreen: honami's stock tree has the same `touch_vio` S3 and
+  `por_delay_after` 200, so only the X inversion moved (`0001`, new `0120`). Dropped
+  `0035`'s `0xdeadbee0` probe (`notes.md` keeps its result). `0110`'s BFB table stays
+  amami's, as its comment says.
+- `tools/dtbdiff.py` (property-level DTB diff): amami r233 to r234 changed exactly the
+  capacity, 7 `opp-supported-hw`, 336 voltage properties and the charger properties;
+  honami's only change is getting `touchscreen-inverted-x` back.
+- r234 on the phone: BTC `0x80`, temp 43.7C. Heat test (four busy loops, logged every
+  15 s): warm at 45.3C after about three minutes, 650 mA / 4.2 V / threshold 4.04 V;
+  held warm through 25 minutes of cooling, 46.9C to 44.1C. The way back below 43C not
+  seen (the room keeps it near 43.7C). The boot logged "unreadable: -61" twice (ADC
+  not probed yet) and the threshold rounding. r235 fixes both; userspace 4.3 V / 1.0 A
+  gave threshold 0x2d (4.14 V) with no warning, 4.35 V restored 0x30, 3.0 V refused.
+- Self-inflicted: `grep` over the whole `regmap/0-00/registers` produced 38 SPMI
+  "transaction failed" warnings; seek single registers (`dd bs=9 skip=R`).
+
 ## Parked patches
 
 Moved to `patches/parked/README.md` in the 2026-10-16 cleanup, which also deleted
