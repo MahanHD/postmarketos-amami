@@ -27,13 +27,14 @@ that makes mainline do the same.
 | GPU frequency scaling and throttling | Works |
 | CPU hotplug | Works |
 | Suspend | s2idle works; deep suspend works but saves nothing here |
-| Rear camera (Sony IMX200, 20.7 MP) | Works in GNOME Snapshot through libcamera: live preview, auto exposure, white balance and autofocus |
+| Rear camera (Sony IMX200, 20.7 MP) | Works in GNOME Snapshot through libcamera (live preview, auto exposure, white balance, autofocus) and in Megapixels (full-size raw photos) |
 | Front camera (Sony IMX132) | Identified, not started |
 | Audio | No sound yet: the codec probes and its registers work, but no data moves over SLIMbus |
 
 ## Repository layout
 
     patches/          the kernel patch series, applied in number order
+    patches/parked/   patches out of the build with a known way back (see its README)
     patches/debug/    diagnostic patches, numbered from 9000 (see its README)
     recipe/           the kernel APKBUILD and config exactly as built
     recipe/libcamera/ libcamera patches and the IMX200 tuning file
@@ -48,8 +49,8 @@ that makes mainline do the same.
     tools/camera/     capture and analysis scripts for the rear camera
     tools/re/         disassembler and emulator for stock's ARM libraries
     userspace/        MAC address service, journald setting, camera udev rule,
-                      libcamera configuration, the Megapixels config and the
-                      LightDM relogin hook
+                      libcamera configuration, the Megapixels config, the
+                      LightDM relogin hook and the audio codec kept off at boot
     docs/building.md  building, flashing and the first-boot setup
     docs/notes.md     what each part needed and why, with the measurements
     docs/next-steps.md  current state and what comes next
@@ -76,9 +77,9 @@ modules keep loading without complaint.
 
 ## The patch series
 
-Only the patches listed in `recipe/APKBUILD` are applied. The others stay in the
-directory because they hold work that was expensive to recover, mostly device-tree
-data for features that are not worth their cost yet.
+`patches/` holds exactly the patches `recipe/APKBUILD` applies. Work out of the build
+with a known way back is in `patches/parked/`, and diagnostic patches are in
+`patches/debug/`, each with a README saying why.
 
 **Bring-up and display**
 
@@ -98,8 +99,6 @@ data for features that are not worth their cost yet.
   scan used without the capability bit that describes it.
 - `0008` corrects the WCNSS interrupt type, which is what stopped the driver ever
   being reloaded.
-- `0002` adds a `scan_offload` parameter. It is no longer needed and is kept as a
-  debugging switch.
 
 **Power, battery and thermal**
 
@@ -123,7 +122,7 @@ data for features that are not worth their cost yet.
   released again on the way back, and is allowed to leave the collapse loop.
 - `0072`-`0076` are the L2 SAW, the MPM wakeup controller and its routing. They
   are what deep suspend needs; the suspend ops themselves (`0077`, `0082`-`0084`)
-  are not in the build, because deep suspend measured no better than s2idle.
+  are parked, because deep suspend measured no better than s2idle.
 
 **Sensors**
 
@@ -140,9 +139,8 @@ data for features that are not worth their cost yet.
   the VRAM carveout. That oops killed kswapd under memory pressure.
 - `0034`-`0036` put the GPU behind its IOMMU (arm-smmu), built in since r204; `0036`
   lets it map large pages, which brings the cost down to about 1.5x. The display
-  controller stays on the VRAM carveout, so no memory is freed yet. The older IOMMU
-  attempts (`0017`-`0019`, `0025`-`0027`, `0032`, `0033`, `0037`, `0038`) are kept out
-  of the build.
+  controller stays on the VRAM carveout, so no memory is freed yet; its IOMMU
+  (`0037`, `0038`) is parked with the panel black.
 - GTK4's GL renderer hung the GPU until Mesa ended direct `CP_LOAD_STATE` packets with a
   register write, as the stock driver does (`recipe/mesa`).
 - `0106` clears carveout buffers when they are allocated. With the display on the
@@ -167,21 +165,16 @@ The ADSP audio services, a SLIMbus controller for msm8974, and a WCD9320 (Taiko)
 codec driver, which mainline did not have. The codec probes and all of its
 registers work, but no samples move over SLIMbus in either direction yet.
 
-**Camera** (`0085`-`0104`, `0115`, `0116`, `0118`)
+**Camera** (`0085`-`0087`, `0090`, `0097`, `0099`-`0104`, `0115`, `0116`, `0118`)
 
 - `0085`-`0087` add msm8974 support to CAMSS. The block matches msm8916's, which
   mainline already supports.
 - `0090` lists only the MCLK rates the clock controller can actually make. 24 MHz
   had been silently turning into 120 MHz.
-- `0091`-`0096` fix the generic CCS sensor driver for these Sony SMIA parts:
-  junk in CCS-only limit registers, sub-device state broken by the 6.16 conversion,
-  the IMX200's identification and PLL model, the sensor being started twice, and
-  the helper every quirk register table goes through. Out of the build since the
-  IMX200 has its own driver; kept for the front camera (IMX132), which will need CCS.
+- Fixes to the generic CCS sensor driver are parked for the front camera (IMX132);
+  the IMX200 has its own driver.
 - `0097` lets the board set the CSIPHY settle time; the IMX200 needs far less than
   the D-PHY formula gives.
-- `0098` writes the IMX200's init and readout-window tables from the stock firmware
-  through CCS (out of the build, like `0091`-`0096`).
 - `0099` sizes the msm8974 CSID and VFE clocks for their 16-bit data paths; camss
   assumed wider ones, and four-lane frames came through corrupted or not at all.
 - `0100` adds the rear camera to amami's device tree.
@@ -202,8 +195,8 @@ registers work, but no samples move over SLIMbus in either direction yet.
   without a kernel mapping itself, and on ARM it neither zeroes nor cache-cleans them,
   so stale dirty lines could land on top of a frame and old memory reached userspace.
 
-No camera debug patch is in the build any more; `9007` (the front sensor, not yet
-working) is the one to start from for the IMX132.
+No debug patch is in the build. For the IMX132, start from `debug/9007` (the front
+sensor in the device tree) and the CCS fixes in `patches/parked/`.
 
 Patches that touch shared msm8974 files should help the Z1 (`honami`) and Z Ultra
 (`togari`) too, though neither has been tested. Several are not specific to this

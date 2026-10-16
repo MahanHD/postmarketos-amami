@@ -1,15 +1,15 @@
 # Notes
 
 The long version: what each piece of hardware needed, the dead ends, and the
-measurements behind the claims in the main README. Sections are roughly in the order
-the work happened. The chronological working log, with every experiment and its
-numbers, is in `worklog.md`.
+measurements behind the claims in the main README, grouped by subsystem. Where a later
+result overturned a paragraph, it opens with a *Since:* note. The chronological log,
+with every experiment and its numbers, is in `worklog.md`.
 
-## Things that took a while to work out
+Patch numbers mentioned here that are no longer in `patches/` were removed in the
+2026-10-16 cleanup: `patches/parked/` has the ones with a way back, git history the
+rest.
 
-Most of the time here went on figuring out what the hardware wanted rather than
-writing code. Recording the awkward parts in case they save someone else the
-trouble.
+## Display
 
 **There are four panel variants and you have to detect which one you have.**
 Sony put several panel vendors behind the same Novatek controller and picks
@@ -48,12 +48,137 @@ out`). This one bug shows up wearing several different hats: killing Xorg appear
 to hang the device, lightdm dies with `CreateSession: Device timeout`, and sshd
 stops responding while ping still works. All of them are just waiting.
 
+**A thin red frame around the screen is the X scaler, not the panel.** Xfce's
+display dialog had a 0.8 scale set on `DSI-1`, so X rendered 576x1024 and the
+CRTC transform stretched it to the panel's 720x1280 with a bilinear filter. At
+the very edge that filter samples past the source image and leaves a one or two
+pixel red fringe on all four sides.
+
+It is easy to misread. It sits *underneath* the desktop, so the compositor paints
+over it most of the time and it only flickers into view during repaints, which
+makes it look touch-related. Turning compositing off makes it constant, which is
+the quickest way to tell it apart from a genuine panel artefact - a panel or MDP
+problem would not care what the compositor is doing. Worth checking `xrandr
+--verbose` for a `Transform` other than identity before going anywhere near the
+display driver. I lost time on MDP interface underruns first; there were only two
+in ten minutes, nowhere near enough to explain something constant.
+
+`--filter nearest` keeps the scale and removes the fringe, but 0.8 nearest-
+neighbour looks blocky. Running native and raising `/Xft/DPI` instead keeps
+everything sharp. The scale lives in xfconf at `displays -> /Default/DSI-1/Scale`
+and is re-applied at every login, so setting it back to 1 there is what makes the
+fix stick - `xrandr` alone lasts until you log out.
+
+**Suspend works exactly once, and then MDP5 refuses forever.** The first
+`rtcwake -m mem` goes through cleanly. Every attempt after fails in the `prepare`
+step with `-EINVAL` and nothing in `/sys/power/suspend_stats/last_failed_dev`,
+which makes it look like a core PM problem rather than a driver one. Only `dmesg`
+names the device:
+
+    msm_mdp fd900100.display-controller: PM: device_prepare(): msm_kms_pm_prepare returns -22
+
+with a `WARN` from `mdp5_pipe_release` above it, reached through
+`drm_atomic_helper_disable_all`.
+
+MDP5 tracks which hardware pipe belongs to which plane in a private global atomic
+state, separate from the plane state that holds the pointer. Suspend snapshots the
+current state, disables everything - which releases the pipe - and resume replays
+the snapshot. The snapshot predates the disable, so it still names the old pipe.
+`mdp5_plane_atomic_check` sees a non-NULL `hwpipe` whose caps match and keeps it,
+so `mdp5_pipe_assign` is never called and the global state never hears about the
+assignment. The two disagree from then on, and the next release trips the `WARN`.
+
+`0011` drops the stale pointer when a plane is enabled from a disabled state,
+which is safe because a disabled plane never legitimately owns one. Four cycles
+afterwards, including through logind, give `success=4 fail=0`.
+
+**The panel's shutdown DCS write always timed out.** Going down, every cycle
+logged `wait for video done timed out`, then `cmd dma tx failed, type=0x5,
+data0=0x10, ret=-110`, then `Failed to un-initialize panel: -110`. `0x10` is
+`ENTER_SLEEP_MODE`, sent from the panel's `unprepare()`.
+
+It could never have worked there. `disable_outputs()` runs the bridge chain's
+`disable` (panel `disable()`), then the encoder's, then the chain's `post_disable`
+(panel `unprepare()`) - and the encoder's is `mdp5_vid_encoder_disable`, which
+clears `INTF_TIMING_ENGINE_EN`. By `unprepare()` the video stream is stopped, but
+the DSI host is still `enabled`/`power_on` and `STATUS0` still reads
+`VIDEO_MODE_ENGINE_BUSY`, so `dsi_wait4video_eng_busy()` waits 70ms for a
+video-done that will never arrive, and the command DMA - which a video-mode link
+only transmits during blanking - then times out after another 200ms.
+
+`0003` now sends both `SET_DISPLAY_OFF` and `ENTER_SLEEP_MODE` from `disable()`,
+while the timing engine is still running. Downstream does the same: Sony's
+`qcom,mdss-dsi-off-command` is `28` and `10` in one batch, issued before the
+controller is stopped.
+
+The timeout was also hiding a second bug. `mipi_dsi_msleep()` is a no-op once
+`accum_err` is set, so the failed sleep-in skipped the 150ms settling delay that
+follows it and the panel was reset immediately - the delay the code existed to
+honour was the one thing it did not do. Measured over `device_pm_callback`
+tracepoints, `msm_mdp fd900100.display-controller [suspend]` goes from 373.7ms to
+272.9ms, and four cycles log no DSI errors at all.
+
+**The resume underrun is not a suspend bug.** MDP5 logs one
+`mdp5_irq_error_handler: errors: 04000000` (`INTF1_UNDER_RUN`) per cycle, but a
+plain `xset dpms force off; xset dpms force on` produces exactly one too - three
+DPMS cycles, three underruns. It fires 690ms into the resume callback, at the
+encoder enable rather than when the clocks come back, so it is a real first-frame
+underflow and not a stale status bit. The bandwidth vote is in place and unchanged
+across suspend (`mas_mdp_port0` peak 6400 MB/s, from `fd900100.display-controller`)
+and the clocks are at maximum (mdp 320MHz, AXI 400MHz). What is left is the order
+in `mdp5_vid_encoder_enable`: `INTF_TIMING_ENGINE_EN` is written before
+`mdp5_ctl_commit()` flushes the pipe and mixer, so the interface asks for pixels
+just before the configuration lands. That is generic MDP5 code shared by every
+SoC that uses it, it costs one frame while the panel has not latched video yet,
+and it is left alone deliberately.
+
+**The uneven backlight was a one-character driver bug, and I called it hardware.**
+This is the mistake I'd most like someone else to avoid.
+
+`WLED3_SINK_REG_BRIGHT(n)` is `0x40 + n`, but `wled3_set_brightness()` writes two
+bytes at that address. So consecutive strings overlap: with brightness `0x0800`,
+writing string 0 at `0x40` leaves `d840=00 d841=08`, then writing string 1 at
+`0x41` leaves `d841=00 d842=08`. The real layout is two bytes per string, so what
+the hardware ends up with is string 0 at `0x0000` - **off** - and string 1 at
+`0x0f08`, near maximum, because its high byte was never overwritten and still
+holds part of the `0x0fff` power-on default. Every other WLED3 per-string register
+uses a `0x10` stride, and WLED4's brightness is `0x57 + n * 0x10`; only this one
+is `+ n`. `0013` makes it `0x40 + n * 2`.
+
+One string dead and the light guide fed from the other end is what produced the
+gradient, and the surviving string sitting near maximum is why the panel still
+looked bright enough not to question.
+
+The first investigation ruled out the third WLED string - `num-strings = <2>` is
+correct, driving sink 2 alone gives a dark panel, nothing is wired to it - and
+then concluded the gradient must therefore be the backlight hardware. That does
+not follow, and it was wrong. Two things should have stopped it. Stock firmware
+and LineageOS drive the same panel and the same WLED block without the gradient,
+which makes it software until proven otherwise. And `0xd840`-`0xd842` reading
+`00 00 08` was already in my notes, dismissed as harmless overlap; decoding it as
+two bytes per string shows one string pinned at zero.
+
+Reading the whole block is what makes it obvious - `d844 d845` still holding
+`ff 0f` is the power-on default, and a default of `0x0fff` only makes sense if
+brightness is two bytes per string.
+
+You need a kernel built with `REGMAP_ALLOW_WRITE_DEBUGFS` (`patches/debug/9000`) to
+poke at this live.
+It's deliberately not a Kconfig option; flip the `#undef` in
+`drivers/base/regmap/regmap-debugfs.c` and `/sys/kernel/debug/regmap/0-01/registers`
+becomes writable as `<reg> <value>`, both hex. Reading it dumps the whole SPMI
+space and is slow, so match every address you want in one `awk` pass.
+
+## Touch
+
 **The touchscreen needs 200ms, not 10.** Mainline has
 `syna,startup-delay-ms = <10>`; Sony's DT waits 200 after reset. With 10 the
 controller never answers and probe fails with `rmi_set_page: set page failed: -6`.
 There's no touch reset GPIO on this board. Mainline also carries
 `touchscreen-inverted-x` for this panel, which is wrong and mirrors touch
 left to right.
+
+## Power, battery and charging
 
 **UPower will switch the phone off every three minutes.** Before `0005` the
 battery driver exposed no `capacity` attribute, so UPower read 0%, decided the
@@ -108,6 +233,111 @@ while plugging in for Sony's fastboot. The bootloader's USB stack is independent
 of Linux, so that still works. Flash a known-good boot image and read the failed
 boot with `journalctl -b -1`. Identify boots by the `#NN` build number in
 `Linux version`: this device's RTC is wrong, so the timestamps lie to you.
+
+### What the phone actually draws
+
+There was no power measurement at all until `0023`, because the PM8941 current ADC
+reported a flat zero. Two bugs in `qcom-spmi-iadc.c`, both upstream:
+
+- `vsense_raw` is declared `u16`, and discharge reads *below* the calibration
+  offset. Every negative current underflowed into a huge positive one - the internal
+  channel was reporting a fictitious 363mV.
+- `vsense_uv / rsense` divides micro volts by micro Ohms, which yields **amperes**,
+  while the variable is named `isense_ua`, the debug print says uA, and
+  `IIO_CHAN_INFO_SCALE` is 0.001. Integer division then truncated anything below 1A
+  to zero, which is every current this phone ever draws.
+
+Fixing both gives a working ammeter, and the two independent sense resistors -
+internal and the 10 mOhm external one named in the device tree - agree within 5-7%,
+which is the reason to believe the numbers:
+
+| state | current | runtime on a 3140 mAh pack |
+|---|---|---|
+| idle, screen off | 252 mA | 12.5 h |
+| idle, screen on | 400 mA | 7.8 h |
+| four cores loaded, screen on | 689 mA | 4.6 h |
+
+The panel and its backlight cost **148 mA**, 37% of idle draw. Resolution is about
+0.55 mA per ADC count.
+
+Two caveats. These are *awake* figures; nothing here is a suspend number, and s2idle
+standby will be much lower. And `capacity` is derived from voltage through Sony's OCV
+table rather than counted, so it sags under load and recovers afterwards - it read
+91% idle, 83% under load, then 88% back at idle within a few minutes. Treat the
+percentage as an open-circuit estimate, not a fuel gauge.
+
+**Charging needs a real supply, not a PC port.** The phone draws about 400 mA just
+to run, so a 500 mA host port leaves nothing for the pack: net battery current sits
+at exactly zero, `status` reads Discharging and `capacity` barely moves, which looks
+convincingly like a broken charger. On a wall charger the same kernel reports
+`Charging`/`Fast` and pushes ~268 mA in at 92%, tapering towards the 4.35 V VMAX.
+
+That is only half the story though - `0024` had to come first. `qcom_smbb` always
+enables the SMBB's temperature comparators and picks their window from a single
+device tree bool, and the default narrow [35%:70%] band read amami's perfectly
+ordinary 642 mV `BAT_THERM` as too hot. That comparator gates the charger in
+hardware, not just in reporting, so `health = Overheat` was a genuine block rather
+than a cosmetic complaint. With `qcom,jeita-extended-temp-range` the band widens to
+[25%:80%], `BAT_IF` real-time status reads 0x03 and health reports Good. Both changes
+were needed; since they landed together the attribution is not cleanly proven, but
+the mechanism says the fix was necessary and the supply was the other half.
+
+The 642 mV figure is worth trusting because the VADC was calibrated against its own
+`REF_625MV`, `REF_1250MV` and `GND_REF` channels - 97.41 uV per count - and the same
+calibration reproduces `voltage_now` from `VBAT_SNS` exactly.
+
+These were measured while polling the phone over ssh every 25s, which sounds like it
+should inflate them and does not: repeating the run with nobody connected at all - an
+on-device script logging to tmpfs - gives ~396 mA against 400 mA, so the entire cost
+of watching is about 4 mA. The ssh traffic is visible elsewhere though. Each login
+writes sshd/sudo/pam lines to the journal, and that showed up as ~13 mmc0
+interrupts/s and ~70 block writes per 10s at idle with *no* process reporting
+`write_bytes`, because journald mmaps its files and that accounting never sees them.
+The journal had reached 617MB; `userspace/98-journal-size.conf` caps it at 64MB.
+
+One trap when measuring standby: a touch wakes DPMS. An unattended run came back with
+screen-off and screen-on within 2 mA of each other, purely because handling the phone
+to unplug the cable turned the display back on. Check that `bl_power` reads 4 in the
+samples rather than trusting that the blank stuck.
+
+Measuring draw needs the USB cable **out**. On USB the battery floats: the external
+sense resistor sees only noise, current does not respond to load at all, and
+`capacity` barely moves. Use WiFi for the session instead.
+
+### Battery temperature, and why the jeita band had to be widened
+
+`0024` sets `qcom,jeita-extended-temp-range`, and that turns out to be the correct
+setting for this battery rather than a workaround.
+
+The PM8941's battery temperature comparator comes with two fixed windows, expressed as
+percentages of the thermistor's reference: [35%:70%] or [25%:80%]. Calibrating the
+VADC from its own `REF_625MV`, `REF_1250MV` and `GND_REF` channels gives 97.37
+uV/count, and against `VDD_VADC` at 1781.7 mV the thermistor reads:
+
+| | raw | mV | % of reference |
+|---|---|---|---|
+| at rest | 30949 | 606.5 | 34.0% |
+| after ten minutes of four-core load | 30499 | 562.7 | 31.6% |
+
+**606.5 mV is already below the narrow band's 35% floor of 623.6 mV**, so that window
+inhibits charging at ordinary room temperature - permanently, not marginally. The
+extended window's floor is 25%, or 445.4 mV.
+
+The load moved it 43.8 mV for a 7.1 C rise in PMIC die temperature, about -6.2 mV/C,
+and `BAT_THERM` kept falling for a while after the CPU started cooling, so the battery
+warmed by less than that and the true slope per battery-degree is steeper. Either way
+there is 26 C or more of headroom before the extended hot threshold trips, putting it
+somewhere near 50 C, which is about where charging should stop anyway.
+
+The reason a normal reading sits so low is that those thresholds are sized for
+Qualcomm's reference battery and amami's thermistor is not it. Worth knowing on top:
+**mainline has no `SCALE_BATT_THERM`**. Downstream declares this channel with
+`qcom,scale-function = <1>`, a dedicated battery-thermistor table; mainline offers only
+`DEFAULT`, `THERM_100K_PULLUP`, `PMIC_THERM`, `XOTHERM` and the HW_CALIB variants.
+That is why `LR_MUX1_BAT_THERM` has no `_input` attribute and why `qcom_smbb` reports
+no battery `temp` at all.
+
+## WiFi and Bluetooth
 
 **WiFi needs power save disabled, and nothing else.** This cost me a long time
 because every symptom pointed somewhere more exotic. The firmware loads and runs;
@@ -253,6 +483,8 @@ named connection and leaves the rest randomised:
 
 Worth knowing that this changes the DHCP lease, since it is a different MAC.
 
+## The DSP and the sensors
+
 **The DSP boots, and it is the road to sensors rather than to audio.** The adsp
 remoteproc was failing at probe with `Direct firmware load for adsp.mdt failed
 with error -2`, purely because the files were not there. LineageOS 18.1 carries
@@ -342,6 +574,36 @@ index.
 carries the individual device's factory sensor calibration. Harvest your own,
 as described in the build notes.
 
+### The proximity sensor reports nothing
+
+*Solved since: `0047` keeps a second subscription open, after which proximity reports
+normally, and ambient light became its own device with `0048`. The section below is the
+investigation as it stood before that.*
+
+It enumerates correctly - right vendor, right part, two data types - and registers an
+IIO device, which is exactly why it passed for working. Its buffer yields **zero
+bytes** over 25 seconds with a hand waved across it, while the accelerometer under
+the same procedure yields tens of kilobytes in five. Enabling the buffer produces no
+error and no dmesg output, and the buffering request to the DSP succeeds.
+
+Two explanations have been tried and neither is it. The first was that the driver
+only ever subscribes `SNS_SMGR_DATA_TYPE_PRIMARY`, so a sensor's secondary data type
+is never requested - true, and it is why an ambient light channel alone can never
+work, but subscribing to both types (patch `0031`, since
+deleted) leaves 0x28 just as silent. The second was the sensor registry: nine groups
+are requested and unmapped (2001, 2500, 2610, 2650, 2680, 2970, 2971, 2980, 2990),
+and `0007` proved a single missing group can disable a sensor outright. But that
+cost the accelerometer its *enumeration*, whereas proximity enumerates fine and only
+fails to report, so the registry is a poor fit. Offsets `0x2900`-`0x2cff` are unused
+in `group_map[]` - four `0x100` pages against exactly four unmapped `29xx` groups -
+which is suggestive, and is also exactly the guess-and-flash pattern that should be
+resisted without a real source.
+
+Upstream lists proximity as supported, so this may well be specific to this device's
+APDS-9930 configuration rather than the driver.
+
+## Notification LED
+
 **The notification LED needs `multi_intensity`, not `brightness`.** It shows up
 as `/sys/class/leds/rgb:status` with a `max_brightness` of 511, and writing that
 brightness on its own does nothing at all. It is a multicolor LED whose
@@ -359,89 +621,7 @@ All three channels drive independently and combine to white. Turning it off
 means zeroing both files. No trigger is set by default, so nothing in the
 desktop drives it yet.
 
-**A thin red frame around the screen is the X scaler, not the panel.** Xfce's
-display dialog had a 0.8 scale set on `DSI-1`, so X rendered 576x1024 and the
-CRTC transform stretched it to the panel's 720x1280 with a bilinear filter. At
-the very edge that filter samples past the source image and leaves a one or two
-pixel red fringe on all four sides.
-
-It is easy to misread. It sits *underneath* the desktop, so the compositor paints
-over it most of the time and it only flickers into view during repaints, which
-makes it look touch-related. Turning compositing off makes it constant, which is
-the quickest way to tell it apart from a genuine panel artefact - a panel or MDP
-problem would not care what the compositor is doing. Worth checking `xrandr
---verbose` for a `Transform` other than identity before going anywhere near the
-display driver. I lost time on MDP interface underruns first; there were only two
-in ten minutes, nowhere near enough to explain something constant.
-
-`--filter nearest` keeps the scale and removes the fringe, but 0.8 nearest-
-neighbour looks blocky. Running native and raising `/Xft/DPI` instead keeps
-everything sharp. The scale lives in xfconf at `displays -> /Default/DSI-1/Scale`
-and is re-applied at every login, so setting it back to 1 there is what makes the
-fix stick - `xrandr` alone lasts until you log out.
-
-**Suspend works exactly once, and then MDP5 refuses forever.** The first
-`rtcwake -m mem` goes through cleanly. Every attempt after fails in the `prepare`
-step with `-EINVAL` and nothing in `/sys/power/suspend_stats/last_failed_dev`,
-which makes it look like a core PM problem rather than a driver one. Only `dmesg`
-names the device:
-
-    msm_mdp fd900100.display-controller: PM: device_prepare(): msm_kms_pm_prepare returns -22
-
-with a `WARN` from `mdp5_pipe_release` above it, reached through
-`drm_atomic_helper_disable_all`.
-
-MDP5 tracks which hardware pipe belongs to which plane in a private global atomic
-state, separate from the plane state that holds the pointer. Suspend snapshots the
-current state, disables everything - which releases the pipe - and resume replays
-the snapshot. The snapshot predates the disable, so it still names the old pipe.
-`mdp5_plane_atomic_check` sees a non-NULL `hwpipe` whose caps match and keeps it,
-so `mdp5_pipe_assign` is never called and the global state never hears about the
-assignment. The two disagree from then on, and the next release trips the `WARN`.
-
-`0011` drops the stale pointer when a plane is enabled from a disabled state,
-which is safe because a disabled plane never legitimately owns one. Four cycles
-afterwards, including through logind, give `success=4 fail=0`.
-
-**The panel's shutdown DCS write always timed out.** Going down, every cycle
-logged `wait for video done timed out`, then `cmd dma tx failed, type=0x5,
-data0=0x10, ret=-110`, then `Failed to un-initialize panel: -110`. `0x10` is
-`ENTER_SLEEP_MODE`, sent from the panel's `unprepare()`.
-
-It could never have worked there. `disable_outputs()` runs the bridge chain's
-`disable` (panel `disable()`), then the encoder's, then the chain's `post_disable`
-(panel `unprepare()`) - and the encoder's is `mdp5_vid_encoder_disable`, which
-clears `INTF_TIMING_ENGINE_EN`. By `unprepare()` the video stream is stopped, but
-the DSI host is still `enabled`/`power_on` and `STATUS0` still reads
-`VIDEO_MODE_ENGINE_BUSY`, so `dsi_wait4video_eng_busy()` waits 70ms for a
-video-done that will never arrive, and the command DMA - which a video-mode link
-only transmits during blanking - then times out after another 200ms.
-
-`0003` now sends both `SET_DISPLAY_OFF` and `ENTER_SLEEP_MODE` from `disable()`,
-while the timing engine is still running. Downstream does the same: Sony's
-`qcom,mdss-dsi-off-command` is `28` and `10` in one batch, issued before the
-controller is stopped.
-
-The timeout was also hiding a second bug. `mipi_dsi_msleep()` is a no-op once
-`accum_err` is set, so the failed sleep-in skipped the 150ms settling delay that
-follows it and the panel was reset immediately - the delay the code existed to
-honour was the one thing it did not do. Measured over `device_pm_callback`
-tracepoints, `msm_mdp fd900100.display-controller [suspend]` goes from 373.7ms to
-272.9ms, and four cycles log no DSI errors at all.
-
-**The resume underrun is not a suspend bug.** MDP5 logs one
-`mdp5_irq_error_handler: errors: 04000000` (`INTF1_UNDER_RUN`) per cycle, but a
-plain `xset dpms force off; xset dpms force on` produces exactly one too - three
-DPMS cycles, three underruns. It fires 690ms into the resume callback, at the
-encoder enable rather than when the clocks come back, so it is a real first-frame
-underflow and not a stale status bit. The bandwidth vote is in place and unchanged
-across suspend (`mas_mdp_port0` peak 6400 MB/s, from `fd900100.display-controller`)
-and the clocks are at maximum (mdp 320MHz, AXI 400MHz). What is left is the order
-in `mdp5_vid_encoder_enable`: `INTF_TIMING_ENGINE_EN` is written before
-`mdp5_ctl_commit()` flushes the pipe and mixer, so the interface asks for pixels
-just before the configuration lands. That is generic MDP5 code shared by every
-SoC that uses it, it costs one frame while the panel has not latched video yet,
-and it is left alone deliberately.
+## CPU frequency, thermal and power collapse
 
 **The CPU had no frequency scaling, and mainline had all the drivers for it.**
 `qcom-cpufreq-nvmem` already lists `qcom,msm8974` with `match_data_krait`, `krait-cc`
@@ -476,6 +656,10 @@ kernel itself once the driver was live. Downstream's `reg` for `efuse` is
 agrees. For this bin the ladder tops out at **2150.4MHz**, not the 2265600 top row of
 `qcom,cpufreq-table` - that table is bin-independent, the PVS table is what governs,
 and 2.15GHz is exactly the MSM8974AA rating.
+
+*Since: VDD_APC turned out to be readable on pm8841 SID 5, at 900 mV, and `0112` (r216)
+runs the cores to 1497.6 MHz, the highest rate that voltage covers. The paragraph below
+is why the table first stopped at 960 MHz.*
 
 **The table stops at 960MHz on purpose.** Nothing in mainline can drive VDD_APC.
 Downstream runs `qcom,krait-pdn` with per-core `qcom,krait-regulator` LDOs and
@@ -578,105 +762,9 @@ milliseconds and defaults to 20, while its sibling `rcu_cpu_stall_timeout` is in
 seconds, so without it the kernel panics on the harmless ~3-jiffy expedited stall
 this device emits at about 36s of every boot.
 
-## What the phone actually draws
+## Idle and suspend
 
-There was no power measurement at all until `0023`, because the PM8941 current ADC
-reported a flat zero. Two bugs in `qcom-spmi-iadc.c`, both upstream:
-
-- `vsense_raw` is declared `u16`, and discharge reads *below* the calibration
-  offset. Every negative current underflowed into a huge positive one - the internal
-  channel was reporting a fictitious 363mV.
-- `vsense_uv / rsense` divides micro volts by micro Ohms, which yields **amperes**,
-  while the variable is named `isense_ua`, the debug print says uA, and
-  `IIO_CHAN_INFO_SCALE` is 0.001. Integer division then truncated anything below 1A
-  to zero, which is every current this phone ever draws.
-
-Fixing both gives a working ammeter, and the two independent sense resistors -
-internal and the 10 mOhm external one named in the device tree - agree within 5-7%,
-which is the reason to believe the numbers:
-
-| state | current | runtime on a 3140 mAh pack |
-|---|---|---|
-| idle, screen off | 252 mA | 12.5 h |
-| idle, screen on | 400 mA | 7.8 h |
-| four cores loaded, screen on | 689 mA | 4.6 h |
-
-The panel and its backlight cost **148 mA**, 37% of idle draw. Resolution is about
-0.55 mA per ADC count.
-
-Two caveats. These are *awake* figures; nothing here is a suspend number, and s2idle
-standby will be much lower. And `capacity` is derived from voltage through Sony's OCV
-table rather than counted, so it sags under load and recovers afterwards - it read
-91% idle, 83% under load, then 88% back at idle within a few minutes. Treat the
-percentage as an open-circuit estimate, not a fuel gauge.
-
-**Charging needs a real supply, not a PC port.** The phone draws about 400 mA just
-to run, so a 500 mA host port leaves nothing for the pack: net battery current sits
-at exactly zero, `status` reads Discharging and `capacity` barely moves, which looks
-convincingly like a broken charger. On a wall charger the same kernel reports
-`Charging`/`Fast` and pushes ~268 mA in at 92%, tapering towards the 4.35 V VMAX.
-
-That is only half the story though - `0024` had to come first. `qcom_smbb` always
-enables the SMBB's temperature comparators and picks their window from a single
-device tree bool, and the default narrow [35%:70%] band read amami's perfectly
-ordinary 642 mV `BAT_THERM` as too hot. That comparator gates the charger in
-hardware, not just in reporting, so `health = Overheat` was a genuine block rather
-than a cosmetic complaint. With `qcom,jeita-extended-temp-range` the band widens to
-[25%:80%], `BAT_IF` real-time status reads 0x03 and health reports Good. Both changes
-were needed; since they landed together the attribution is not cleanly proven, but
-the mechanism says the fix was necessary and the supply was the other half.
-
-The 642 mV figure is worth trusting because the VADC was calibrated against its own
-`REF_625MV`, `REF_1250MV` and `GND_REF` channels - 97.41 uV per count - and the same
-calibration reproduces `voltage_now` from `VBAT_SNS` exactly.
-
-These were measured while polling the phone over ssh every 25s, which sounds like it
-should inflate them and does not: repeating the run with nobody connected at all - an
-on-device script logging to tmpfs - gives ~396 mA against 400 mA, so the entire cost
-of watching is about 4 mA. The ssh traffic is visible elsewhere though. Each login
-writes sshd/sudo/pam lines to the journal, and that showed up as ~13 mmc0
-interrupts/s and ~70 block writes per 10s at idle with *no* process reporting
-`write_bytes`, because journald mmaps its files and that accounting never sees them.
-The journal had reached 617MB; `userspace/98-journal-size.conf` caps it at 64MB.
-
-One trap when measuring standby: a touch wakes DPMS. An unattended run came back with
-screen-off and screen-on within 2 mA of each other, purely because handling the phone
-to unplug the cable turned the display back on. Check that `bl_power` reads 4 in the
-samples rather than trusting that the blank stuck.
-
-Measuring draw needs the USB cable **out**. On USB the battery floats: the external
-sense resistor sees only noise, current does not respond to load at all, and
-`capacity` barely moves. Use WiFi for the session instead.
-
-## The proximity sensor reports nothing
-
-*Solved since: `0047` keeps a second subscription open, after which proximity reports
-normally, and ambient light became its own device with `0048`. The section below is the
-investigation as it stood before that.*
-
-It enumerates correctly - right vendor, right part, two data types - and registers an
-IIO device, which is exactly why it passed for working. Its buffer yields **zero
-bytes** over 25 seconds with a hand waved across it, while the accelerometer under
-the same procedure yields tens of kilobytes in five. Enabling the buffer produces no
-error and no dmesg output, and the buffering request to the DSP succeeds.
-
-Two explanations have been tried and neither is it. The first was that the driver
-only ever subscribes `SNS_SMGR_DATA_TYPE_PRIMARY`, so a sensor's secondary data type
-is never requested - true, and it is why an ambient light channel alone can never
-work, but subscribing to both types (patch `0031`, kept in `patches/` and out of the
-build) leaves 0x28 just as silent. The second was the sensor registry: nine groups
-are requested and unmapped (2001, 2500, 2610, 2650, 2680, 2970, 2971, 2980, 2990),
-and `0007` proved a single missing group can disable a sensor outright. But that
-cost the accelerometer its *enumeration*, whereas proximity enumerates fine and only
-fails to report, so the registry is a poor fit. Offsets `0x2900`-`0x2cff` are unused
-in `group_map[]` - four `0x100` pages against exactly four unmapped `29xx` groups -
-which is suggestive, and is also exactly the guess-and-flash pattern that should be
-resisted without a real source.
-
-Upstream lists proximity as supported, so this may well be specific to this device's
-APDS-9930 configuration rather than the driver.
-
-## Why idle costs 252 mA, and why suspend is shallow
+### Why idle costs 252 mA, and why suspend is shallow
 
 *Measured since: `0072`-`0081` made a real deep suspend work, and it saves nothing,
 because cpuidle already power-collapses the cores (`cpu-spc`) and L2-off never wakes.
@@ -703,7 +791,13 @@ power collapse rather than the per-core standalone kind, and coordinating with t
 RPM to drop rails. That is a project on the scale of the GPU IOMMU. It is the single
 biggest lever on battery life that remains.
 
-## The GPU IOMMU
+## GPU
+
+### The GPU IOMMU
+
+*Since: the GPU runs behind its IOMMU in the default build from r204, through
+arm-smmu (`0034`, `0035`), and `0036`'s large pages bring the cost to about 1.5x. The
+`qcom_iommu` route this section starts with (`0017`-`0019`, `0025`) was dropped.*
 
 `msm.vram=192m` costs 192MB on a 2GB phone, and an IOMMU would give it back.
 `0017` makes `qcom,iommu-secure-id` optional - downstream's `kgsl_iommu` has no
@@ -904,8 +998,8 @@ storming, and drm/msm prints the faulting address:
 three-minute glxgears soak gives zero hangchecks, 55,145 GPU interrupts, fences
 retiring within three of submission, and no fault on any line.
 
-It is still out of the default build, for a reason that is now a measurement rather
-than a suspicion. Like-for-like at 320MHz with `vblank_mode=0`:
+It stayed out of the default build at first, for a reason that was a measurement
+rather than a suspicion. Like-for-like at 320MHz with `vblank_mode=0`:
 
 | kernel | glxgears | hangchecks |
 |---|---|---|
@@ -969,8 +1063,8 @@ to 3.0x. A 150 second soak at 300x300 gives zero hangchecks, zero faults on any 
 and `last-fence` equal to `retired-fence` at 264505.
 
 What is left of the gap is the 366 small pages and the irreducible cost of translating
-at all. Still out of the build, but the trade is now arguable rather than obviously
-bad - and it buys the GPU real memory protection, which the carveout cannot.
+at all. That made the trade arguable rather than obviously bad, and it went into the
+build in r204 - and it buys the GPU real memory protection, which the carveout cannot.
 
 One honest loose end: `msm8974_smmu_write_s2cr` forces `NSCFG` and `MEMATTR` because
 downstream does, and it was originally added on a theory - that unmarked transactions
@@ -987,7 +1081,7 @@ idle and unhalted, and clearing halt-request explicitly changes nothing. Downstr
 never halts these instances either - `qcom,iommu-enable-halt` appears zero times
 across all ten of them.
 
-## The MDP IOMMU, and the 192MB
+### The MDP IOMMU, and the 192MB
 
 `msm_use_mmu()` tests `device_iommu_mapped(dev->dev) || device_iommu_mapped(dev->dev->parent)`,
 where `dev->dev` is the *display controller*. The carveout is gated on the **MDP**
@@ -1085,7 +1179,8 @@ table-walk master not read normal memory, when the GPU's identical SMMU can?** B
 tables live in the same low physical range and the GPU's instance walks them happily.
 The remaining differences are the clocks, the power domain, and the NoC path.
 
-`0034` through `0038` stay out of the build.
+`0034`-`0036` went into the build in r204; `0037` and `0038` are parked
+(`patches/parked/`).
 
 **And the process lesson, which cost more than the bug.** This was declared working
 and *flashed as the default kernel* while the panel showed nothing but backlight.
@@ -1107,6 +1202,103 @@ register pokes in that branch is not guesswork, it is downstream's
 non-secure init the GPU IOMMU needs.
 
 Where the port goes next is in `next-steps.md`.
+
+### Carveout buffers
+
+**Carveout buffers were handed out uncleared (fixed in `0106`, 2026-10-11).** With
+the display on the VRAM carveout, `msm_use_mmu()` is false, so every GEM buffer, the
+GPU's included, comes from the carveout. The DMA layer clears the carveout once, when
+msm allocates it at probe; after that `get_pages_vram()` handed out pages exactly as
+their previous owner left them, while shmem buffers always start zeroed. Measured with
+`tools/gpu-bo-reuse.py` on r204: fill a buffer with 0xa5, free it, allocate again, and
+the new buffer came back 100% 0xa5, write-combined and cached alike, at 4 KiB, 1 MiB
+and 4 MiB. With `renderD128` open to every user, any process could read what another
+had freed. It also explained the "Division by zero" in `retire_submits()`: a3xx never
+writes the per-submit stats in the ring's memptrs, so `retire_submit()` read leftovers
+and `do_div()` divided by the low half of a garbage elapsed time; boots differed (0 on
+one, 20 on the next) because the leftovers did.
+
+`0106` clears the pages in `get_pages_vram()` through the kernel's cached alias.
+Write-combined buffers already get `sync_for_device()` (a cache clean on ARMv7) before
+use; cached carveout buffers now get it too, followed by `sync_for_cpu()` so no cache
+line can be written back over the zeroes later. On r206 the same test reads all zeroes,
+glxgears holds 60 fps, Megapixels previews, and there are no warnings.
+
+### The GTK GPU hang
+
+**Solved (2026-10-08): a register write after every direct load.**
+The stock driver's a3xx code (`libGLESv2_adreno.so`, functions `oxili_*`, symbols
+exported) has a table of hardware workarounds. `oxili_detect_workarounds()` picks a set
+of flag bits by chip id; for this GPU, 3.3.0.1, it is word 0 `0xc2878307` and word 1
+`0x1b`. Running the stock code under an emulator (`tools/re/a3xx-stock-wa.py`) shows
+what each flag adds to the command stream. Four of them do something Mesa does not:
+
+| flag | stock adds | effect on the hang |
+|------|------------|--------------------|
+| w0 bit 23 | a write of `GRAS_SU_POINT_MINMAX` (its current value) after every direct `CP_LOAD_STATE` | **cures it** |
+| w1 bit 1 | `CP_EVENT_WRITE` event `0x18` before every draw | none |
+| w0 bit 25 | after every draw, `HLSQ_CONTROL_0` again without the shader-restart and full-update bits | none |
+| w0 bit 30 | a per-context preamble: a dummy one-pixel draw with a two-instruction shader pair | none |
+
+Each was put behind its own switch in a test Mesa and run in Megapixels for 30 to 120 s:
+9 to 40 hangchecks with none, 0 with bit 23's write, and no change from the other three.
+Snapshot with GTK's GL renderer: 14 hangs in 45 s without, 0 with. The register does not
+matter: the same write with a fixed value, or Mesa's `VFD_PERFCOUNTER0_SELECT = 0` dummy
+write, works as well. It fits the earlier clue, though this part is inference: with
+`FD_MESA_DEBUG=direct` the shaders load directly too (each followed by that dummy
+write), so no indirect load is left to come after a direct one that was not closed.
+
+The fix is `recipe/mesa/freedreno-a3xx-end-direct-loads.patch`: after each of the eight
+direct `CP_LOAD_STATE` packets in `fd3_emit.c` (constants, constant pointers, samplers,
+textures, mipaddrs, and the GMEM restore's three), write `VFD_PERFCOUNTER0_SELECT`.
+
+Two leads checked on the way and dropped:
+
+- Power collapse. The GPU autosuspends after 66 ms, so GTK's bursty frames power-cycle it
+  constantly, and kgsl runs a "power-on shader corruption" fixup that mainline lacks.
+  With runtime PM held on, Megapixels hung exactly as before.
+- The VBIF (bus interface) setup. Sony's kgsl source in `work/kgsl` writes the full a330
+  table, mainline's 8974v2 branch only five registers. The stock *kernel binary* has both
+  tables, and the short v2 one, identical to mainline's, is the one for chip 3.3.0.1. The
+  source in `work/kgsl` is older than what Sony shipped; check the binary before trusting it.
+
+**What it looked like.** It is GTK's GPU renderer, not the camera code. Megapixels (with this
+port's config) hangs the GPU within seconds; plain GL (glxgears) never does. The
+devcoredump, decoded with Mesa's `crashdec` (built from Mesa 26.1.6 with
+`-Dtools=freedreno` inside pmbootstrap's native chroot), shows the GPU stuck in a draw:
+`RBBM_STATUS` busy in PC_DCALL, VFD, VPC and HLSQ, an instanced draw fetching 13 vec4
+attributes per instance (`VFD_FETCH` stride 208, 50 inputs) with a 242-instruction
+fragment shader, scissored to 360x72, which is GTK drawing Megapixels' header bar. None of
+GTK's switches (`GSK_GPU_DISABLE=...`, `GDK_GL_DISABLE=...`, desktop GL instead of GLES)
+or Mesa's (`FD_MESA_DEBUG=nobin,sysmem,nogmem`) avoid it. With the cairo renderer there
+is no hang, but Megapixels' preview then freezes after a few frames, and with
+`LIBGL_ALWAYS_SOFTWARE=1` it is black and uses three cores. Devcoredumps vanish after
+five minutes: trigger, then read `/sys/class/devcoredump/devcd*/data` at once.
+
+**How it was narrowed down (2026-10-08).**
+
+- It is not a memory fault. With the GPU behind its IOMMU (`0034`-`0036`, now in the
+  build) the hang reproduces exactly as before and the SMMU reports nothing.
+- It depends on how Mesa uploads shader instructions. `FD_MESA_DEBUG=direct`, which puts
+  them inline in the command stream (`SS_DIRECT`) instead of having the GPU fetch them
+  from the shader's buffer (`SS_INDIRECT`), removes it completely: no hangs and no dropped
+  frames in Megapixels. In the a3xx driver that flag changes nothing else.
+  `FD_MESA_DEBUG=flush` (one submit per draw) also hides it, and so does recording the
+  command stream, which slows everything down: it is timing dependent.
+- It is not a missing wait before the upload. kgsl (`adreno_a3xx.c`, Sony's GPL tree) does
+  `HLSQ_FLUSH` + `CP_WAIT_FOR_IDLE` before every shader load; a Mesa build doing the same
+  at the start of `fd3_program_emit()` still hung, so that change was dropped.
+- What the GPU was doing: with `msm.rd_full=Y` the devcoredump carries every buffer, and
+  Mesa's `crashdec -v` decodes the whole command stream with disassembled shaders. All the
+  loaded shaders are intact; the CP had consumed both IB levels, so the stall is in the
+  pipeline (PC, VFD, VPC, HLSQ busy) on the tile's draws, the last being a GMEM resolve.
+- kgsl also runs a power-on shader-corruption fixup on every a3xx after power collapse,
+  which mainline does not have. It is not this hang (that happens with the GPU awake), but
+  it belongs on the list.
+
+Tools: `crashdec` and `cffdump` build from Mesa with `-Dtools=freedreno` inside
+pmbootstrap's native chroot; a strict `pmbootstrap build` zaps that chroot, so rebuild
+them after one. Command streams record with `FD_RD_DUMP=full FD_RD_DUMP_PATH=dir`.
 
 ## Audio
 
@@ -1135,105 +1327,17 @@ controller NGD, but mainline's NGD driver knows only `qcom,slim-ngd-v1.5.0` (899
 `-v2.1.0` (SDM845), with a separate non-NGD driver for apq8064. msm8974 sits between
 them.
 
-## Battery temperature, and why the jeita band had to be widened
-
-`0024` sets `qcom,jeita-extended-temp-range`, and that turns out to be the correct
-setting for this battery rather than a workaround.
-
-The PM8941's battery temperature comparator comes with two fixed windows, expressed as
-percentages of the thermistor's reference: [35%:70%] or [25%:80%]. Calibrating the
-VADC from its own `REF_625MV`, `REF_1250MV` and `GND_REF` channels gives 97.37
-uV/count, and against `VDD_VADC` at 1781.7 mV the thermistor reads:
-
-| | raw | mV | % of reference |
-|---|---|---|---|
-| at rest | 30949 | 606.5 | 34.0% |
-| after ten minutes of four-core load | 30499 | 562.7 | 31.6% |
-
-**606.5 mV is already below the narrow band's 35% floor of 623.6 mV**, so that window
-inhibits charging at ordinary room temperature - permanently, not marginally. The
-extended window's floor is 25%, or 445.4 mV.
-
-The load moved it 43.8 mV for a 7.1 C rise in PMIC die temperature, about -6.2 mV/C,
-and `BAT_THERM` kept falling for a while after the CPU started cooling, so the battery
-warmed by less than that and the true slope per battery-degree is steeper. Either way
-there is 26 C or more of headroom before the extended hot threshold trips, putting it
-somewhere near 50 C, which is about where charging should stop anyway.
-
-The reason a normal reading sits so low is that those thresholds are sized for
-Qualcomm's reference battery and amami's thermistor is not it. Worth knowing on top:
-**mainline has no `SCALE_BATT_THERM`**. Downstream declares this channel with
-`qcom,scale-function = <1>`, a dedicated battery-thermistor table; mainline offers only
-`DEFAULT`, `THERM_100K_PULLUP`, `PMIC_THERM`, `XOTHERM` and the HW_CALIB variants.
-That is why `LR_MUX1_BAT_THERM` has no `_input` attribute and why `qcom_smbb` reports
-no battery `temp` at all.
-
-## Debugging notes
-
-A few dead ends worth not repeating.
-
-`msm_mdss` interrupt counts don't tell you whether video is running. vblank
-interrupts get disabled when nothing is waiting on them, so a static count proves
-nothing. Use `DRM_IOCTL_WAIT_VBLANK` (`0xC00C643A` on arm32).
-
-Writes to `/dev/fb0` go nowhere on this platform. There's no IOMMU, so the
-display runs from a physically contiguous VRAM carveout and the generic fbdev
-path can't reach it (`fb0: Framebuffer is not in virtual address space`). Use X.
-
-Writing to the carveout through `/dev/mem` proves nothing either, since the
-mapping is cached and the writes may never reach the memory the display
-controller actually reads.
-
-And the big one: if SSH dies while ping still works, check `journalctl -b -1` for
-an orderly poweroff before assuming the kernel hung.
-
-**The uneven backlight was a one-character driver bug, and I called it hardware.**
-This is the mistake I'd most like someone else to avoid.
-
-`WLED3_SINK_REG_BRIGHT(n)` is `0x40 + n`, but `wled3_set_brightness()` writes two
-bytes at that address. So consecutive strings overlap: with brightness `0x0800`,
-writing string 0 at `0x40` leaves `d840=00 d841=08`, then writing string 1 at
-`0x41` leaves `d841=00 d842=08`. The real layout is two bytes per string, so what
-the hardware ends up with is string 0 at `0x0000` - **off** - and string 1 at
-`0x0f08`, near maximum, because its high byte was never overwritten and still
-holds part of the `0x0fff` power-on default. Every other WLED3 per-string register
-uses a `0x10` stride, and WLED4's brightness is `0x57 + n * 0x10`; only this one
-is `+ n`. `0013` makes it `0x40 + n * 2`.
-
-One string dead and the light guide fed from the other end is what produced the
-gradient, and the surviving string sitting near maximum is why the panel still
-looked bright enough not to question.
-
-The first investigation ruled out the third WLED string - `num-strings = <2>` is
-correct, driving sink 2 alone gives a dark panel, nothing is wired to it - and
-then concluded the gradient must therefore be the backlight hardware. That does
-not follow, and it was wrong. Two things should have stopped it. Stock firmware
-and LineageOS drive the same panel and the same WLED block without the gradient,
-which makes it software until proven otherwise. And `0xd840`-`0xd842` reading
-`00 00 08` was already in my notes, dismissed as harmless overlap; decoding it as
-two bytes per string shows one string pinned at zero.
-
-Reading the whole block is what makes it obvious - `d844 d845` still holding
-`ff 0f` is the power-on default, and a default of `0x0fff` only makes sense if
-brightness is two bytes per string.
-
-You need a kernel built with `REGMAP_ALLOW_WRITE_DEBUGFS` to poke at this live.
-It's deliberately not a Kconfig option; flip the `#undef` in
-`drivers/base/regmap/regmap-debugfs.c` and `/sys/kernel/debug/regmap/0-01/registers`
-becomes writable as `<reg> <value>`, both hex. Reading it dumps the whole SPMI
-space and is slow, so match every address you want in one `awk` pass.
-
 ## Camera
 
-The rear camera now delivers real frames through mainline CAMSS, though the image
-still needs lens-shading and colour work, and the front camera has not been started. The full history, including the
+The rear camera works: its own driver (`0103`) behind mainline CAMSS, libcamera with
+GNOME Snapshot, and Megapixels. The front camera has not been started. The full history, including the
 wrong turns, is in `worklog.md` under "Camera".
 
 **CAMSS.** msm8974's camera block is the same generation as msm8916's, which mainline
 supports: identical register offsets, a different base (0xfda00000) and more
 instances (3 CSIPHY, 4 CSID, 2 VFE). `0085`-`0087` add it. It depends on `IOMMU_DMA`,
-which arm32 cannot select, so `debug/9006` drops that for bring-up, and without an
-IOMMU the VFE needs contiguous buffers (`debug/9010`, CMA). The media config must be
+which arm32 cannot select, so `0115` drops that dependency, and without an
+IOMMU the VFE needs contiguous buffers, which `0115` takes from CMA. The media config must be
 modular; built in, it stops the kernel booting.
 
 camss sizes its clocks too low for msm8974. The CSID rule assumes four bytes a
@@ -1248,7 +1352,10 @@ delivered no frames at all, and only both at 200 MHz worked. Both blocks behave 
     rear   Sony IMX200  module SOI20BS0  CCI 0, 0x10  CSIPHY0, 4 lanes  AF: BU64296G
     front  Sony IMX132  module SEM02BN1  CCI 1, 0x36  CSIPHY2, 2 lanes  no AF
 
-Both are SMIA-family parts, so they run on mainline's generic CCS driver
+*Since: the IMX200 moved to its own driver (`0103`, below). The CCS fixes that are not
+IMX200-specific are parked for the IMX132.*
+
+Both are SMIA-family parts, so they first ran on mainline's generic CCS driver
 (`nokia,smia`). That driver needed six fixes before the IMX200 would stream:
 `0091` ignores CCS-only limit registers that hold junk on SMIA++ parts, `0092` and
 `0093` repair sub-device state the 6.16 conversion broke (the binner and pixel array
@@ -1452,22 +1559,11 @@ earlier WirePlumber crashes put down to a libcamera upgrade were this.
 - Taking a photo with GTK4's GL renderer hangs the GPU (`hangcheck ... offending task:
   snapshot`), and the X server with it; closing Snapshot ends it, otherwise only a reboot
   does. With `GSK_RENDERER=cairo` it does not happen, at about 10 fps. That was the
-  stopgap until the Mesa fix below ("The GPU hang, solved"); it is gone.
+  stopgap until the Mesa fix (GPU, "The GTK GPU hang"); it is gone.
 - Snapshot takes photos from the preview stream, so they are 1920x1080.
 - The photo failure itself was a missing XDG pictures folder.
 
-**The GPU hang.** It is GTK's GPU renderer, not the camera code. Megapixels (with this
-port's config) hangs the GPU within seconds; plain GL (glxgears) never does. The
-devcoredump, decoded with Mesa's `crashdec` (built from Mesa 26.1.6 with
-`-Dtools=freedreno` inside pmbootstrap's native chroot), shows the GPU stuck in a draw:
-`RBBM_STATUS` busy in PC_DCALL, VFD, VPC and HLSQ, an instanced draw fetching 13 vec4
-attributes per instance (`VFD_FETCH` stride 208, 50 inputs) with a 242-instruction
-fragment shader, scissored to 360x72, which is GTK drawing Megapixels' header bar. None of
-GTK's switches (`GSK_GPU_DISABLE=...`, `GDK_GL_DISABLE=...`, desktop GL instead of GLES)
-or Mesa's (`FD_MESA_DEBUG=nobin,sysmem,nogmem`) avoid it. With the cairo renderer there
-is no hang, but Megapixels' preview then freezes after a few frames, and with
-`LIBGL_ALWAYS_SOFTWARE=1` it is black and uses three cores. Devcoredumps vanish after
-five minutes: trigger, then read `/sys/class/devcoredump/devcd*/data` at once.
+## Megapixels
 
 **Megapixels** finds `sony,xperia-amami.conf` by the device-tree compatible. Getting a
 frame with `megapixels-getframe` works at 2624x1976 and 5248x3936, and the preview runs at
@@ -1483,30 +1579,12 @@ Without a colour profile its preview is green. It looks for a DNG profile named
 `<compatible>,<camera>.dcp`, where the camera is the config section name with its case
 kept: `sony,xperia-amami,Rear.dcp`.
 
-**The GPU hang, narrowed down (2026-10-08).**
-
-- It is not a memory fault. With the GPU behind its IOMMU (`0034`-`0036`, now in the
-  build) the hang reproduces exactly as before and the SMMU reports nothing.
-- It depends on how Mesa uploads shader instructions. `FD_MESA_DEBUG=direct`, which puts
-  them inline in the command stream (`SS_DIRECT`) instead of having the GPU fetch them
-  from the shader's buffer (`SS_INDIRECT`), removes it completely: no hangs and no dropped
-  frames in Megapixels. In the a3xx driver that flag changes nothing else.
-  `FD_MESA_DEBUG=flush` (one submit per draw) also hides it, and so does recording the
-  command stream, which slows everything down: it is timing dependent.
-- It is not a missing wait before the upload. kgsl (`adreno_a3xx.c`, Sony's GPL tree) does
-  `HLSQ_FLUSH` + `CP_WAIT_FOR_IDLE` before every shader load; a Mesa build doing the same
-  at the start of `fd3_program_emit()` still hung, so that change was dropped.
-- What the GPU was doing: with `msm.rd_full=Y` the devcoredump carries every buffer, and
-  Mesa's `crashdec -v` decodes the whole command stream with disassembled shaders. All the
-  loaded shaders are intact; the CP had consumed both IB levels, so the stall is in the
-  pipeline (PC, VFD, VPC, HLSQ busy) on the tile's draws, the last being a GMEM resolve.
-- kgsl also runs a power-on shader-corruption fixup on every a3xx after power collapse,
-  which mainline does not have. It is not this hang (that happens with the GPU awake), but
-  it belongs on the list.
-
-Tools: `crashdec` and `cffdump` build from Mesa with `-Dtools=freedreno` inside
-pmbootstrap's native chroot; a strict `pmbootstrap build` zaps that chroot, so rebuild
-them after one. Command streams record with `FD_RD_DUMP=full FD_RD_DUMP_PATH=dir`.
+**A colour profile for Megapixels from stock's matrix.** `tools/camera/mkdcp.py` writes
+`userspace/megapixels/sony,xperia-amami,Rear.dcp`: ForwardMatrix1 is stock's colour
+matrix chained with sRGB to XYZ (D50); ColorMatrix1 also needs the raw response to
+daylight white, measured on the white window frame in two daylight captures as R/G 0.485
+and B/G 0.62. Both check out: camera white maps to D50 white, D65 white to the measured
+response.
 
 **Megapixels' colour, fixed (2026-10-08): three bugs between the profile and the
 preview.** With the GPU hang gone, the preview ran but was green-yellow. All three are in
@@ -1561,65 +1639,21 @@ config now has a `Rate` command after the sensor's `Mode` in each mode. Vertical
 blanking comes out at 2308, exposure reaches 3288 lines, and the night preview is far
 less noisy.
 
-**Carveout buffers were handed out uncleared (fixed in `0106`, 2026-10-11).** With
-the display on the VRAM carveout, `msm_use_mmu()` is false, so every GEM buffer, the
-GPU's included, comes from the carveout. The DMA layer clears the carveout once, when
-msm allocates it at probe; after that `get_pages_vram()` handed out pages exactly as
-their previous owner left them, while shmem buffers always start zeroed. Measured with
-`tools/gpu-bo-reuse.py` on r204: fill a buffer with 0xa5, free it, allocate again, and
-the new buffer came back 100% 0xa5, write-combined and cached alike, at 4 KiB, 1 MiB
-and 4 MiB. With `renderD128` open to every user, any process could read what another
-had freed. It also explained the "Division by zero" in `retire_submits()`: a3xx never
-writes the per-submit stats in the ring's memptrs, so `retire_submit()` read leftovers
-and `do_div()` divided by the low half of a garbage elapsed time; boots differed (0 on
-one, 20 on the next) because the leftovers did.
+## Debugging notes
 
-`0106` clears the pages in `get_pages_vram()` through the kernel's cached alias.
-Write-combined buffers already get `sync_for_device()` (a cache clean on ARMv7) before
-use; cached carveout buffers now get it too, followed by `sync_for_cpu()` so no cache
-line can be written back over the zeroes later. On r206 the same test reads all zeroes,
-glxgears holds 60 fps, Megapixels previews, and there are no warnings.
+A few dead ends worth not repeating.
 
-**The GPU hang, solved (2026-10-08): a register write after every direct load.**
-The stock driver's a3xx code (`libGLESv2_adreno.so`, functions `oxili_*`, symbols
-exported) has a table of hardware workarounds. `oxili_detect_workarounds()` picks a set
-of flag bits by chip id; for this GPU, 3.3.0.1, it is word 0 `0xc2878307` and word 1
-`0x1b`. Running the stock code under an emulator (`tools/re/a3xx-stock-wa.py`) shows
-what each flag adds to the command stream. Four of them do something Mesa does not:
+`msm_mdss` interrupt counts don't tell you whether video is running. vblank
+interrupts get disabled when nothing is waiting on them, so a static count proves
+nothing. Use `DRM_IOCTL_WAIT_VBLANK` (`0xC00C643A` on arm32).
 
-| flag | stock adds | effect on the hang |
-|------|------------|--------------------|
-| w0 bit 23 | a write of `GRAS_SU_POINT_MINMAX` (its current value) after every direct `CP_LOAD_STATE` | **cures it** |
-| w1 bit 1 | `CP_EVENT_WRITE` event `0x18` before every draw | none |
-| w0 bit 25 | after every draw, `HLSQ_CONTROL_0` again without the shader-restart and full-update bits | none |
-| w0 bit 30 | a per-context preamble: a dummy one-pixel draw with a two-instruction shader pair | none |
+Writes to `/dev/fb0` go nowhere on this platform. There's no IOMMU, so the
+display runs from a physically contiguous VRAM carveout and the generic fbdev
+path can't reach it (`fb0: Framebuffer is not in virtual address space`). Use X.
 
-Each was put behind its own switch in a test Mesa and run in Megapixels for 30 to 120 s:
-9 to 40 hangchecks with none, 0 with bit 23's write, and no change from the other three.
-Snapshot with GTK's GL renderer: 14 hangs in 45 s without, 0 with. The register does not
-matter: the same write with a fixed value, or Mesa's `VFD_PERFCOUNTER0_SELECT = 0` dummy
-write, works as well. It fits the earlier clue, though this part is inference: with
-`FD_MESA_DEBUG=direct` the shaders load directly too (each followed by that dummy
-write), so no indirect load is left to come after a direct one that was not closed.
+Writing to the carveout through `/dev/mem` proves nothing either, since the
+mapping is cached and the writes may never reach the memory the display
+controller actually reads.
 
-The fix is `recipe/mesa/freedreno-a3xx-end-direct-loads.patch`: after each of the eight
-direct `CP_LOAD_STATE` packets in `fd3_emit.c` (constants, constant pointers, samplers,
-textures, mipaddrs, and the GMEM restore's three), write `VFD_PERFCOUNTER0_SELECT`.
-
-Two leads checked on the way and dropped:
-
-- Power collapse. The GPU autosuspends after 66 ms, so GTK's bursty frames power-cycle it
-  constantly, and kgsl runs a "power-on shader corruption" fixup that mainline lacks.
-  With runtime PM held on, Megapixels hung exactly as before.
-- The VBIF (bus interface) setup. Sony's kgsl source in `work/kgsl` writes the full a330
-  table, mainline's 8974v2 branch only five registers. The stock *kernel binary* has both
-  tables, and the short v2 one, identical to mainline's, is the one for chip 3.3.0.1. The
-  source in `work/kgsl` is older than what Sony shipped; check the binary before trusting it.
-
-**A colour profile for Megapixels from stock's matrix.** `tools/camera/mkdcp.py` writes
-`userspace/megapixels/sony,xperia-amami,Rear.dcp`: ForwardMatrix1 is stock's colour
-matrix chained with sRGB to XYZ (D50); ColorMatrix1 also needs the raw response to
-daylight white, measured on the white window frame in two daylight captures as R/G 0.485
-and B/G 0.62. Both check out: camera white maps to D50 white, D65 white to the measured
-response.
-
+And the big one: if SSH dies while ping still works, check `journalctl -b -1` for
+an orderly poweroff before assuming the kernel hung.

@@ -18,12 +18,12 @@ aport, then refresh the checksums and build:
 
     P=$(pmbootstrap config aports)/device/testing/linux-postmarketos-qcom-msm8974
     cp recipe/APKBUILD recipe/config-postmarketos-qcom-msm8974.armv7 "$P/"
-    cp patches/*.patch patches/debug/*.patch "$P/"
+    cp patches/*.patch "$P/"
     pmbootstrap checksum linux-postmarketos-qcom-msm8974
     pmbootstrap build linux-postmarketos-qcom-msm8974 --arch armv7
 
-Only the patches named in the APKBUILD are applied; the rest of `patches/` are kept
-for reference (the README explains which). The Adreno 330 firmware (`a330_pm4.fw`,
+`patches/` holds exactly the patches the APKBUILD names; `patches/parked/` and
+`patches/debug/` are not built (their READMEs explain each). The Adreno 330 firmware (`a330_pm4.fw`,
 `a330_pfp.fw`) comes from linux-firmware and has to sit next to the APKBUILD too,
 because it is built into the image.
 
@@ -115,6 +115,11 @@ this phone's config and colour profile:
 
 Snapshot saves to the XDG pictures folder and refuses to take a photo without one, hence
 `xdg-user-dirs`. Reboot after upgrading libcamera, so WirePlumber loads the new one.
+
+Audio is parked (no sound yet, see `notes.md`), so the codec driver stays off at boot;
+loaded, it only adds a sound card that stays silent:
+
+    sudo install -m 644 userspace/amami-audio-off.conf /etc/modprobe.d/
 
 On a development phone it saves time to have the desktop come back on its own. The
 image sets up autologin, but LightDM applies it only when it starts, so a session that

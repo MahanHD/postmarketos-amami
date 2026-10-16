@@ -10,7 +10,7 @@ compares it with stock where that applies, fixes what it finds and records it he
 | 2 | Camera stack: imx200 driver, camss patches, `recipe/libcamera`, `recipe/libdng`, `recipe/libmegapixels`, `recipe/megapixels`, `userspace/megapixels` | done, r226 |
 | 3 | amami and msm8974 device tree: CPU rail and OPPs, regulators, the DT patches | to do |
 | 4 | The other kernel patches, by subsystem: display, sensors, charging, CPU hotplug, WiFi/BT, audio | to do |
-| 5 | Tools, recipes and docs: stale or contradicting text, tools nobody uses | to do |
+| 5 | Tools, recipes and docs: stale or contradicting text, tools nobody uses | patches and docs cleaned 2026-10-16 (worklog, "Cleanup"); tools to do |
 
 ## Pass 1: GPU and GPU memory
 

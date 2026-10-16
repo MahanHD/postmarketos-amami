@@ -122,7 +122,8 @@ following `modprobe` into a no-op and leaves you measuring the *old* instance.
 That wasted two full test cycles; assert `lsmod | grep -c` is 0 before
 reloading.
 
-**The codec is blacklisted** in `/etc/modprobe.d/wcd9320-test.conf`, so after every
+**The codec is blacklisted** in `/etc/modprobe.d/wcd9320-test.conf` (since 2026-10-16
+`userspace/amami-audio-off.conf`), so after every
 reboot the card does not exist until you run `sudo modprobe snd-soc-wcd9320`. An
 empty `/sys/class/sound/` is that, not a regression. The blacklist dates from r89,
 when loading the codec oopses while building the card; `0052` fixed that oops and
@@ -4018,47 +4019,45 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
   releases a capture frame after the queue was torn down for the mode switch. The preview
   resumes; not chased.
 
+### Cleanup, 2026-10-16
+
+- The kernel built three diagnostic patches (`9000` writable regmap debugfs, `9001`
+  sns_reg's extra group, `9002` the scan IE trim), `0002` (a `scan_offload` switch
+  described as no longer needed) and `0017`/`0019` (`qcom_iommu` changes; the driver
+  binds nothing since the GPU moved to arm-smmu). All six out (r233). `0010` regenerated
+  without `0002` underneath; with the old default the behaviour is the same. `0087`
+  applied with fuzz 2 at a 338-line offset; regenerated. The full series applies with
+  no fuzz; the amami DTB is byte-identical to r232's.
+- r233 on the phone: `wcn36xx` and `qcom_sns_reg` show no debug parameters, regmap
+  `registers` files are read-only; WiFi connected and scanning (4 networks), Bluetooth
+  on, the five sensors, FD330, 1497.6 MHz, 20 frames at 1920x1080 and about 30 fps from
+  `cam` twice, no kernel warnings. "Spurious TX complete" and one `hal_start_scan` error
+  per boot, as on the three boots before.
+- `patches/` now holds exactly the 87 built patches. Deleted, replaced or shown
+  useless: `0002`, `0017`-`0019`, `0025`, `0027`, `0031`-`0033`, `0046`, `0078`,
+  `0094`, `0098`, and `debug/9006`, `9008`-`9010`, `9013`, `9014`, `9021`. Parked with
+  a README: `0037`, `0038`, `0077`, `0082`-`0084`, `0091`-`0093`, `0095`, `0096`,
+  `0105`. The pmaports copy of the kernel aport held 40 unused files (some, like the
+  first audio attempts `0053`/`0057`/`0065`, in no other place); moved to
+  `work/pmaports-stale/`.
+- `notes.md` regrouped by subsystem (a script moved whole line ranges and checked
+  each was used once), with a *Since:* note wherever a later result overturned a
+  paragraph: 960 MHz, the GPU IOMMU out of the build, CCS for the IMX200, debug
+  patches named as the camera's path. `next-steps.md` cut to the open items. The debug
+  README said `9000` settled the backlight "as hardware"; it was `0013`, a driver bug.
+- Phone: `/etc/modprobe.d/wcd9320-test.conf` (codec off at boot, from r89) is now
+  `userspace/amami-audio-off.conf`, installed under that name. The home folder's test
+  files (2.4 GB of raw captures, old kernel packages, logs) are gone; logs, scripts and
+  the 182 GPU dumps went to `work/phone-home-2026-10-16.tar.gz` first. The dumps since
+  the fixes are all from `gpu-hang-inject.py`. Root filesystem 7.1 GB to 3.3 GB used.
+  `devcore-collect` stays, as `next-steps.md` intends.
+- `cam` at 2624x1976 fails ("Wanted 4, got 2"): the soft ISP's crop makes it pick the
+  5248x3936 mode. Existing behaviour, added to the camera list.
+
 ## Parked patches
 
-Out of the build, kept because the data in them was expensive to recover:
-
-- `0105` - kgsl's a3xx power-on fixup, now run the way kgsl runs it: from a read-only
-  IB with prefetch disabled, on the first submission after every hw_init. Its 491
-  dwords are identical to the buffer the stock kernel builds. Parked: an hour-long soak
-  gave 10 hangs and 17 hw_init idle timeouts against r206's 3 and none. The earlier
-  version (inline after `CP_ME_INIT`) stalled the CP at power-up. Lead: the fixup leaves
-  a330v2's `RBBM_CLOCK_CTL` bits 17:16 at the a330v1 value.
-- `0082` - the actual SoC collapse in `spm_suspend_enter()`. Correct-looking and
-  **the phone does not wake from it** (r135, Phase 2). Parked rather than deleted
-  because the sequence is probably right and the wakeup side is the suspect, so
-  whatever fixes the wakeup will want this back unchanged. r135 is safe to run but
-  must never be sent to `deep`.
-- `0078` - dropping `cold_boot_done` so the ACC/SAW release re-runs on every
-  online, plus a non-returning `qcom_cpu_die()`. **Parked because it is actively
-  dangerous**, not merely incomplete: it hard-resets the SoC at the online, every
-  time, by clamping and resetting a core that is still powered. Kept because the
-  diagnosis in it is right (see Phase 2) and because the next attempt needs exactly
-  this plus a prior power collapse. Do not re-add it on its own.
-- `0077` - the `platform_suspend_ops`. Correct as far as it goes, and parked only
-  because `PM_SUSPEND_MEM` parks the secondary CPUs and this SoC cannot bring them
-  back. Note it is not inert if re-added: registering any suspend ops makes `deep`
-  the **default** `mem_sleep`, so ordinary idle suspends take that path too.
-- `0034`, `0035`, `0036`, `0037` - the GPU and MDP IOMMUs, and the page-size fix.
-- `0018`, `0025` - the earlier `qcom_iommu` node and the GPU's binding to it.
-- `0027` - the non-secure BFB settings.
-- `0031` - subscribing to every data type. Now known not to be a proximity fix:
-  proximity *is* the primary type. It would be the route to an ambient light
-  channel, which does work at the SMGR level.
-- `0046` - answering unmapped registry groups with zeroes instead of failing.
-  Tried on hardware, changed nothing.
-- `debug/9004` - dumps the whole SMMU state after a successful attach.
-
-In the build but inert without those: `0017` (optional secure id), `0019` (the `alt`
-clock, which is what stopped the first attempt hanging the phone), `0026` (detaching
-the ARM DMA mapping).
-
-Check `glxinfo -B` reports `FD330` after touching any of this, not merely that the
-screen lights up: a broken IOMMU shows up as a silent fallback to `llvmpipe`.
+Moved to `patches/parked/README.md` in the 2026-10-16 cleanup, which also deleted
+the patches that something else replaced (listed in the cleanup entry above).
 
 ## Smaller loose ends
 

@@ -1,9 +1,10 @@
---- a/drivers/net/wireless/ath/wcn36xx/main.c	2026-09-10 12:55:43.652052535 +0400
-+++ b/drivers/net/wireless/ath/wcn36xx/main.c	2026-09-10 12:55:43.694238793 +0400
-@@ -639,8 +639,16 @@
+--- a/drivers/net/wireless/ath/wcn36xx/main.c	2026-10-16 11:37:27.642279488 +0400
++++ b/drivers/net/wireless/ath/wcn36xx/main.c	2026-10-16 11:37:27.657279511 +0400
+@@ -632,7 +632,15 @@
  {
  	struct wcn36xx *wcn = hw->priv;
  
+-	if (!wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD)) {
 +	/*
 +	 * SCAN_OFFLOAD on its own is not enough. Pronto firmware advertises it
 +	 * while having no handler for START_SCAN_OFFLOAD at all, so the request
@@ -11,19 +12,17 @@
 +	 * that does implement the message advertises WLAN_SCAN_OFFLOAD as well,
 +	 * so require both and fall back to the software scan otherwise.
 +	 */
- 	if (!wcn36xx_scan_offload ||
--	    !wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD)) {
-+	    !wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD) ||
++	if (!wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD) ||
 +	    !wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, WLAN_SCAN_OFFLOAD)) {
  		/* fallback to mac80211 software scan */
  		return 1;
  	}
-@@ -679,7 +687,8 @@
+@@ -680,7 +688,8 @@
+ 	wcn->scan_aborted = true;
  	mutex_unlock(&wcn->scan_lock);
  
- 	if (wcn36xx_scan_offload &&
--	    wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD)) {
-+	    wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD) &&
+-	if (wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD)) {
++	if (wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, SCAN_OFFLOAD) &&
 +	    wcn36xx_firmware_get_feat_caps(wcn->fw_feat_caps, WLAN_SCAN_OFFLOAD)) {
  		/* ieee80211_scan_completed will be called on FW scan
  		 * indication */

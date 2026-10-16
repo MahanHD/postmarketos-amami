@@ -1,8 +1,8 @@
---- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-+++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
-@@ -28,3 +28,13 @@
- 	qcom,fast-charge-current-limit = <1300000>;
- 	qcom,dc-current-limit = <1300000>;
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-16 11:38:25.804367890 +0400
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-16 11:38:25.806416919 +0400
+@@ -366,3 +366,13 @@
+ 	 */
+ 	post-init-providers = <&pm8941_vadc>;
  };
 +
 +&camss {
