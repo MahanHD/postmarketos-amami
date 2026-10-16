@@ -3996,6 +3996,28 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
   density 2 (finds a 132 and an 87 pixel QR code; density 3 misses the small one): 38%.
 - One session's photos came out purple, AWB at red 0.61, blue 0.25; not reproduced.
 
+### Megapixels' purple photos, 2026-10-16
+
+- Photo at 10:26 purple, preview right. AsShotNeutral 0.25, 1, 0.25 (gains at the 4.0
+  limit); grey world from its raw data (`tools/camera/dngneutral.py`) 0.550, 0.550.
+  Control: an earlier good photo gives 0.850, 0.407 against its recorded 0.85, 0.40.
+- Logging build (AWB step and DNG gains to stderr, two photos): preview steady at 1.84,
+  1.83; the first step after a photo measured 37, 103, 40 and set 4.0, 4.0, then swung
+  for about twenty steps. The second photo of that run reproduced it (0.25, 1, 0.25). A
+  step can land between a photo's two DNG writes.
+- Cause one, mine: `photo-keeps-white-balance.patch` kept the gains across the mode
+  change, but `gles2_debayer_configure()` sets the shader's gains back to 1. The patch now
+  calls `gles2_debayer_set_shading()` after it.
+- Cause two, upstream: the step divides the processed averages by the gains, through the
+  colour matrix and the gamma. `awb-measure-in-camera-colours.patch` inverts both. A
+  simulation of the shader reaches 1.824 in one step from 1, 1.84, 4.0 and 0.5/3.0 (scene
+  1.82). On the phone (r13 plus logging, two photos): the unbalanced first frame at
+  start-up went straight to 1.83, 1.86; 160 steps stayed within 1.81 to 1.87, through
+  both returns from capture; the photo's neutral 0.552, 1, 0.551.
+- `MPCamera: VIDIOC_QBUF error 22` after each capture, in both builds: io_pipeline
+  releases a capture frame after the queue was torn down for the mode switch. The preview
+  resumes; not chased.
+
 ## Parked patches
 
 Out of the build, kept because the data in them was expensive to recover:

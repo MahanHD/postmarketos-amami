@@ -3,7 +3,7 @@
 # Alpine 3.24 community/megapixels with colour fixes for the Xperia Z1 Compact
 pkgname=megapixels
 pkgver=2.1.0
-pkgrel=12
+pkgrel=13
 pkgdesc="GTK+4 camera app for mobile devices"
 url="https://gitlab.com/megapixels-org/Megapixels"
 # s390x: doubt anyone would use a mainframe to take photosj
@@ -38,6 +38,7 @@ source="https://gitlab.com/megapixels-org/Megapixels/-/archive/$pkgver/Megapixel
 	postprocess-one-photo-at-a-time.patch
 	postprocess-sharpen-and-contrast-faster.patch
 	zbar-rest-between-scans.patch
+	awb-measure-in-camera-colours.patch
 	"
 options="!check" # There's no testsuite
 builddir="$srcdir/Megapixels-$pkgver"
@@ -58,11 +59,12 @@ ff0ee3506daa8f3dc48c05c0709c6399da4ad1bd1035f3b0cee6caec1e05fba8560ac0adfeb71da4
 9fa742ed224de1f302e90df69fb14a84a437953d76b761106d71699f23b8aa34c866d30750b2f23744272eccb470ff22b64a5e684140ae0b673be34773e45adb  awb-stats-in-srgb.patch
 ea4e0bb4f708e7c300f12e9f942061c40053101e3d2e04a0b88db93d4562ba47e7ac1d5213e338e3e6b6e20392dd2f4b8500f42df68d259e34c8c454ff2a5cc5  clip-after-white-balance.patch
 5ac71105eb8005d19cdfb9afad7e12c19c365a9304b236eb9497594b189c69e7c26260502529994828c52ce4367929d45bb07d48e2ce2066865a68315fe6d4f9  thumbnail-without-a-free-preview.patch
-8126725afa67053586fd341c72ebc86d0541f2b8c848ab3db05e40cb2ee042b5399192510572e571ded358c275aa6138623070ae9004c4c76909b869db448ff1  photo-keeps-white-balance.patch
+37ee6f7007dfe168a92b7d3ee72d9a4b2975427e92b67da75053fa7902be98667d6978194128f94253a3b0041ef631ec440331f8ccb23c14d6a4095488c5efd3  photo-keeps-white-balance.patch
 b29174dba66f45e4d2c1399c5e8244466f253e41a3e9531f898329c36a0e835efce34588bd33de6ce919a05f7e24c317959e632b3a22596ae19863f5f5563691  black-level-from-the-config.patch
 b309c1445b116679d469d219c58412fd8f4e29d029dce414e6fd725b53d6ff8efcc4953a67f3aa2f1be75b73dea122fae218986885edb6346587cd0edd058cb1  preview-mode-nearest-the-preview-size.patch
 1d0ad3fbaa6964a489f02bdc2a9beb2072aa2c4ab37c482a8010ad506781297adbb619b2dd79f1b22fb1b9d68ac0b22ad36b91c112ab56cfea5eedb5d250ffca  burst-of-the-frames-postprocess-reads.patch
 900e4b8e17810b658d78bcdb68b004f69bc69af4f622ca5dfd9e814a1308fd8d2b1b88a9ae9b3bfd5561a3b10bf6962530fea935382e5260eab95f2bf7cb0bf4  postprocess-one-photo-at-a-time.patch
 b39c57616e3d8626768bcc5c77818770bc5c9afc0b80893f24e267b97169f6c2a2514f614866101f5b8ba776fdc57914dac2b188a39c66077472125abcd0d412  postprocess-sharpen-and-contrast-faster.patch
 d5b528e834f66bb20421845e25f58d94d3d26870b35a39989dfbabc998634125f2a87eed488bfdefe2505199f63f95fe4b2fdd293ae9237cf119d449a46cf9c1  zbar-rest-between-scans.patch
+1d4b24f7ab7e6a1fd5e5c4e86c9503464d5b5dfb61e7ac7b8118d1b2f02c2d35131478e74bf8eec5fabd4d29a348518e78a2e76f99eb6caee29ba50a8eed54f3  awb-measure-in-camera-colours.patch
 "

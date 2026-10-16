@@ -1,0 +1,184 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] auto white balance: measure in the camera's colours
+
+process_aaa() averages the processed preview, which has been through the
+white balance gains, the colour matrix and the gamma, and it estimated
+the camera's colour by dividing those averages by the gains alone. That
+ignores the matrix and the gamma. Near the right gains the loop still
+converged, but from a large error it overshot: on the Xperia Z1 Compact
+the gains went 4.0, 0.99, 3.26, 1.21, 2.58 ... and took about twenty
+steps, several seconds, to settle, and a photo taken meanwhile kept
+whatever gains it had at the time.
+
+Let the debayer undo its own processing instead. It remembers the gains
+it last applied, takes the gamma off the averages and maps them back
+through the inverse colour matrix, giving the frame's average colour as
+the sensor saw it. Gains that make that grey are right in one step from
+any starting point.
+
+invert_matrix() had a typo in its determinant (in[4] * in[7] for
+in[4] * in[6]); nothing called it before.
+
+---
+--- a/src/gles2_debayer.c	2026-10-16 10:36:49.434297500 +0400
++++ b/src/gles2_debayer.c	2026-10-16 10:37:43.336506378 +0400
+@@ -4,6 +4,7 @@
+ #include "dcp.h"
+ #include "gl_util.h"
+ #include "matrix.h"
++#include <math.h>
+ #include <stdlib.h>
+ 
+ #define VERTEX_ATTRIBUTE 0
+@@ -167,6 +168,9 @@
+                           float blue,
+                           float blacklevel)
+ {
++        self->red = red;
++        self->blue = blue;
++
+         if (self->forward_matrix[0]) {
+                 float wb[9] = {
+                         // clang-format off
+@@ -213,6 +217,45 @@
+         check_gl();
+ }
+ 
++/*
++ * Take an average colour of the shader's output, 0 to 255 per channel, back
++ * to the camera RGB it came from, before white balance: undo the gamma, the
++ * colour matrix and the gains, in that order. Averaging after the gamma is
++ * not the same as before it, but near grey, where white balance settles, the
++ * difference is small.
++ */
++void
++gles2_debayer_unprocess(GLES2Debayer *self, const float rgb[3], float camera[3])
++{
++        float linear[3];
++        for (int i = 0; i < 3; i++) {
++                linear[i] = powf(fmaxf(rgb[i], 0.0f) / 255.0f, self->gamma);
++        }
++
++        if (!self->forward_matrix[0]) {
++                /* The shader applied no matrix and no gains */
++                for (int i = 0; i < 3; i++) {
++                        camera[i] = linear[i];
++                }
++                return;
++        }
++
++        float xyzd65[9];
++        float tosrgb[9];
++        float fromsrgb[9];
++        multiply_matrices(XYZD50_to_D65, self->forward_matrix, xyzd65);
++        multiply_matrices(XYZD65_to_sRGB, xyzd65, tosrgb);
++        invert_matrix(tosrgb, fromsrgb);
++
++        for (int i = 0; i < 3; i++) {
++                camera[i] = fromsrgb[i * 3 + 0] * linear[0] +
++                            fromsrgb[i * 3 + 1] * linear[1] +
++                            fromsrgb[i * 3 + 2] * linear[2];
++        }
++        camera[0] /= self->red;
++        camera[2] /= self->blue;
++}
++
+ void
+ gles2_debayer_configure(GLES2Debayer *self,
+                         const uint32_t dst_width,
+@@ -256,6 +299,7 @@
+                         gamma = g;
+                 }
+         }
++        self->gamma = gamma;
+         glUniform1f(self->uniform_inv_gamma, 1.0f / gamma);
+         check_gl();
+ 
+--- a/src/gles2_debayer.h	2026-10-16 10:36:49.431010959 +0400
++++ b/src/gles2_debayer.h	2026-10-16 10:37:23.037174061 +0400
+@@ -15,6 +15,10 @@
+         int format;
+         int shader;
+         float forward_matrix[9];
++        float gamma;
++        /* The white balance gains last handed to the shader */
++        float red;
++        float blue;
+         int texture_mode;
+ 
+         GLuint frame_buffer;
+@@ -52,6 +56,10 @@
+                                float blue,
+                                float blacklevel);
+ 
++void gles2_debayer_unprocess(GLES2Debayer *self,
++                             const float rgb[3],
++                             float camera[3]);
++
+ void gles2_debayer_process(GLES2Debayer *self, GLuint dst_id, GLuint source_id);
+ 
+ const char* gles2_shader_to_fragment(int shader);
+--- a/src/matrix.c	2026-10-16 10:36:49.388233418 +0400
++++ b/src/matrix.c	2026-10-16 10:37:23.037039365 +0400
+@@ -31,7 +31,7 @@
+ {
+         float det = in[0] * (in[4] * in[8] - in[5] * in[7]) -
+                     in[1] * (in[3] * in[8] - in[5] * in[6]) +
+-                    in[2] * (in[3] * in[7] - in[4] * in[7]);
++                    in[2] * (in[3] * in[7] - in[4] * in[6]);
+         out[0] = (in[4] * in[8] - in[7] * in[5]) / det;
+         out[1] = (in[7] * in[2] - in[1] * in[8]) / det;
+         out[2] = (in[1] * in[5] - in[4] * in[2]) / det;
+--- a/src/process_pipeline.c	2026-10-16 10:36:49.434538012 +0400
++++ b/src/process_pipeline.c	2026-10-16 10:37:23.037646217 +0400
+@@ -628,25 +628,35 @@
+         }
+ 
+         if (auto_balance) {
+-                float r = state_proc.stats.avg_r;
+-                float g = state_proc.stats.avg_g;
+-                float b = state_proc.stats.avg_b;
+-
+-                // Revert the current gains set on the preview
+-                r /= state_proc.red;
+-                b /= state_proc.blue;
++                float rgb[3] = {
++                        state_proc.stats.avg_r,
++                        state_proc.stats.avg_g,
++                        state_proc.stats.avg_b,
++                };
+ 
+                 float t = 2.0f;
+-                if (r < t && g < t && b < t) {
++                if (rgb[0] < t && rgb[1] < t && rgb[2] < t) {
+                         // Don't try to AWB on very dark frames
+                 } else {
+-                        // Calculate the new R/B gains based on the average color of
+-                        // the frame
+-                        float new_r = g / clamp_float(r, 1.0f, 999.0f);
+-                        float new_b = g / clamp_float(b, 1.0f, 999.0f);
+-
+-                        state_proc.red = clamp_float(new_r, 0.01f, 4.0f);
+-                        state_proc.blue = clamp_float(new_b, 0.01f, 4.0f);
++                        /*
++                         * Work out the frame's average colour as the sensor
++                         * saw it, and set the gains that make it grey. This
++                         * used to divide the processed averages by the gains,
++                         * which ignores the colour matrix and the gamma: near
++                         * the answer that converged, but from a big error,
++                         * such as a scene change, it overshot and swung for
++                         * several seconds, and a photo taken then kept
++                         * whatever gains it had reached.
++                         */
++                        float camera[3];
++                        gles2_debayer_unprocess(gles2_debayer, rgb, camera);
++                        if (camera[0] > 0.0f && camera[1] > 0.0f &&
++                            camera[2] > 0.0f) {
++                                state_proc.red = clamp_float(
++                                        camera[1] / camera[0], 0.01f, 4.0f);
++                                state_proc.blue = clamp_float(
++                                        camera[1] / camera[2], 0.01f, 4.0f);
++                        }
+                 }
+         }
+ 

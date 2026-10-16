@@ -166,6 +166,8 @@ from.
   fresh buffers must read all zero.
 - `sontime.c` times `VIDIOC_STREAMON`, the sensor's register writes included, and the
   first frame.
+- `dngneutral.py` runs on the host: the grey-world R/G and B/G of a full-size Megapixels
+  DNG, to check its AsShotNeutral against the raw data.
 - `sensor-reg.sh` reads or writes sensor registers over `/dev/i2c-3` during a stream
   (needs i2c-tools). Reading the sensor back is how exposure and gain were ruled out
   when the picture was black.

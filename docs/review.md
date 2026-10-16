@@ -170,7 +170,7 @@ aligned, and Megapixels' preview on the test pattern is unchanged across three p
 The 96-row shift seen earlier in two long raw runs was not reproduced on the test
 pattern and was most likely the scene moving under the profile comparison.
 
-### Follow-up: a crash and dark photos (r229-r232, Megapixels r9-r12)
+### Follow-up: a crash, dark and purple photos (r229-r232, Megapixels r9-r13)
 
 The next morning's first photo crashed Megapixels. The camera got one full-size buffer
 (`vmalloc_node_range for size 25825280 failed`): CMA is in highmem, and each buffer was
@@ -194,3 +194,10 @@ phone. ImageMagick's `-sharpen` and `-sigmoidal-contrast` are now an unsharp mas
 lookup table (Megapixels r9, 59 s to 35 s, 62 dB PSNR against the old JPEG), and the code
 scanner, which held a core for as long as the camera was open, rests a second between
 scans at density 2 (r12, 92% to 38%).
+
+A photo then came out purple with the preview right: the first auto white balance step
+after a photo sent both gains to the 4.0 limit, and the DNG could be written then.
+`photo-keeps-white-balance.patch` had kept the gains across the mode change but not
+given them back to the debayer, which resets them, and the step itself ignored the colour
+matrix and gamma, so it overshot. Megapixels r13 fixes both; the step now lands on the
+scene's gains in one move, and the next photo's neutral matched its raw data to 0.002.

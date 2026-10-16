@@ -7,7 +7,12 @@ the preview was right. Two things between them:
 - on_output_changed() reset the white balance gains and black level on
   every mode change, and taking a photo switches to the capture mode, so
   the burst was processed and saved with gains of 1. They belong to the
-  sensor and the scene: reset them only when the camera changes.
+  sensor and the scene: reset them only when the camera changes. The
+  debayer is configured afresh on a mode change, which sets its own gains
+  back to 1, so hand it the kept ones again. Without that, the first auto
+  white balance step after the switch measured a frame without them,
+  divided them out anyway and sent both gains to the 4.0 limit, and a
+  photo saved just then came out purple.
 - postprocess.sh ran dcraw_emu without -w, so the JPEG ignored the DNG's
   white balance anyway; its plain dcraw branch already had it.
 
@@ -15,8 +20,8 @@ The gains reach the DNG through libdng_set_neutral(), which needs
 recipe/libdng's fix to be written the right way round.
 
 ---
---- a/data/postprocess.sh	2026-10-12 23:48:20.413421847 +0400
-+++ b/data/postprocess.sh	2026-10-12 23:48:20.416628393 +0400
+--- a/data/postprocess.sh	2026-10-16 10:36:20.717559576 +0400
++++ b/data/postprocess.sh	2026-10-16 10:36:20.765978070 +0400
 @@ -50,11 +50,11 @@
  then
  	DCRAW=dcraw_emu
@@ -31,8 +36,8 @@ recipe/libdng's fix to be written the right way round.
  elif command -v "dcraw" > /dev/null
  then
  	DCRAW=dcraw
---- a/src/process_pipeline.c	2026-10-12 23:48:20.415066062 +0400
-+++ b/src/process_pipeline.c	2026-10-12 23:48:20.463501914 +0400
+--- a/src/process_pipeline.c	2026-10-16 10:36:20.757090316 +0400
++++ b/src/process_pipeline.c	2026-10-16 10:36:24.777635337 +0400
 @@ -1553,9 +1553,6 @@
                  gles2_debayer_use(gles2_debayer);
          }
@@ -43,7 +48,24 @@ recipe/libdng's fix to be written the right way round.
          gles2_debayer_configure(gles2_debayer,
                                  output_buffer_width,
                                  output_buffer_height,
-@@ -1641,6 +1638,16 @@
+@@ -1564,6 +1561,16 @@
+                                 state_proc.mode->rotation,
+                                 state_proc.mode->mirrored,
+                                 state_proc.calibration);
++
++        /*
++         * Configuring the debayer resets its gains to 1. Put back the ones
++         * kept across the mode change, or auto white balance measures a
++         * frame without them, takes them as applied, and overshoots.
++         */
++        gles2_debayer_set_shading(gles2_debayer,
++                                  state_proc.red,
++                                  state_proc.blue,
++                                  state_proc.blacklevel);
+ }
+ 
+ static int
+@@ -1641,6 +1648,16 @@
          state_proc.flash_enabled = new_state->flash_enabled;
  
          if (camera_changed) {

@@ -38,9 +38,9 @@ that makes mainline do the same.
     recipe/           the kernel APKBUILD and config exactly as built
     recipe/libcamera/ libcamera patches and the IMX200 tuning file
     recipe/mesa/      Mesa with the Adreno 330 fix for GTK4's GL renderer
-    recipe/megapixels/ Megapixels with its colour profile handling and preview mode
-                      choice fixed, photos developed one at a time and faster, and
-                      the code scanner throttled
+    recipe/megapixels/ Megapixels with its colour profile handling, white balance and
+                      preview mode choice fixed, photos developed one at a time and
+                      faster, and the code scanner throttled
     recipe/libmegapixels/ libmegapixels with frame rates through vertical blanking
                       and the config's black level
     recipe/libdng/    libdng with DNG white balance and black level written correctly

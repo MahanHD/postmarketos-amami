@@ -1531,6 +1531,24 @@ With all three a white wall comes out white under a warm room lamp. The brightes
 highlights still turn slightly pink, clipped pixels getting white balance gain (the same
 thing libcamera's `0005` fixed by clipping after white balance).
 
+**Purple photos from Megapixels' white balance (2026-10-16).** Photos came out purple
+with the preview right: the DNG's AsShotNeutral was 0.25, 1, 0.25, gains of 4.0 (the
+limit) on red and blue, where the raw data's own grey world gives 0.55, 1, 0.55. A
+logging build showed the preview settled at 1.84, and the first auto white balance step
+after a photo jumped to 4.0, 4.0 and then swung 0.99, 3.26, 1.21, 2.58 for about twenty
+steps. A photo whose DNG was written in that window kept the wrong gains. Two causes:
+
+- `photo-keeps-white-balance.patch` (2026-10-12) kept the gains across mode changes but
+  not in the debayer, whose configure step sets them back to 1. The first step after the
+  switch measured an unbalanced frame (37, 103, 40) and divided the kept gains out of
+  it anyway. The patch now hands the gains back to the debayer after configuring it.
+- The step itself estimated the camera's colour by dividing the processed averages by
+  the gains, ignoring the colour matrix and the gamma, so a large error overshot.
+  `awb-measure-in-camera-colours.patch` has the debayer undo its own processing (gamma,
+  inverse colour matrix, gains) and sets the gains that make the result grey: one step
+  from any start, 4.0 included (simulated, and on the phone from the unbalanced first
+  frame at start-up). It also fixes a typo in Megapixels' unused `invert_matrix()`.
+
 **Megapixels' exposure range (2026-10-08).** Megapixels runs each mode at the rate in
 its config and lets auto exposure go up to the exposure control's maximum, which the
 sensor driver keeps at the frame length. libmegapixels set the rate only through the

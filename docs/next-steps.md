@@ -9,7 +9,7 @@ The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 232, with the boot 
 from 230 (`uname -v` prints `#231`; only the imx200 module changed since). `0105` (kgsl's power-on fixup) stays parked (GPU
 item 2). There is no phone backup (`backups/README.md`). Userspace
 from this repo: libcamera r8 (`recipe/libcamera`), Mesa r4 (`recipe/mesa`), libdng r1,
-libmegapixels r2 and Megapixels r12 (`recipe/libdng`, `recipe/libmegapixels`,
+libmegapixels r2 and Megapixels r13 (`recipe/libdng`, `recipe/libmegapixels`,
 `recipe/megapixels`), with
 `userspace/megapixels/*` in `/usr/share/megapixels/config/`. The GPU runs behind its
 IOMMU since r204 (`0034`-`0036`); the display still uses the VRAM carveout, and so do all
@@ -120,9 +120,6 @@ Snapshot's cairo stopgap is gone.
    EINVAL). Seen once on r228 after a CCI timeout writing the lens position; the notes
    record the same after any failed or timed-out start. Recovery after a failed start is
    unwritten.
-9. **Megapixels' white balance** settled once on red 0.61, blue 0.25 (its lower limit)
-   for a whole session, and both photos in it came out purple; other sessions in the same
-   light give 0.85 and 0.40. Not reproduced or looked into yet.
 
 ## CPU above 1.5 GHz
 
