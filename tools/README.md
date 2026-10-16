@@ -227,6 +227,13 @@ is the control. It turns a recovery test into minutes instead of waiting for rea
 To force the GPU to come back without a power collapse, as it did before `0111`, pin the
 SMMU on: `echo on > /sys/bus/platform/devices/fdb10000.iommu/power/control`.
 
+`hotplug-stress.sh [cycles]` takes cores 1-3 offline and back in turn, 60 cycles by
+default, and logs every failure to `~/hotplug-stress.log` with a `sync` after each
+cycle, so a SoC reset leaves the log behind. Run it after any change to
+`arch/arm/mach-qcom/platsmp.c`, with `sudo systemd-run ~/hotplug-stress.sh 60`, and
+check `dmesg` for "no SPM found": boot checks alone passed on a kernel where every
+core parked in WFI and none came back.
+
 `cpu-load-check.sh [minutes]` loads every Krait core with a pinned worker that hashes the
 same data again and again and compares each sum with a reference; a wrong sum is what an
 undervolted core gives. Every 10 s it logs each core's clock and the CPU temperatures to
