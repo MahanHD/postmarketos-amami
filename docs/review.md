@@ -9,7 +9,7 @@ compares it with stock where that applies, fixes what it finds and records it he
 | 1 | GPU and GPU memory (`0089`, `0105`-`0114`, `debug/9021`) | done, r220 |
 | 2 | Camera stack: imx200 driver, camss patches, `recipe/libcamera`, `recipe/libdng`, `recipe/libmegapixels`, `recipe/megapixels`, `userspace/megapixels` | done, r226 |
 | 3 | amami and msm8974 device tree: CPU rail and OPPs, regulators, the DT patches | done, r235 |
-| 4 | The other kernel patches, by subsystem: display, sensors, charging, CPU hotplug, WiFi/BT, audio | to do |
+| 4 | The other kernel patches, by subsystem: display, sensors, charging, CPU hotplug, WiFi/BT, audio | done but audio (parked), r239 |
 | 5 | Tools, recipes and docs: stale or contradicting text, tools nobody uses | patches and docs cleaned 2026-10-16 (worklog, "Cleanup"); tools to do |
 
 ## Pass 1: GPU and GPU memory
@@ -248,4 +248,59 @@ it stayed warm, as the hysteresis says. The way back to normal (below 43C) was n
 seen: this room keeps the idle battery near 43.7C. r235 rounds the recharge threshold
 to its 20 mV grid itself (r234 logged the rounding) and stays quiet about the ADC
 for the first polls after boot, when it has not probed yet.
+
+## Pass 4: the other kernel patches
+
+Two `/code-review` (medium) runs: 4A over the panel, charger and battery, sensor,
+WiFi, backlight and MDP patches plus `0119`; 4B over the SoC core (HFPLL data, CPU
+hotplug, SPM and MPM, the GPU's arm-smmu patches pass 1 did not read, OCMEM). The
+audio patches (`0049`-`0067`, over 10,000 lines) are parked work and were left out.
+Eighteen candidates:
+
+| # | Finding | Verdict | Done |
+|---|---|---|---|
+| A1 | `0119`: the derating work can outlive a failed probe | real | device-managed work |
+| A2 | `0119`: `pm_stay_awake()` does not stop a plain write to `/sys/power/state` | real, and the patch claimed it did | derate while unwatched (suspend, before the first reading) instead of a wakeup source |
+| A3 | `0119`: derating configured without a `batt-therm` channel silently never applies | real | the channel is required, and the zone starts unknown (derated) |
+| A4 | `0119`: the recharge threshold came from the unclamped request | real | userspace limits capped at the safe values first |
+| A5 | `0069`: the battery thermistor read in absolute mode, the table is ratiometric | real; stock: `calibration-type = "ratiometric"` | `qcom,ratiometric` in `0071`; driver and hand calculation now agree to 0.01C |
+| A6 | `0119`: two charger interrupts can race start against stop | real | the IRQs only kick the work, which checks for a charger itself |
+| A7 | `0003`: one failed panel ID read fixes the fallback init until reboot | real | only a real read is kept |
+| A8 | `0003`: a failed prepare leaves the enable GPIO high | real | dropped on that path |
+| A9 | `0048`: the light device's sampling rate writes proximity's; its pointer is published before registration | real | both fixed |
+| A10 | `0006` is unreachable since `0010` | real | `0006` dropped |
+| B1 | `0080`: the parked flag plus 100 us is not proof the core is off; a live core can be reset | real | wait on the ACC power status (stock's `cpu-sleep-status`, bit 19), checked on the phone: 1 offline, 0 running |
+| B2 | `0081`: a failed release loses the core for good | real | handshake restored on failure |
+| B3 | `0079`: the warm boot address came from cpuidle | real | registered by hotplug itself |
+| B4 | `0079`: the SPM lookup ran on the dying core and leaked a reference | real | looked up in a CPU hotplug teardown callback on the outgoing core |
+| B5 | `0081`: `smp_wmb()` before MMIO | real | `wmb()` |
+| B6 | `0080` changed re-online for other qcom SoCs | real | the handshake only for cores that went down by collapse |
+| B7 | `0036` aligns to 64K/1M everywhere | valid by design here (the GPU maps the carveout through its SMMU) | upstreaming list |
+| B8 | `0035` writes S2CR MemAttr without MTCFG, which the SMMU ignores | real, dead config, as downstream | dropped; S2CR 0xca001 to 0xc0001, GPU unchanged |
+
+B4 took two attempts. The first looked the SPM up at `late_initcall_sync` and found
+nothing (the SPM and SCM drivers had not probed yet); r236's boot checks passed, and
+only a 60-cycle hotplug stress run showed every core parking in WFI and never coming
+back. r237 does the lookup at offline time: 180 offlines, all by collapse, 180
+returns, no failures.
+
+Testing r238 found one more, not from the review: on some boots there were no sensors
+at all. `qcom_smgr` probe gave up when the DSP refused the accelerometer (0x701) or
+timed out, and only a lucky re-probe recovered it. A retry loop inside probe (r238)
+made it worse, three boots of four without sensors: the DSP's registry requests
+arrived the moment the loop gave up, so waiting in probe held them up. `0121`
+enumerates from a work item instead. That exposed the real pattern: in 14 of 15
+boots the sensors came up exactly when the ADSP had crashed ("Exception detected")
+and restarted. The first ADSP run is bad on every boot: it faults, or it runs on
+without bringing the sensors up. It is not the registry being late: a test patch
+loading the registry driver before the DSP (r240) had it serving first in six boots
+of six and changed nothing, so it was dropped. Open, in `next-steps.md`.
+
+Three boots of 25 in the journal logged `oxili_gfx3d_clk status stuck at 'off'` and
+then a disable of an already disabled clock, at the GPU's first power-up (4 s and
+24 s); the GPU works afterwards. All three were on r239 or later and none of 11 boots
+before, but the only change in r239 (`0121`) runs at about 30 s, after it, and 3 of
+14 against 0 of 11 is not a difference yet. Open, in `next-steps.md`.
+
+The audio patches remain unreviewed until audio resumes.
 

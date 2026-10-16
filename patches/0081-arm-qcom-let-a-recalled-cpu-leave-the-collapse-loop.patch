@@ -1,8 +1,8 @@
 --- a/arch/arm/mach-qcom/platsmp.c
 +++ b/arch/arm/mach-qcom/platsmp.c
-@@ -55,6 +55,13 @@
-  */
- static DEFINE_PER_CPU(bool, qcom_cpu_parked);
+@@ -63,6 +63,13 @@
+ #define ACC_CPU_PWR_STS			0x08
+ #define ACC_CPU_PWR_STS_COLLAPSED	BIT(19)
  
 +/*
 + * Set by qcom_boot_secondary() to tell a core that is cycling through collapse
@@ -14,7 +14,7 @@
  #ifdef CONFIG_HOTPLUG_CPU
  static DEFINE_PER_CPU(struct spm_driver_data *, qcom_cpu_spm);
  
-@@ -136,6 +143,13 @@
+@@ -213,6 +220,13 @@
  	else
  		pr_warn("CPU%u: no SPM found, parking in WFI instead\n", cpu);
  
@@ -28,7 +28,7 @@
  	for (;;) {
  		if (drv) {
  			spm_set_low_power_mode(drv, PM_SLEEP_MODE_SPC);
-@@ -150,12 +164,27 @@
+@@ -227,12 +241,27 @@
  			cpu_suspend(0, qcom_pm_collapse);
  			WRITE_ONCE(per_cpu(qcom_cpu_parked, cpu), false);
  			/*
@@ -37,14 +37,14 @@
 -			 * Put the SPM back to standby - a mode left armed turns
 -			 * an unrelated WFI into a power collapse - and retry.
 +			 * Still here, so we were brought back in through the
-+			 * warm boot address the SPM cpuidle driver registered,
++			 * warm boot address qcom_cpu_offline_prepare() registered,
 +			 * which lands inside cpu_suspend() rather than at the
 +			 * cold entry point. Put the SPM back to standby - a
 +			 * mode left armed turns an unrelated WFI into a power
 +			 * collapse.
  			 */
  			spm_set_low_power_mode(drv, PM_SLEEP_MODE_STBY);
-+			pr_info("CPU%u: back from collapse, wanted=%d\n", cpu,
++			pr_debug("CPU%u: back from collapse, wanted=%d\n", cpu,
 +				READ_ONCE(per_cpu(qcom_cpu_wanted, cpu)));
 +			/*
 +			 * If an online brought us back, return: there is no
@@ -60,13 +60,22 @@
  		} else {
  			wfi();
  		}
-@@ -466,6 +495,9 @@
- 		 */
+@@ -550,9 +579,18 @@
  		if (!qcom_cpu_wait_parked(cpu))
  			return -EBUSY;
-+
-+		WRITE_ONCE(per_cpu(qcom_cpu_wanted, cpu), true);
-+		smp_wmb();
- 	}
  
- 	ret = func(cpu);
++		/*
++		 * Tell the core it is wanted before the release powers it up.
++		 * The release is MMIO, so a full barrier: smp_wmb() does not
++		 * order a normal store against device writes.
++		 */
++		WRITE_ONCE(per_cpu(qcom_cpu_wanted, cpu), true);
++		wmb();
++
+ 		ret = func(cpu);
+ 		if (ret) {
+ 			/* still down: leave the handshake as the core left it */
++			WRITE_ONCE(per_cpu(qcom_cpu_wanted, cpu), false);
+ 			WRITE_ONCE(per_cpu(qcom_cpu_parked, cpu), true);
+ 			return ret;
+ 		}

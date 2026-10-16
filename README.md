@@ -21,7 +21,7 @@ that makes mainline do the same.
 | WiFi, Bluetooth | Work, with factory MAC addresses |
 | USB networking, SSH | Work |
 | Charging, battery percentage and temperature | Work |
-| Sensors | Accelerometer, gyroscope, magnetometer, proximity and light all work |
+| Sensors | Accelerometer, gyroscope, magnetometer, proximity and light all work, on most boots: on some the DSP never brings them up (open) |
 | Notification LED, vibrator | Work |
 | CPU frequency scaling (300-1497.6 MHz) and thermal throttling | Works |
 | GPU frequency scaling and throttling | Works |
@@ -95,9 +95,10 @@ with a known way back is in `patches/parked/`, and diagnostic patches are in
 
 **WiFi**
 
-- `0006`, `0009` and `0010` fix wcn36xx scanning on this firmware: a message it
-  does not implement, an enum padding value sent as the scan type, and an offloaded
-  scan used without the capability bit that describes it.
+- `0009` and `0010` fix wcn36xx scanning on this firmware: an enum padding value
+  sent as the scan type, and an offloaded scan used without the capability bit that
+  describes it (which also keeps the driver from a message this firmware does not
+  implement).
 - `0008` corrects the WCNSS interrupt type, which is what stopped the driver ever
   being reloaded.
 
@@ -123,7 +124,8 @@ with a known way back is in `patches/parked/`, and diagnostic patches are in
   unit's cores from 960 MHz to 1497.6 MHz, the highest rate that voltage covers; each
   unit gets as far as 900mV covers for its bin.
 - `0079`-`0081` make CPU hotplug work: the dying core collapses properly, is
-  released again on the way back, and is allowed to leave the collapse loop.
+  released again on the way back once its ACC says it is off, and is allowed to
+  leave the collapse loop.
 - `0072`-`0076` are the L2 SAW, the MPM wakeup controller and its routing. They
   are what deep suspend needs; the suspend ops themselves (`0077`, `0082`-`0084`)
   are parked, because deep suspend measured no better than s2idle.
@@ -134,7 +136,8 @@ with a known way back is in `patches/parked/`, and diagnostic patches are in
   accelerometer.
 - `0028`, `0045`, `0047` and `0048` fix the sensor manager: duplicate sensor IDs,
   sample rates for every data type, a second subscription that proximity needs to
-  report anything, and ambient light as its own device.
+  report anything, and ambient light as its own device. `0121` enumerates the sensors
+  from a work item, retrying while the DSP brings them up.
 - `0029` fixes an `ocmem` bit-number/bitmask mix-up.
 
 **GPU memory**

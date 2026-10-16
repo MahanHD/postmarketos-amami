@@ -5,8 +5,8 @@ Where the port stands and what comes next, in order. The settled findings are in
 
 ## Current state (2026-10-16)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 235 (`uname -v` prints
-`#236`), with boot image 235. The recipe applies exactly the patches in `patches/`; work
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 241 (`uname -v` prints
+`#242`), with boot image 241. The recipe applies exactly the patches in `patches/`; work
 out of the build with a way back is in `patches/parked/`, diagnostics in
 `patches/debug/`. There is no phone backup (`backups/README.md`).
 
@@ -21,7 +21,7 @@ in Megapixels needs nearly all of 192 MB. `devcore-collect` (`tools/`) runs from
 and saves any GPU hang dump; none but deliberately injected ones since the fixes.
 
 Working: display, touch, GPU (GTK4's GL renderer included), WiFi, Bluetooth, charging
-with stock's temperature derating (`0119`) and battery reporting, all sensors, the notification LED, CPU frequency scaling to
+with stock's temperature derating (`0119`) and battery reporting, all sensors (on most boots, item 1), the notification LED, CPU frequency scaling to
 1497.6 MHz and GPU frequency scaling with thermal limits, CPU hotplug, suspend
 (s2idle), and the rear camera in GNOME Snapshot and Megapixels with correct colour.
 
@@ -40,19 +40,30 @@ while the real fix is under way. And start from the other firmwares, above all s
 reverse engineer them, then use what they yield, combine it, and improve on it where we
 can.
 
-## 1. Review passes 4 and 5
+## 1. Sensors missing on some boots
 
-`review.md` holds a pass-by-pass review of the whole port. Passes 1 (GPU), 2 (camera)
-and 3 (device tree) are done, and the 2026-10-16 cleanup did the patches-and-docs half
-of pass 5. Next is pass 4, the remaining kernel patches by subsystem, then the tools.
-Pass 3 left a list for upstreaming, not for this phone: shared-dtsi changes that need
-other boards' configs or voltages (MPM routing, the unvolted OPPs, the GPU SMMU) and
-bindings for the new compatibles and properties.
+The ADSP's first run is bad on every boot: it raises an exception, and after the
+automatic restart the sensors come up (most boots), or it runs on and never brings
+them up (no sensor devices that boot, about one in four to six). The registry being
+late is ruled out (`review.md`, pass 4). Next: compare stock's ADSP bring-up (PIL, its
+reset and the state the bootloader leaves) with `qcom_q6v5_pas`'s first start. A
+stopgap, if needed meanwhile, is restarting the ADSP when the sensors do not
+enumerate, labelled as one.
+
+## 2. Review pass 5
+
+`review.md` holds a pass-by-pass review of the whole port. Passes 1 (GPU), 2 (camera),
+3 (device tree) and 4 (the other kernel patches, audio aside) are done, and the
+2026-10-16 cleanup did the patches-and-docs half of pass 5; the tools remain.
+Passes 3 and 4 left a list for upstreaming, not for this phone: shared-dtsi changes
+that need other boards' configs or voltages (MPM routing, the unvolted OPPs, the GPU
+SMMU), `0036`'s page alignment derived from the domain instead of fixed, and bindings
+for the new compatibles and properties.
 
 The charger's return from warm to normal derating (below 43C) has not been seen on the
 phone yet, only the switch to warm; `dmesg` logs "normal charging" when it happens.
 
-## 2. Camera, rear (IMX200)
+## 3. Camera, rear (IMX200)
 
 1. **A failed stream start wedges camss** until reboot (every later start returns
    EINVAL). Seen after a CCI timeout writing the lens position; the notes record the
@@ -84,7 +95,7 @@ phone yet, only the switch to warm; `dmesg` logs "normal charging" when it happe
    EEPROM's remaining bytes and stock's `exposure_ctrl.dat` may hold better starting
    points.
 
-## 3. CPU above 1.5 GHz
+## 4. CPU above 1.5 GHz
 
 `0112` runs the cores to 1497.6 MHz: VDD_APC (pm8841 s5, SID 5) sits at 900 mV, which
 covers this bin's PVS voltage up to 1497.6 MHz (895 mV). The chip is rated to 2150.4
@@ -96,7 +107,7 @@ Then widen s5's constraints and add the OPPs above 1497.6 MHz. Thermal already
 throttles four loaded cores at 1.5 GHz near 75 C, so sustained gains are modest;
 single-thread bursts gain most.
 
-## 4. GPU
+## 5. GPU
 
 1. kgsl escalates to a full stop and start when a soft reset fails; drm does not. No
    case of it has been seen, and `devcore-collect` would catch one.
@@ -105,8 +116,11 @@ single-thread bursts gain most.
 3. `0105` (kgsl's power-on fixup) is parked; retry it on top of `0111` only if shader
    corruption after a power-on shows up.
 4. Offer the Mesa fix upstream once the port is clean.
+5. `oxili_gfx3d_clk status stuck at 'off'` at the GPU's first power-up, then a
+   disable of an already disabled clock: 3 boots of 25 (`review.md`, pass 4). The GPU
+   works afterwards. Count it over more boots before chasing it.
 
-## 5. Camera, front (IMX132)
+## 6. Camera, front (IMX132)
 
 Same method as the rear: its stock file is `SEM02BN1_IMX132.dat`. Its CCS limits are
 broken (PLL op minimum above maximum), so it needs a quirk of its own first; the CCS

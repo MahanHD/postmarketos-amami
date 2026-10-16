@@ -16,11 +16,16 @@ Add both:
   each edge of the BTC window on its own. qcom,jeita-extended-temp-range
   moves both, and the extended cold edge allows charging below freezing.
 - qcom,warm-/cool-battery-decidegc and the warm and cool current and
-  voltage limits derate from the battery thermistor, polled every 30 s
-  while a charger is connected. The recharge threshold follows the
-  voltage limit, keeping the configured margin. There is no wake-capable
-  temperature monitor for this PMIC in mainline, so the poll keeps the
-  system awake while a charger is connected.
+  voltage limits derate from the battery thermistor (a "batt-therm"
+  io-channel, now required for it), polled every 30 s while a charger is
+  connected. The recharge threshold follows the voltage limit, keeping
+  the configured margin, on its 20 mV grid.
+
+Nothing here can wake the system to take a reading, so while the
+temperature is unwatched, before the first reading and across suspend,
+charging uses the lower of the warm and cool limits, which is safe
+anywhere inside the window. A limit set from userspace is capped at the
+safe value before the threshold is derived from it.
 
 ---
 --- a/Documentation/devicetree/bindings/power/supply/qcom,pm8941-charger.yaml
@@ -77,17 +82,25 @@ Add both:
      minimum: 100000
 --- a/drivers/power/supply/qcom_smbb.c
 +++ b/drivers/power/supply/qcom_smbb.c
-@@ -26,7 +26,9 @@
+@@ -16,6 +16,7 @@
+  *  - HF-Buck
+  */
+ 
++#include <linux/devm-helpers.h>
+ #include <linux/errno.h>
+ #include <linux/iio/consumer.h>
+ #include <linux/interrupt.h>
+@@ -26,7 +27,9 @@
  #include <linux/platform_device.h>
  #include <linux/power_supply.h>
  #include <linux/regmap.h>
-+#include <linux/pm_wakeup.h>
++#include <linux/pm.h>
  #include <linux/slab.h>
 +#include <linux/workqueue.h>
  #include <linux/extcon-provider.h>
  #include <linux/regulator/driver.h>
  
-@@ -132,6 +134,22 @@
+@@ -132,6 +135,23 @@
  	struct mutex btherm_lock;
  	struct iio_channel *btherm;
  	struct power_supply_battery_info *batt_info;
@@ -101,7 +114,8 @@ Add both:
 +		SMBB_TEMP_NORMAL,
 +		SMBB_TEMP_WARM,
 +		SMBB_TEMP_COOL,
-+	} temp_zone;
++		SMBB_TEMP_UNKNOWN,
++	} temp_zone, known_zone;
 +	int warm_decidegc;
 +	int cool_decidegc;
 +	unsigned int norm_imax, norm_vmax, vdet_margin;
@@ -110,7 +124,7 @@ Add both:
  };
  
  static const unsigned int smbb_usb_extcon_cable[] = {
-@@ -380,6 +398,197 @@
+@@ -380,6 +400,223 @@
  	dev_dbg(chg->dev, "status = %03lx\n", chg->status);
  }
  
@@ -122,29 +136,36 @@ Add both:
 + * and a cool temperature, with 2 C of hysteresis. This does the same from the
 + * battery thermistor, every 30 s while a charger is connected.
 + *
++ * Whenever the temperature is not being watched, before the first reading
++ * and while the system is suspended (nothing here can wake it to take one),
++ * charging uses the lower of the warm and cool limits, which is safe anywhere
++ * inside the window.
++ *
 + * The recharge threshold moves with the voltage limit, keeping the margin the
 + * board configured between them, so a lower limit does not leave the
 + * threshold at or above it and the charger cycling.
 + *
-+ * There is no wake-capable temperature monitor for this PMIC in mainline, so
-+ * the poll keeps the system awake while a charger is connected; otherwise a
-+ * battery warming up in suspend would go on charging at full current.
++ * The work is freezable, so a charger interrupt late in suspend cannot run it
++ * after the suspend callback has derated.
 + */
 +#define SMBB_JEITA_PERIOD	msecs_to_jiffies(30000)
 +#define SMBB_JEITA_HYST_DECIDEGC	20
 +
 +static int smbb_battery_temp(struct smbb_charger *chg, int *decidegc);
 +
++/* Called with jeita_lock held */
 +static void smbb_jeita_apply(struct smbb_charger *chg)
 +{
++	enum smbb_temp_zone zone = chg->temp_zone;
 +	unsigned int imax = chg->norm_imax;
 +	unsigned int vmax = chg->norm_vmax;
 +	unsigned int vdet;
 +
-+	if (chg->temp_zone == SMBB_TEMP_WARM) {
++	if (zone == SMBB_TEMP_WARM || zone == SMBB_TEMP_UNKNOWN) {
 +		imax = min(imax, chg->warm_imax);
 +		vmax = min(vmax, chg->warm_vmax);
-+	} else if (chg->temp_zone == SMBB_TEMP_COOL) {
++	}
++	if (zone == SMBB_TEMP_COOL || zone == SMBB_TEMP_UNKNOWN) {
 +		imax = min(imax, chg->cool_imax);
 +		vmax = min(vmax, chg->cool_vmax);
 +	}
@@ -164,9 +185,10 @@ Add both:
 +	smbb_charger_attr_write(chg, ATTR_BAT_IMAX, imax);
 +}
 +
++/* The zone for a reading, with hysteresis from the last one */
 +static enum smbb_temp_zone smbb_jeita_zone(struct smbb_charger *chg, int temp)
 +{
-+	switch (chg->temp_zone) {
++	switch (chg->known_zone) {
 +	case SMBB_TEMP_WARM:
 +		if (temp >= chg->warm_decidegc - SMBB_JEITA_HYST_DECIDEGC)
 +			return SMBB_TEMP_WARM;
@@ -194,6 +216,10 @@ Add both:
 +	enum smbb_temp_zone zone;
 +	int temp, rc;
 +
++	/* Nothing to watch without a charger; plugging one in restarts this */
++	if (!(READ_ONCE(chg->status) & (STATUS_USBIN_VALID | STATUS_DCIN_VALID)))
++		return;
++
 +	rc = smbb_battery_temp(chg, &temp);
 +	if (rc) {
 +		/*
@@ -207,21 +233,25 @@ Add both:
 +	} else {
 +		mutex_lock(&chg->jeita_lock);
 +		zone = smbb_jeita_zone(chg, temp);
++		if (zone != chg->known_zone)
++			dev_info(chg->dev, "battery at %d.%d C: %s charging\n",
++				 temp / 10, abs(temp % 10), names[zone]);
++		chg->known_zone = zone;
 +		if (zone != chg->temp_zone) {
 +			chg->temp_zone = zone;
 +			smbb_jeita_apply(chg);
-+			dev_info(chg->dev, "battery at %d.%d C: %s charging\n",
-+				 temp / 10, abs(temp % 10), names[zone]);
 +		}
 +		mutex_unlock(&chg->jeita_lock);
 +	}
 +
-+	schedule_delayed_work(&chg->jeita_work, SMBB_JEITA_PERIOD);
++	queue_delayed_work(system_freezable_wq, &chg->jeita_work,
++			   SMBB_JEITA_PERIOD);
 +}
 +
 +/*
-+ * A limit set from userspace becomes the normal one; the derated limits
-+ * still cap it while the battery is warm or cool.
++ * A limit set from userspace becomes the normal one, capped at the safe
++ * value the hardware would clamp it to; the derated limits still cap it
++ * while the battery is warm, cool or unwatched.
 + */
 +static int smbb_jeita_set_limit(struct smbb_charger *chg,
 +				enum smbb_attr which, unsigned int val)
@@ -230,45 +260,46 @@ Add both:
 +
 +	if (val < prop->min || val > prop->max)
 +		return -EINVAL;
-+	if (which == ATTR_BAT_VMAX &&
-+	    val < smbb_charger_attrs[ATTR_CHG_VDET].min + chg->vdet_margin)
-+		return -EINVAL;
 +
 +	mutex_lock(&chg->jeita_lock);
-+	if (which == ATTR_BAT_IMAX)
-+		chg->norm_imax = val;
-+	else
++	if (which == ATTR_BAT_IMAX) {
++		chg->norm_imax = min(val, chg->attr[ATTR_BAT_ISAFE]);
++	} else {
++		val = min(val, chg->attr[ATTR_BAT_VSAFE]);
++		if (val < smbb_charger_attrs[ATTR_CHG_VDET].min + chg->vdet_margin) {
++			mutex_unlock(&chg->jeita_lock);
++			return -EINVAL;
++		}
 +		chg->norm_vmax = val;
++	}
 +	smbb_jeita_apply(chg);
 +	mutex_unlock(&chg->jeita_lock);
 +
 +	return 0;
 +}
 +
-+/* Poll while a charger is connected, and only then */
++/* A charger came or went: look again now */
 +static void smbb_jeita_update(struct smbb_charger *chg)
 +{
-+	if (!chg->jeita)
-+		return;
-+
-+	if (chg->status & (STATUS_USBIN_VALID | STATUS_DCIN_VALID)) {
-+		pm_stay_awake(chg->dev);
-+		mod_delayed_work(system_wq, &chg->jeita_work, 0);
-+	} else {
-+		cancel_delayed_work_sync(&chg->jeita_work);
-+		pm_relax(chg->dev);
-+	}
++	if (chg->jeita)
++		mod_delayed_work(system_freezable_wq, &chg->jeita_work, 0);
 +}
 +
 +static int smbb_jeita_parse(struct smbb_charger *chg)
 +{
 +	struct device_node *np = chg->dev->of_node;
++	int rc;
 +
 +	if (of_property_read_s32(np, "qcom,warm-battery-decidegc",
 +				 &chg->warm_decidegc) ||
 +	    of_property_read_s32(np, "qcom,cool-battery-decidegc",
 +				 &chg->cool_decidegc))
 +		return 0;
++
++	if (of_property_match_string(np, "io-channel-names", "batt-therm") < 0) {
++		dev_err(chg->dev, "derating needs a batt-therm io-channel\n");
++		return -EINVAL;
++	}
 +
 +	if (chg->warm_decidegc - chg->cool_decidegc <
 +	    2 * SMBB_JEITA_HYST_DECIDEGC) {
@@ -298,17 +329,26 @@ Add both:
 +	}
 +
 +	mutex_init(&chg->jeita_lock);
-+	INIT_DELAYED_WORK(&chg->jeita_work, smbb_jeita_work);
-+	chg->temp_zone = SMBB_TEMP_NORMAL;
++	rc = devm_delayed_work_autocancel(chg->dev, &chg->jeita_work,
++					  smbb_jeita_work);
++	if (rc)
++		return rc;
++
++	/* Unwatched until the first reading */
++	chg->known_zone = SMBB_TEMP_NORMAL;
++	chg->temp_zone = SMBB_TEMP_UNKNOWN;
++	mutex_lock(&chg->jeita_lock);
++	smbb_jeita_apply(chg);
++	mutex_unlock(&chg->jeita_lock);
 +	chg->jeita = true;
 +
-+	return devm_device_init_wakeup(chg->dev);
++	return 0;
 +}
 +
  static irqreturn_t smbb_usb_valid_handler(int irq, void *_data)
  {
  	struct smbb_charger *chg = _data;
-@@ -387,6 +596,7 @@
+@@ -387,6 +624,7 @@
  	smbb_set_line_flag(chg, irq, STATUS_USBIN_VALID);
  	extcon_set_state_sync(chg->edev, EXTCON_USB,
  				chg->status & STATUS_USBIN_VALID);
@@ -316,7 +356,7 @@ Add both:
  	power_supply_changed(chg->usb_psy);
  
  	return IRQ_HANDLED;
-@@ -397,6 +607,7 @@
+@@ -397,6 +635,7 @@
  	struct smbb_charger *chg = _data;
  
  	smbb_set_line_flag(chg, irq, STATUS_DCIN_VALID);
@@ -324,7 +364,7 @@ Add both:
  	if (!chg->dc_disabled)
  		power_supply_changed(chg->dc_psy);
  
-@@ -794,10 +1005,16 @@
+@@ -794,10 +1033,16 @@
  
  	switch (psp) {
  	case POWER_SUPPLY_PROP_CURRENT_MAX:
@@ -343,7 +383,7 @@ Add both:
  		break;
  	default:
  		rc = -EINVAL;
-@@ -966,6 +1183,7 @@
+@@ -966,6 +1211,7 @@
  	struct power_supply_config dc_cfg = {};
  	struct smbb_charger *chg;
  	struct regulator_config config = { };
@@ -351,7 +391,7 @@ Add both:
  	int rc, i;
  
  	chg = devm_kzalloc(&pdev->dev, sizeof(*chg), GFP_KERNEL);
-@@ -1012,6 +1230,10 @@
+@@ -1012,6 +1258,10 @@
  		}
  	}
  
@@ -362,7 +402,7 @@ Add both:
  	bat_cfg.drv_data = chg;
  	bat_cfg.fwnode = dev_fwnode(&pdev->dev);
  	chg->bat_psy = devm_power_supply_register(&pdev->dev,
-@@ -1103,16 +1325,31 @@
+@@ -1103,16 +1353,31 @@
  	chg->jeita_ext_temp = of_property_read_bool(pdev->dev.of_node,
  			"qcom,jeita-extended-temp-range");
  
@@ -400,13 +440,47 @@ Add both:
  		return rc;
  	}
  
-@@ -1142,6 +1379,9 @@
- 
- 	chg = platform_get_drvdata(pdev);
- 
-+	if (chg->jeita)
-+		cancel_delayed_work_sync(&chg->jeita_work);
-+
+@@ -1145,6 +1410,35 @@
  	regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL, CTRL_EN, 0);
  }
  
++/* Unwatched while suspended: derate before, look again after */
++static int smbb_charger_suspend(struct device *dev)
++{
++	struct smbb_charger *chg = dev_get_drvdata(dev);
++
++	if (!chg->jeita)
++		return 0;
++
++	cancel_delayed_work_sync(&chg->jeita_work);
++	mutex_lock(&chg->jeita_lock);
++	chg->temp_zone = SMBB_TEMP_UNKNOWN;
++	smbb_jeita_apply(chg);
++	mutex_unlock(&chg->jeita_lock);
++
++	return 0;
++}
++
++static int smbb_charger_resume(struct device *dev)
++{
++	struct smbb_charger *chg = dev_get_drvdata(dev);
++
++	smbb_jeita_update(chg);
++
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(smbb_charger_pm_ops,
++				smbb_charger_suspend, smbb_charger_resume);
++
+ static const struct of_device_id smbb_charger_id_table[] = {
+ 	{ .compatible = "qcom,pm8226-charger" },
+ 	{ .compatible = "qcom,pm8941-charger" },
+@@ -1158,6 +1452,7 @@
+ 	.driver = {
+ 		.name = "qcom-smbb",
+ 		.of_match_table = smbb_charger_id_table,
++		.pm = pm_sleep_ptr(&smbb_charger_pm_ops),
+ 	},
+ };
+ module_platform_driver(smbb_charger_driver);

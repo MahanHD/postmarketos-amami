@@ -4087,6 +4087,40 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
 - Self-inflicted: `grep` over the whole `regmap/0-00/registers` produced 38 SPMI
   "transaction failed" warnings; seek single registers (`dd bs=9 skip=R`).
 
+### Review pass 4, kernel patches, 2026-10-16
+
+- Two `/code-review` medium runs (4A peripherals plus `0119`, 4B SoC core), 18
+  candidates; audio (`0049`-`0067`) left out as parked. Table in `review.md`.
+- `0119` rewritten: `pm_stay_awake()` does not block a plain `echo mem`
+  (`pm_wakeup_pending()` checks only with `events_check_enabled`), so the wakeup
+  source went; the zone starts unknown and is set unknown in the suspend callback,
+  both derated; freezable, device-managed work; IRQs only kick it; batt-therm
+  required; userspace limits capped at VSAFE/ISAFE. With dyndbg on `qcom_smbb.c`, an
+  `rtcwake -m freeze -s 10` showed threshold 4.04 V, VMAX 4.2 V, IMAX 650 mA on the way
+  down and 4.35 V, 4.2 V, 1.3 A back after a reading.
+- BAT_THERM ratiometric (`0071`, stock `calibration-type = "ratiometric"`): ratio
+  0.3384 = 609.1 mV, 42.08C by hand and from the driver.
+- Hotplug (`0079`-`0081`): ACC `+0x08` bit 19 read through `/dev/mem`: 1 on idle and
+  offline cores, 0 on the running one; offlined cpu3 three reads of 1, back online 0.
+  r236 looked SPM and SCM up at `late_initcall_sync`: nothing found, every core parked
+  in WFI, 180 of 180 onlines failed in the stress run (`~/hotplug-stress.sh 60`) and the
+  phone ran on one core. r237 looks up in a CPUHP_AP_ONLINE_DYN teardown: 180 collapses,
+  180 returns, 0 failures.
+- `0035` S2CR read with glxgears running: 0x000c0001 (was 0x000ca001). glxgears 60
+  fps, FD330. `0006` dropped (unreachable since `0010`); scan still finds 6 networks.
+  `0003` (panel ID only kept when read; enable low on a failed prepare) and `0048`
+  (light rate on its own data type; pointer after registration) not exercised by
+  failure on the phone; the panel comes up as before.
+- Sensors: r237 boot without any (`qcom_smgr` probe -EREMOTEIO, 0x701 for ID 0x00).
+  r238 retried in probe: 1 boot of 4 with sensors. Registry requests came at 41.8 s,
+  right after the loop gave up at 41.75 s. r239 (`0121`, work item): 3 of 4; a
+  rebind on a failed boot did not help within 20 s. Journal over 15 boots: sensors
+  exactly when "crash detected in adsp" (one exception, r238's own bug). r240 tested
+  `request_module()` of the registry in `sns_reg_prepare()`: registry ready
+  0.4-0.6 s before the ADSP in 6 of 6 boots, ADSP still crashed in 5, the sixth had
+  no sensors; dropped (r241). Open.
+- `qcom_smgr_probe` builds with a 1392-byte stack frame warning; pre-existing.
+
 ## Parked patches
 
 Moved to `patches/parked/README.md` in the 2026-10-16 cleanup, which also deleted

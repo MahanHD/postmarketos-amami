@@ -1,6 +1,25 @@
---- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-16 12:30:27.743345627 +0400
-+++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts	2026-10-16 12:30:29.983261305 +0400
-@@ -354,8 +354,15 @@
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -330,6 +330,18 @@
+ 	};
+ };
+ 
++&pm8941_vadc {
++	/*
++	 * The battery thermistor divider runs off the VADC's own reference,
++	 * so read it as a fraction of that, as downstream does
++	 * (qcom,calibration-type = "ratiometric"): its table is on that
++	 * scale, and an absolute reading shifts it by the reference's error.
++	 */
++	channel@30 {
++		qcom,ratiometric;
++	};
++};
++
+ &smbb {
+ 	qcom,fast-charge-safe-current = <1300000>;
+ 	qcom,fast-charge-current-limit = <1300000>;
+@@ -355,8 +367,15 @@
  	qcom,warm-charge-voltage-limit = <4200000>;
  	qcom,cool-charge-current-limit = <650000>;
  

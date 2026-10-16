@@ -1,24 +1,24 @@
 --- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
 +++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
-@@ -662,6 +662,97 @@
+@@ -662,6 +662,96 @@
   * It is not yet possible to use MDP SMMU with the bypass quirk on the msm8996,
   * there are not enough context banks.
   */
 +/*
-+ * Implementation-defined S2CR fields on this SoC, forced the way downstream
-+ * forces them on every stream: write-back memory attributes and a non-secure
-+ * NS attribute rather than whatever the client emits.
++ * S2CR's NSCFG, forced the way downstream forces it on every stream: a
++ * non-secure NS attribute rather than whatever the client emits.
 + *
 + * This was originally added on the theory that leaving NSCFG alone sent the
 + * GPU's traffic to the secure context banks. That theory was wrong - the real
 + * cause of the silent GPU was SCTLR.AFE, below - so this is kept because it
 + * matches downstream, not because it is known to be required. Whether the
 + * hardware needs it has not been tested on its own.
++ *
++ * Downstream also writes MemAttr (write-back, 0xa), but without MTCFG (bit 11)
++ * the SMMU ignores that field, and neither sets MTCFG, so it is left out.
 + */
-+#define MSM8974_S2CR_MEMATTR		GENMASK(15, 12)
 +#define MSM8974_S2CR_NSCFG		GENMASK(19, 18)
 +#define MSM8974_S2CR_NSCFG_NONSECURE	3
-+#define MSM8974_S2CR_MEMATTR_WB		0x0a
 +
 +static void msm8974_smmu_write_s2cr(struct arm_smmu_device *smmu, int idx)
 +{
@@ -28,7 +28,6 @@
 +	reg = FIELD_PREP(ARM_SMMU_S2CR_TYPE, s2cr->type) |
 +	      FIELD_PREP(ARM_SMMU_S2CR_CBNDX, s2cr->cbndx) |
 +	      FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, s2cr->privcfg) |
-+	      FIELD_PREP(MSM8974_S2CR_MEMATTR, MSM8974_S2CR_MEMATTR_WB) |
 +	      FIELD_PREP(MSM8974_S2CR_NSCFG, MSM8974_S2CR_NSCFG_NONSECURE);
 +
 +	arm_smmu_gr0_write(smmu, ARM_SMMU_GR0_S2CR(idx), reg);
@@ -98,7 +97,7 @@
  static const struct qcom_smmu_match_data msm8996_smmu_data = {
  	.impl = NULL,
  	.adreno_impl = &qcom_adreno_smmu_v2_impl,
-@@ -693,6 +784,7 @@
+@@ -693,6 +783,7 @@
   * special handling and can not be covered by the qcom,smmu-500 entry.
   */
  static const struct of_device_id __maybe_unused qcom_smmu_impl_of_match[] = {

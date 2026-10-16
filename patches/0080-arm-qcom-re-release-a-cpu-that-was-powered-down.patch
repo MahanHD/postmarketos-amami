@@ -1,20 +1,97 @@
 --- a/arch/arm/mach-qcom/platsmp.c
 +++ b/arch/arm/mach-qcom/platsmp.c
-@@ -48,6 +48,13 @@
+@@ -49,6 +49,20 @@
  
  extern void secondary_startup_arm(void);
  
 +/*
 + * Set by qcom_cpu_die() when a core is on its way down, so that a later online
-+ * can tell a powered-off core from a live one. Nothing sets it when hotplug is
-+ * compiled out, which is correct: no core can have gone down.
++ * can tell a powered-off core from a live one. Nothing sets these when hotplug
++ * is compiled out, which is correct: no core can have gone down.
 + */
 +static DEFINE_PER_CPU(bool, qcom_cpu_parked);
++/* The core went down by SPM power collapse, not the WFI park */
++static DEFINE_PER_CPU(bool, qcom_cpu_collapsed);
++/* Its ACC, whose power status says whether the collapse has happened */
++static DEFINE_PER_CPU(void __iomem *, qcom_cpu_acc);
++
++#define ACC_CPU_PWR_STS			0x08
++#define ACC_CPU_PWR_STS_COLLAPSED	BIT(19)
 +
  #ifdef CONFIG_HOTPLUG_CPU
  static DEFINE_PER_CPU(struct spm_driver_data *, qcom_cpu_spm);
  
-@@ -132,7 +139,16 @@
+@@ -79,12 +93,34 @@
+ 	return drv;
+ }
+ 
++static void __iomem *qcom_cpu_acc_map(unsigned int cpu)
++{
++	struct device_node *cpu_node, *acc_node;
++	void __iomem *base;
++
++	cpu_node = of_get_cpu_node(cpu, NULL);
++	if (!cpu_node)
++		return NULL;
++
++	acc_node = of_parse_phandle(cpu_node, "qcom,acc", 0);
++	of_node_put(cpu_node);
++	if (!acc_node)
++		return NULL;
++
++	base = of_iomap(acc_node, 0);
++	of_node_put(acc_node);
++
++	return base;
++}
++
+ /*
+  * Runs on the outgoing core, in process context, as it starts going down:
+  * find what qcom_cpu_die() needs to power it off. Not at boot, because the
+- * SPM and SCM drivers probe in their own time (an init-time lookup found
+- * neither), and not in qcom_cpu_die(), which runs on a core the hotplug core
+- * already counts as gone. Without both, the core parks in WFI.
++ * SPM and SCM drivers probe in their own time (a lookup at late_initcall
++ * came up empty), and not in qcom_cpu_die(), which runs on a core the hotplug
++ * core already counts as gone. Bringing a collapsed core back also needs its
++ * ACC, whose power status says the collapse happened, so the core collapses
++ * only with all three; without them it parks in WFI.
+  *
+  * A collapsed core comes back through the warm boot address, into
+  * cpu_suspend(). The SPM cpuidle driver registers that address too, but
+@@ -94,6 +130,7 @@
+ static int qcom_cpu_offline_prepare(unsigned int cpu)
+ {
+ 	static bool warm_boot_set;
++	struct spm_driver_data *drv;
+ 
+ 	if (per_cpu(qcom_cpu_spm, cpu))
+ 		return 0;
+@@ -105,7 +142,14 @@
+ 		warm_boot_set = true;
+ 	}
+ 
+-	per_cpu(qcom_cpu_spm, cpu) = qcom_cpu_spm_find(cpu);
++	drv = qcom_cpu_spm_find(cpu);
++	if (!drv)
++		return 0;
++
++	if (!per_cpu(qcom_cpu_acc, cpu))
++		per_cpu(qcom_cpu_acc, cpu) = qcom_cpu_acc_map(cpu);
++	if (per_cpu(qcom_cpu_acc, cpu))
++		per_cpu(qcom_cpu_spm, cpu) = drv;
+ 
+ 	return 0;
+ }
+@@ -163,6 +207,7 @@
+ 	 * old WFI park, which fails an online exactly the way a working
+ 	 * collapse does until the release sequence is re-run as well.
+ 	 */
++	WRITE_ONCE(per_cpu(qcom_cpu_collapsed, cpu), !!drv);
+ 	if (drv)
+ 		pr_info("CPU%u: going down by SPM power collapse\n", cpu);
+ 	else
+@@ -171,7 +216,16 @@
  	for (;;) {
  		if (drv) {
  			spm_set_low_power_mode(drv, PM_SLEEP_MODE_SPC);
@@ -31,73 +108,66 @@
  			/*
  			 * Still here, so an interrupt beat the collapse and the
  			 * SPM brought us back through the warm boot address.
-@@ -409,16 +425,54 @@
+@@ -448,11 +502,61 @@
  
  static DEFINE_PER_CPU(int, cold_boot_done);
  
--static int qcom_boot_secondary(unsigned int cpu, int (*func)(unsigned int))
 +/*
-+ * Wait for a dying core to have reached the collapse in qcom_cpu_die(). The
-+ * release sequence below is a cold-boot power-up and ends by asserting CLAMP and
++ * Wait for a dying core to have collapsed in qcom_cpu_die(). The release
++ * sequence below is a cold-boot power-up and ends by asserting CLAMP and
 + * COREPOR_RST, which resets the SoC if the core is still live, so refusing the
 + * online is very much the better failure.
++ *
++ * The flag only says the core is about to collapse: the SCM call can return
++ * instead, when an interrupt is pending, and the core then loops round to try
++ * again. What says it has happened is the ACC's power status, the register
++ * downstream polls in msm_pm_wait_cpu_shutdown() (qcom,cpu-sleep-status,
++ * 0xf9088008 + cpu * 0x10000, mask 0x80000), giving each attempt 2 ms.
 + */
 +static bool qcom_cpu_wait_parked(unsigned int cpu)
- {
--	int ret = 0;
-+	int i;
- 
--	if (!per_cpu(cold_boot_done, cpu)) {
--		ret = func(cpu);
--		if (!ret)
--			per_cpu(cold_boot_done, cpu) = true;
++{
++	void __iomem *sts = per_cpu(qcom_cpu_acc, cpu) + ACC_CPU_PWR_STS;
++	int i, j;
++
 +	for (i = 0; i < 1000; i++) {
 +		if (READ_ONCE(per_cpu(qcom_cpu_parked, cpu))) {
-+			smp_rmb();
-+			/*
-+			 * The flag goes up just before cpu_suspend(), so give
-+			 * the core time to get through it and actually go off.
-+			 */
-+			udelay(100);
-+			WRITE_ONCE(per_cpu(qcom_cpu_parked, cpu), false);
-+			return true;
++			for (j = 0; j < 20; j++) {
++				if (readl_relaxed(sts) & ACC_CPU_PWR_STS_COLLAPSED) {
++					WRITE_ONCE(per_cpu(qcom_cpu_parked, cpu), false);
++					return true;
++				}
++				udelay(100);
++			}
 +		}
 +		udelay(10);
- 	}
- 
++	}
++
 +	return false;
 +}
 +
-+static int qcom_boot_secondary(unsigned int cpu, int (*func)(unsigned int))
-+{
-+	int ret;
-+
-+	if (per_cpu(cold_boot_done, cpu)) {
-+		/*
-+		 * A re-online. qcom_cpu_die() powered this core off, so the
-+		 * release sequence has to run again - it is what brings a
-+		 * powered-down core back in at the cold boot address, and
-+		 * __cpu_up() has refreshed secondary_data for us. Only do it
-+		 * once the core is known to be down.
-+		 */
+ static int qcom_boot_secondary(unsigned int cpu, int (*func)(unsigned int))
+ {
+ 	int ret = 0;
+ 
+-	if (!per_cpu(cold_boot_done, cpu)) {
++	/*
++	 * A core that went down by power collapse is off, so the release
++	 * sequence has to run again: it is what brings a powered-down core back
++	 * in, and __cpu_up() has refreshed secondary_data for us. Only once the
++	 * core is known to be down. Anything else runs the release once, as
++	 * before.
++	 */
++	if (per_cpu(cold_boot_done, cpu) && per_cpu(qcom_cpu_collapsed, cpu)) {
 +		if (!qcom_cpu_wait_parked(cpu))
 +			return -EBUSY;
-+	}
 +
-+	ret = func(cpu);
-+	if (ret)
-+		return ret;
-+	per_cpu(cold_boot_done, cpu) = true;
-+
- 	/*
- 	 * Send the secondary CPU a soft interrupt, thereby causing
- 	 * the boot monitor to read the system wide flags register,
-@@ -426,7 +480,7 @@
- 	 */
- 	arch_send_wakeup_ipi_mask(cpumask_of(cpu));
- 
--	return ret;
-+	return 0;
- }
- 
- static int msm8660_boot_secondary(unsigned int cpu, struct task_struct *idle)
++		ret = func(cpu);
++		if (ret) {
++			/* still down: leave the handshake as the core left it */
++			WRITE_ONCE(per_cpu(qcom_cpu_parked, cpu), true);
++			return ret;
++		}
++	} else if (!per_cpu(cold_boot_done, cpu)) {
+ 		ret = func(cpu);
+ 		if (!ret)
+ 			per_cpu(cold_boot_done, cpu) = true;

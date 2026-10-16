@@ -257,6 +257,24 @@
  		return IIO_VAL_INT;
  	case IIO_CHAN_INFO_SCALE:
  		switch (chan->type) {
+@@ -556,7 +636,7 @@
+ 
+ 	switch (mask) {
+ 	case IIO_CHAN_INFO_SAMP_FREQ:
+-		priv->sensor->data_types[0].cur_sample_rate = val;
++		priv->sensor->data_types[priv->data_type].cur_sample_rate = val;
+ 
+ 		/*
+ 		 * Send new SMGR buffering request with updated rates
+@@ -578,7 +658,7 @@
+ {
+ 	struct qcom_smgr_iio_priv *priv = iio_priv(iio_dev);
+ 	const int samp_freq_vals[3] = {
+-		1, 1, priv->sensor->data_types[0].cur_sample_rate
++		1, 1, priv->sensor->data_types[priv->data_type].cur_sample_rate
+ 	};
+ 
+ 	switch (mask) {
 --- a/drivers/iio/light/Kconfig
 +++ b/drivers/iio/light/Kconfig
 @@ -255,6 +255,16 @@
@@ -288,7 +306,7 @@
  obj-$(CONFIG_SENSORS_ISL29028)	+= isl29028.o
 --- /dev/null
 +++ b/drivers/iio/light/qcom_smgr_light.c
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,111 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Qualcomm Sensor Manager ambient light sensor driver
@@ -346,7 +364,6 @@
 +	priv = iio_priv(iio_dev);
 +	priv->sensor = *(struct qcom_smgr_sensor **)pdev->dev.platform_data;
 +	priv->data_type = SNS_SMGR_DATA_TYPE_SECONDARY;
-+	priv->sensor->secondary_iio_dev = iio_dev;
 +
 +	iio_dev->name = "qcom-smgr-light";
 +	iio_dev->info = &qcom_smgr_iio_info;
@@ -367,6 +384,9 @@
 +			ERR_PTR(ret));
 +		return ret;
 +	}
++
++	/* Only now may the report handler push into it */
++	priv->sensor->secondary_iio_dev = iio_dev;
 +
 +	platform_set_drvdata(pdev, priv->sensor);
 +
