@@ -11,7 +11,8 @@
 # settle. Then dV over the suspend window is comparable with dV over the awake
 # window, and the awake window's current is known because the IADC can be sampled
 # directly. The suspend figure is the awake one scaled by the ratio of the drops.
-D=/sys/bus/iio/devices/iio:device0
+# The current ADC; IIO numbers follow probe order, so find it by name
+D=$(dirname "$(grep -l adc@3600 /sys/bus/iio/devices/iio:device*/name)")
 B=/sys/class/power_supply/smbb-bif
 OUT=/tmp/s2idle
 PHASE=${1:-2400}

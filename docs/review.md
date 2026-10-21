@@ -10,7 +10,7 @@ compares it with stock where that applies, fixes what it finds and records it he
 | 2 | Camera stack: imx200 driver, camss patches, `recipe/libcamera`, `recipe/libdng`, `recipe/libmegapixels`, `recipe/megapixels`, `userspace/megapixels` | done, r226 |
 | 3 | amami and msm8974 device tree: CPU rail and OPPs, regulators, the DT patches | done, r235 |
 | 4 | The other kernel patches, by subsystem: display, sensors, charging, CPU hotplug, WiFi/BT, audio | done but audio (parked), r239 |
-| 5 | Tools, recipes and docs: stale or contradicting text, tools nobody uses | patches and docs cleaned 2026-10-16 (worklog, "Cleanup"); tools to do |
+| 5 | Tools, recipes and docs: stale or contradicting text, tools nobody uses | done, 2026-10-22 |
 
 ## Pass 1: GPU and GPU memory
 
@@ -303,4 +303,22 @@ before, but the only change in r239 (`0121`) runs at about 30 s, after it, and 3
 14 against 0 of 11 is not a difference yet. Open, in `next-steps.md`.
 
 The audio patches remain unreviewed until audio resumes.
+
+## Pass 5: tools, userspace, recipes and docs
+
+The patches-and-docs half was the 2026-10-16 cleanup. The rest was a whole-repo audit
+of `tools/`, `userspace/`, the userspace recipes and the docs, read against the phone
+where a tool depends on it:
+
+| # | Finding | Done |
+|---|---|---|
+| 1 | `s2idle-test.sh` read the current ADC as `iio:device0`; IIO numbers follow probe order, and on some boots device0 is the voltage ADC, so the current columns came out empty | found by name (`adc@3600`) |
+| 2 | nothing checked a boot image against the 20 MiB boot partition (images are 18.3 MB); `dd` stops at the end and leaves a truncated image | `mkbootimg.py` refuses an image that does not fit; a rebuilt r241 image is byte-identical to the flashed one |
+| 3 | `devcore-collect.sh` made a dump folder every boot, hang or not: 26 empty ones | made with the first dump; the empty ones removed |
+| 4 | `sensor-reg.sh` force-wrote to `/dev/i2c-3`, which only happens to be CCI master 0 | the first `Qualcomm-CCI` adapter |
+| 5 | `smgr-info.py` and `smgr-probe.py` hardcoded port 6, which the ADSP assigns; `smgr-info.py` put `/tmp` on Python's path, and both run from `/tmp` as root | found from the QRTR bus by modalias (`qrtr:100:1`; service 0x100 alone matches two other devices); documented with `python3 -I` |
+| 6 | stale docs: the removed `scan_offload` option and `0006` in `building.md`, no install step for the journal cap, a recipe README covering 5 of Megapixels' 12 patches and no libdng, `mkdcp.py` missing from the tools list, `mkbootimg.py` calling itself unverified | rewritten |
+| 7 | `dtbdiff.py` carried its own copy of `romdtb.py`'s device tree parser | uses `romdtb.FDT`; pass 3's diff reproduces |
+| 8 | `convert_cmds.py` and `gen_all_variants.py` were near-copies; the second wrote into a fixed workspace path and dropped generic writes | one converter; both outputs byte-identical to before |
+| 9 | pstore and `THERMAL_EMULATION` in the kernel config serve nothing day to day | left for the next kernel change, which needs a build and test anyway |
 

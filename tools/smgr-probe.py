@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
 """Clean SMGR trial: every indication filtered by report_id, and a settle after
 each DELETE so a previous sensor's stragglers cannot be counted as this one's."""
-import socket, struct, sys, time
+import glob, os, socket, struct, sys, time
 AF_QIPCRTR = 42
-NODE, PORT = 5, 6
+
+def smgr_addr():
+    """SMGR as node, port: the ADSP assigns the port. Service 0x100 instance 1,
+    as qcom_smgr matches it; other services share the 0x100."""
+    for d in glob.glob('/sys/bus/qrtr/devices/*'):
+        if 'MODALIAS=qrtr:100:1\n' in open(d + '/uevent').read():
+            node, port = os.path.basename(d).split('-')
+            return int(node), int(port)
+    sys.exit('no sensor manager service on QRTR')
+
+
+NODE, PORT = smgr_addr()
 TICKS = 32768
 
 def tlv(t, p): return struct.pack('<BH', t, len(p)) + p

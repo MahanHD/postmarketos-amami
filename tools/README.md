@@ -9,8 +9,8 @@ with `wait` being a delay in milliseconds afterwards. The script picks DCS or
 generic writes based on the MIPI data type and keeps every delay as
 `mipi_dsi_msleep()`.
 
-`gen_all_variants.py` does the same thing but emits one C function per panel
-variant in `dsi-panel-amami.dtsi` (default, JDI, AUO, AUO new id).
+`gen_all_variants.py dsi-panel-amami.dtsi out.c` uses the same converter to emit one
+C function per panel variant (default, JDI, AUO, AUO new id), the ones `0003` carries.
 
 Neither script ships Sony's device tree. Grab it from their GPL release:
 
@@ -113,13 +113,15 @@ distinguishes "the list is empty" from "nothing replied".
 
 `smgr-info.py` and `smgr-probe.py` talk to the ADSP's sensor manager directly over
 QMI/QRTR, so a sensor question can be answered without a kernel build, a flash and
-a reboot per attempt. SMGR is QMI service `0x100` and the kernel driver binds at
-node 5 port 6; unload `qcom_smgr` first so the two are not both subscribing.
+a reboot per attempt. SMGR is QMI service `0x100`; both find its node and port from
+the QRTR bus, since the ADSP assigns the port. Unload `qcom_smgr` first so the two
+are not both subscribing. Run them with `python3 -I`: from `/tmp` as root, plain
+`python3` would import a module planted next to the script.
 
     ssh mahan@<phone> 'sudo modprobe -r qcom_smgr_prox qcom_smgr_accel \
         qcom_smgr_gyro qcom_smgr_mag; sudo modprobe -r qcom_smgr'
-    ssh mahan@<phone> 'sudo python3 /tmp/smgr-info.py 0x28'   # what a sensor is
-    ssh mahan@<phone> 'sudo python3 /tmp/smgr-probe.py'       # subscribe and watch
+    ssh mahan@<phone> 'sudo python3 -I /tmp/smgr-info.py 0x28'   # what a sensor is
+    ssh mahan@<phone> 'sudo python3 -I /tmp/smgr-probe.py'       # subscribe and watch
 
 `smgr-info.py <id>` prints each data type with its max rate, current draw, range
 and resolution - which is how proximity and ambient light were told apart on the
@@ -172,6 +174,9 @@ from.
   fresh buffers must read all zero.
 - `sontime.c` times `VIDIOC_STREAMON`, the sensor's register writes included, and the
   first frame.
+- `mkdcp.py out.dcp` writes the DNG camera profile Megapixels uses,
+  `userspace/megapixels/sony,xperia-amami,Rear.dcp`, from stock's colour matrix and a
+  measured daylight white (`notes.md`, "A colour profile for Megapixels").
 - `dngneutral.py` runs on the host: the grey-world R/G and B/G of a full-size Megapixels
   DNG, to check its AsShotNeutral against the raw data.
 - `sensor-reg.sh` reads or writes sensor registers over `/dev/i2c-3` during a stream

@@ -5,17 +5,9 @@ S1Boot wants a plain Android boot image, header v0, 2048-byte pages. `boot-deplo
 writes one too, but with its own `quiet splash plymouth...` command line, so the
 image has to be built by hand to keep the parameters the port depends on.
 
-How far this is verified, precisely. The *logic* here was proven byte-exact: an
-earlier build of the r56 image reproduced what was actually on the boot partition,
-md5 69b89a70e0a216cc128579bea40f5561. This file is a tidied rewrite of that, and it
-has been checked to emit the same header - every load address, the page size, the
-kernel blob length (6513518, matching r56's own header) and the command line all
-match - but **not** re-confirmed byte-for-byte, because that needs the phone's
-/boot/initramfs and the phone was off.
-
-So: first time this is used for real, rebuild the currently flashed kernel with it
-and compare md5 against the boot partition before trusting it with anything else.
-If that ever stops matching, suspect this file before suspecting the flash.
+An earlier build of this logic reproduced the r56 image on the boot partition byte
+for byte (md5 69b89a70e0a216cc128579bea40f5561), and every image flashed since r206
+was built with it.
 
 The kernel blob is zImage with the amami dtb appended - S1Boot does not take a
 separate dtb - and both come out of the kernel apk:
@@ -46,6 +38,9 @@ RAMDISK_ADDR = 0x12000000
 SECOND_ADDR = 0x10F00000
 TAGS_ADDR = 0x11E00000
 PAGE_SIZE = 2048
+# The boot partition, mmcblk0p14: 40960 sectors. dd of anything bigger stops at
+# the end and leaves a truncated image the bootloader will not start.
+BOOT_PARTITION = 40960 * 512
 
 # plymouth.enable=0     - plymouth wedges the boot on this device
 # msm.vram / carveout   - keep even when an IOMMU is in use: if it fails to probe,
@@ -55,8 +50,8 @@ PAGE_SIZE = 2048
 #                         256m because a 20MP capture in Megapixels needs
 #                         nearly all of 192m. cma= holds it plus 64MB for the
 #                         camera's contiguous buffers (0115).
-# panic_on_rcu_stall +  - the panic net, so an unattended wedge reboots and leaves
-# panic=10                a pstore record instead of hanging forever
+# panic_on_rcu_stall +  - the panic net, so an unattended wedge reboots instead of
+# panic=10                hanging forever (pstore stays empty here, see the notes)
 # rcu_exp_cpu_stall_timeout - MILLISECONDS, unlike its sibling which is seconds.
 #                         The default of 20 fires on the harmless ~3-jiffy
 #                         expedited stall this device emits at ~36 s of every boot.
@@ -111,7 +106,11 @@ def build(kernel, dtb, initramfs, extra_cmdline=""):
     hdr += sha.digest() + b"\0" * 12                    # id[8], only sha1 used
     hdr += b"\0" * 1024                                 # extra cmdline
 
-    return pad(hdr) + pad(kernel) + pad(initramfs), cmdline.decode()
+    img = pad(hdr) + pad(kernel) + pad(initramfs)
+    if len(img) > BOOT_PARTITION:
+        raise SystemExit("image is %d bytes; the boot partition holds %d"
+                         % (len(img), BOOT_PARTITION))
+    return img, cmdline.decode()
 
 
 def main():

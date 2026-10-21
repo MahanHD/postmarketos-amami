@@ -50,15 +50,14 @@ reset and the state the bootloader leaves) with `qcom_q6v5_pas`'s first start. A
 stopgap, if needed meanwhile, is restarting the ADSP when the sensors do not
 enumerate, labelled as one.
 
-## 2. Review pass 5
+## 2. After the review
 
-`review.md` holds a pass-by-pass review of the whole port. Passes 1 (GPU), 2 (camera),
-3 (device tree) and 4 (the other kernel patches, audio aside) are done, and the
-2026-10-16 cleanup did the patches-and-docs half of pass 5; the tools remain.
-Passes 3 and 4 left a list for upstreaming, not for this phone: shared-dtsi changes
-that need other boards' configs or voltages (MPM routing, the unvolted OPPs, the GPU
-SMMU), `0036`'s page alignment derived from the domain instead of fixed, and bindings
-for the new compatibles and properties.
+All five review passes are done (`review.md`); the audio patches stay unreviewed until
+audio resumes. Passes 3 and 4 left a list for upstreaming, not for this phone:
+shared-dtsi changes that need other boards' configs or voltages (MPM routing, the
+unvolted OPPs, the GPU SMMU), `0036`'s page alignment derived from the domain instead of
+fixed, and bindings for the new compatibles and properties. Pass 5 left pstore and
+`THERMAL_EMULATION` to switch off with the next kernel change.
 
 The charger's return from warm to normal derating (below 43C) has not been seen on the
 phone yet, only the switch to warm; `dmesg` logs "normal charging" when it happens.

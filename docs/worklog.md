@@ -4121,6 +4121,19 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
   no sensors; dropped (r241). Open.
 - `qcom_smgr_probe` builds with a 1392-byte stack frame warning; pre-existing.
 
+### Review pass 5, tools, 2026-10-22
+
+- Whole-repo audit (ponytail) of what passes 1-4 left: tools, userspace, the userspace
+  recipes, docs. Table in `review.md`.
+- On the phone: IIO device0 was `adc@3100` on the r237 boot and `adc@3600` on this
+  one; CCI master 0 is `i2c-3`; QRTR `5-6` is `qrtr:100:1` and `5-1`, `7-1` are
+  `qrtr:100:100`; the boot partition is 40960 sectors, TA 2 MiB (the factory-address
+  script reads all of it).
+- `mkbootimg.py` with r241's apk and the phone's initramfs: byte-identical to
+  `boot-r241.img`; a 41.7 MB image refused. `devcore-collect.sh` reinstalled, 26 empty
+  folders removed, none made on restart. The panel generators reproduce their old
+  output byte for byte from Sony's `dsi-panel-amami.dtsi`.
+
 ## Parked patches
 
 Moved to `patches/parked/README.md` in the 2026-10-16 cleanup, which also deleted

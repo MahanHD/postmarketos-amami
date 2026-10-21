@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
 """Ask SMGR what each data type of a sensor actually is."""
-import socket, struct, sys, time
-sys.path.insert(0, '/tmp')
+import glob, os, socket, struct, sys, time
 AF_QIPCRTR = 42
-NODE, PORT = 5, 6
+
+def smgr_addr():
+    """SMGR as node, port: the ADSP assigns the port. Service 0x100 instance 1,
+    as qcom_smgr matches it; other services share the 0x100."""
+    for d in glob.glob('/sys/bus/qrtr/devices/*'):
+        if 'MODALIAS=qrtr:100:1\n' in open(d + '/uevent').read():
+            node, port = os.path.basename(d).split('-')
+            return int(node), int(port)
+    sys.exit('no sensor manager service on QRTR')
+
+
+NODE, PORT = smgr_addr()
 
 def tlv(t, p): return struct.pack('<BH', t, len(p)) + p
 def parse_tlvs(b):

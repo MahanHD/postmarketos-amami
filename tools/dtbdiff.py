@@ -11,31 +11,14 @@ as text when they look like strings, and as hex otherwise.
 import struct
 import sys
 
+from romdtb import FDT
+
 
 def props(path):
-    b = open(path, 'rb').read()
-    magic, _, off_struct, off_strings = struct.unpack('>IIII', b[:16])
-    if magic != 0xd00dfeed:
-        sys.exit('%s: not a flattened device tree' % path)
-    strings = b[off_strings:]
-    out, stack, p = {}, [], off_struct
-    while True:
-        tag, = struct.unpack('>I', b[p:p + 4])
-        p += 4
-        if tag == 1:
-            end = b.index(b'\0', p)
-            stack.append(b[p:end].decode())
-            p = (end + 4) & ~3
-        elif tag == 2:
-            stack.pop()
-        elif tag == 3:
-            size, name_off = struct.unpack('>II', b[p:p + 8])
-            p += 8
-            name = strings[name_off:strings.index(b'\0', name_off)].decode()
-            out['/'.join(stack[1:]) + ':' + name] = b[p:p + size]
-            p = (p + size + 3) & ~3
-        elif tag == 9:
-            return out
+    """{"node/path:property": value} for every property in the blob."""
+    fdt = FDT(open(path, "rb").read())
+    return {"%s:%s" % (node, name): value
+            for node, ps in fdt.nodes().items() for name, value in ps.items()}
 
 
 def show(v):

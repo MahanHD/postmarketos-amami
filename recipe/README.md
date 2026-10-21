@@ -2,9 +2,8 @@
 
 `APKBUILD` and `config-postmarketos-qcom-msm8974.armv7` are the
 `linux-postmarketos-qcom-msm8974` package from pmaports (v26.06) as this port
-builds it: kernel 6.16.12 from `msm8974-mainline/linux`, the patches from
-`../patches` (and the ones from `../patches/debug` that are listed), and the
-config with the changes the port needs.
+builds it: kernel 6.16.12 from `msm8974-mainline/linux`, every patch in
+`../patches`, and the config with the changes the port needs.
 
 To build it, copy both files into
 `pmaports/device/testing/linux-postmarketos-qcom-msm8974/` together with every
@@ -36,7 +35,7 @@ complete one, with all nine patches and the tuning file in its source list.
 `mesa/` is Alpine 3.24's `main/mesa` (26.1.6) with one fix for this GPU,
 `freedreno-a3xx-end-direct-loads.patch`: every direct `CP_LOAD_STATE` is followed by a
 register write, as the stock driver does on a3xx. Without it GTK4's GL renderer hangs the
-Adreno 330 within seconds (see `../docs/notes.md`, "The GPU hang, solved"). Two build
+Adreno 330 within seconds (see `../docs/notes.md`, "The GTK GPU hang"). Two build
 changes go with it: rusticl is off on armv7, since pmbootstrap's cross build has no Rust,
 and clang, libclc and the SPIR-V translator are top-level makedepends, because
 pmbootstrap does not read the `case` blocks that add them. Build it from pmaports'
@@ -45,19 +44,39 @@ pmbootstrap does not read the `case` blocks that add them. Build it from pmaport
 
 ## megapixels
 
-`megapixels/` is Alpine 3.24's `community/megapixels` (2.1.0) with four fixes that make
-it use the colour profile correctly: it finds the profile (`dcp-search-each-path.patch`),
-applies the colour steps in the right order (`preview-colour-order.patch`), measures
-white balance on the preview as it is (`awb-stats-in-srgb.patch`), and clips after white
-balance so overexposed areas stay white instead of turning pink
-(`clip-after-white-balance.patch`). A fifth stops a photo from aborting it when no
-preview buffer is free for the thumbnail (`thumbnail-without-a-free-preview.patch`). See
-`../docs/notes.md`, "Megapixels' colour, fixed". Build it from pmaports' `temp/megapixels`
-and install it with `userspace/megapixels/*` copied to `/usr/share/megapixels/config/`.
+`megapixels/` is Alpine 3.24's `community/megapixels` (2.1.0) with twelve fixes, all
+in its `source=` list. By area:
+
+- Colour: it finds the profile (`dcp-search-each-path`), applies the colour steps in
+  the right order (`preview-colour-order`), clips after white balance so highlights
+  stay white (`clip-after-white-balance`), and uses the camera's black level from its
+  config (`black-level-from-the-config`).
+- White balance: measured on the preview as it is (`awb-stats-in-srgb`) and in the
+  camera's own colours, so it lands in one step (`awb-measure-in-camera-colours`), and
+  kept for the photo (`photo-keeps-white-balance`).
+- Capture: the preview mode nearest the preview size
+  (`preview-mode-nearest-the-preview-size`), only the two frames `postprocess.sh` reads
+  (`burst-of-the-frames-postprocess-reads`), and a thumbnail even when no preview buffer
+  is free (`thumbnail-without-a-free-preview`).
+- Speed: photos develop one at a time (`postprocess-one-photo-at-a-time`) and faster
+  (`postprocess-sharpen-and-contrast-faster`), and the code scanner rests between scans
+  (`zbar-rest-between-scans`).
+
+See `../docs/notes.md`, "Megapixels". Build it from pmaports' `temp/megapixels` and
+install it with `userspace/megapixels/*` copied to `/usr/share/megapixels/config/`.
 
 ## libmegapixels
 
-`libmegapixels/` is Alpine 3.24's `community/libmegapixels` (0.2.3) with
-`rate-through-vblank.patch`: a `Rate` command on a sensor without a frame interval (every
-raw sensor in mainline, imx200 included) sets the frame rate through vertical blanking.
-Without it Megapixels' auto exposure stops at the sensor's default frame length.
+`libmegapixels/` is Alpine 3.24's `community/libmegapixels` (0.2.3) with two patches.
+`rate-through-vblank.patch`: a `Rate` command on a sensor without a frame interval
+(every raw sensor in mainline, imx200 included) sets the frame rate through vertical
+blanking; without it Megapixels' auto exposure stops at the sensor's default frame
+length. `black-level.patch` adds a `BlackLevel` key per camera, so Megapixels takes the
+sensor's pedestal from the config instead of guessing it from the scene.
+
+## libdng
+
+`libdng/` is libdng 0.2.2 with two patches Megapixels' photos need: AsShotNeutral is
+written as the inverse of the white balance gains, the way the DNG specification
+defines it (`neutral-is-the-inverse-of-the-gains.patch`), and the black level is stored
+(`black-level.patch`), so converters do not take the sensor's pedestal for light.

@@ -11,13 +11,13 @@
 MAX=${MAX:-25}
 BOOT=$(cut -c1-8 /proc/sys/kernel/random/boot_id)
 OUT=/home/mahan/devcore/$(date +%Y%m%d-%H%M%S)-$BOOT
-mkdir -p $OUT
-chown mahan: /home/mahan/devcore $OUT
 echo Y > /sys/module/msm/parameters/rd_full
 n=0
 while true; do
 	for d in /sys/class/devcoredump/devcd*; do
 		[ -e "$d/data" ] || continue
+		# made with the first dump, so a boot without hangs leaves nothing
+		[ -d $OUT ] || { mkdir -p $OUT; chown mahan: /home/mahan/devcore $OUT; }
 		n=$((n + 1))
 		if [ $n -le $MAX ]; then
 			f=$OUT/$(date +%H%M%S)-$(basename $d)

@@ -87,12 +87,11 @@ WiFi needs one setting, explained in `notes.md`:
     [connection]
     wifi.powersave = 2
 
-Without it the radio associates and then immediately drops the link. The
-`options wcn36xx scan_offload=0` line that used to be needed here is obsolete as
-of `0010`, which fixes the capability check that made scans time out; the driver
-now picks the software scan on its own. `CONFIG_WCN36XX_DEBUGFS=y` is worth adding to the
-kernel config too, since it exposes the firmware capability list that explains
-why `0006` is needed.
+Without it the radio associates and then immediately drops the link. Scanning needs
+no setting: `0010` makes the driver use the software scan on this firmware, which
+advertises an offloaded scan it does not implement (the old `scan_offload` option
+is gone). `CONFIG_WCN36XX_DEBUGFS=y`, already in the config, exposes the firmware's
+capability list that shows why.
 
 The camera needs the patched libcamera from `recipe/libcamera` (copy it over
 `pmaports/temp/libcamera`, then `pmbootstrap checksum libcamera` and build), plus:
@@ -152,6 +151,11 @@ Expect a new DHCP lease afterwards, because it is a different MAC.
 
 Masking `NetworkManager-wait-online.service` used to be necessary here. It isn't
 any more, now that WiFi actually connects.
+
+The journal is capped at 64 MB; on a phone it had grown to 617 MB:
+
+    sudo install -D -m 644 userspace/98-journal-size.conf /etc/systemd/journald.conf.d/98-journal-size.conf
+    sudo systemctl restart systemd-journald
 
 The UPower workaround that used to live here is no longer needed. With `0005` the
 battery reports a real percentage, so `/etc/UPower/UPower.conf` can stay at its
