@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=241
+pkgrel=244
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -123,6 +123,10 @@ source="
 	0119-power-supply-qcom-smbb-derate-charging-on-a-warm-or-cool-battery.patch
 	0120-arm-dts-amami-do-not-invert-the-touchscreen-x-axis.patch
 	0121-iio-qcom-smgr-wait-for-the-dsp-to-bring-its-sensors-up.patch
+	0123-slimbus-qcom-ngd-keep-the-laddr-out-of-the-data-format-bits.patch
+	0124-slimbus-qcom-ngd-remove-the-channel-when-a-stream-is-disabled.patch
+	0125-asoc-wcd9320-run-the-slim-stream-like-downstream-does.patch
+	0126-asoc-wcd9320-fixes-from-the-audio-review.patch
 	a330_pm4.fw
 	a330_pfp.fw
 "
@@ -250,6 +254,10 @@ b99e6389e15f203813403bfa484f42d6b9f9c7815dfc52a23a104f344eb7c94f82140da984e385d5
 adf1a85841f7f1b793a7e06eed7cbeb4dff83aa54624bd9d5ed06b9ca25d7aabebfcaa715775fbafe8ed581d789194fac551abe39c10fa1bac090fa48e72d604  0119-power-supply-qcom-smbb-derate-charging-on-a-warm-or-cool-battery.patch
 bc79be606d0cef088e44c25b4ef6a69720063b0665d8b99df2ec562c99e8d2ba1651e765a179a9bd09847da3b3fb54fe8e96e351ad8c44e13453366519da2276  0120-arm-dts-amami-do-not-invert-the-touchscreen-x-axis.patch
 c17639c9d110ff62031a65e63c4d51bfaa1fe61b3444ecfc77ee92bd477f9b3095a9c25c1bdc8f4124df07e2bcc12dc1c6e8fce01dda332d0aa8466caf0030b4  0121-iio-qcom-smgr-wait-for-the-dsp-to-bring-its-sensors-up.patch
+8f34f948b2a15fe646c460b9b5c761eb70a902b206a00048805b4f57c875dc2e5340a285c12a6b6521925680f77bbdccb4f7ac49b1eb3ae6601437ae9b998773  0123-slimbus-qcom-ngd-keep-the-laddr-out-of-the-data-format-bits.patch
+cf9dfd06e26cd34463da109de4fd807f636cb6566dc091a7534b3e97b3b451c4b3f4adb25a94c854500d25d6cf39a5199dffede48790f42db0d4d1c2a35b19af  0124-slimbus-qcom-ngd-remove-the-channel-when-a-stream-is-disabled.patch
+28d0f63520582a54d5d5155f32e33259b99628c2e32bf33f10f245a54026e6fb69f1ca167b8e52d6fb8a9b22d8a4f2bda667392478057bb3c84f72e3fa1e70cf  0125-asoc-wcd9320-run-the-slim-stream-like-downstream-does.patch
+7bc98d49d7f439aeb6e317872d68797ccb5bfbbf300fe38afacad273eadef1618fb5cbdede7d31aae58fe13e2a5c98275ce72b529230c5c59685688384e39d3e  0126-asoc-wcd9320-fixes-from-the-audio-review.patch
 999e3e0777b8dffc0e0d20b214c8217dab577a31753b6a29af2fae57293693196e992a905265e35a586a7978c04547aa8c88496dbe6f836b74ed39026eaa5f05  a330_pm4.fw
 a642584990333d62ba6a985eeaddc6898c37a8e80aabb61121f93a90d5076861eb698422101e7b00706b7d3dfc00f9f358ea5e44a70fda7369931eb58b455931  a330_pfp.fw
 "

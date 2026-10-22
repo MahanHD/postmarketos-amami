@@ -239,6 +239,16 @@ cycle, so a SoC reset leaves the log behind. Run it after any change to
 check `dmesg` for "no SPM found": boot checks alone passed on a kernel where every
 core parked in WFI and none came back.
 
+`audio-playback-trace.sh` loads the codec on a fresh boot and plays twice to the
+headphone path, printing the codec's SLIMbus RX port status (`INT_STATUS_RX_0/1`, `03` =
+both ports in overflow) before, during and after each playback, and every SLIMbus message
+other than register access that the NGD sends: `CONNECT_SINK`, `DEF_ACT_CHAN`,
+`CHAN_CTRL`, `RECONFIG_NOW`, `DISCONNECT_PORT` (`mc` in hex, `w0`/`w1` the first payload
+bytes, little endian). PulseAudio, PipeWire and WirePlumber are stopped with SIGSTOP
+first and continued at the end: they open the card the moment it appears. A status bit
+after a stop is a latch, not proof of a live overflow (the handler disables the port's
+interrupt on overflow). `sudo sh ~/audio-playback-trace.sh`.
+
 `cpu-load-check.sh [minutes]` loads every Krait core with a pinned worker that hashes the
 same data again and again and compares each sum with a reference; a wrong sum is what an
 undervolted core gives. Every 10 s it logs each core's clock and the CPU temperatures to

@@ -1332,8 +1332,9 @@ them after one. Command streams record with `FD_RD_DUMP=full FD_RD_DUMP_PATH=dir
 
 *Since this was written a WCD9320 driver exists in the series (`0050`-`0068`): the
 codec probes and every register works, but no data moves over SLIMbus in either
-direction, so there is still no sound. The fault is in the port engine. See
-`worklog.md`, "Phase 3: audio".*
+direction, so there is still no sound. The fault is in the port engine. The channel
+messages to the ADSP match downstream since `0123`-`0126`. See `worklog.md`, "Phase 3:
+audio".*
 
 The codec is a **WCD9320 (Taiko) on SLIMbus** - stock's tree calls it `taiko_codec`,
 `compatible = "qcom,taiko-slim-pgd"`, with the bus at `slim@fe12f000` (`qcom,slim-ngd`)

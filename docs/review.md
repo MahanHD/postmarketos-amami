@@ -11,6 +11,7 @@ compares it with stock where that applies, fixes what it finds and records it he
 | 3 | amami and msm8974 device tree: CPU rail and OPPs, regulators, the DT patches | done, r235 |
 | 4 | The other kernel patches, by subsystem: display, sensors, charging, CPU hotplug, WiFi/BT, audio | done but audio (parked), r239 |
 | 5 | Tools, recipes and docs: stale or contradicting text, tools nobody uses | done, 2026-10-22 |
+| 6 | Audio: `0049`-`0068`, with `0123` from the same session | done, r244 |
 
 ## Pass 1: GPU and GPU memory
 
@@ -302,7 +303,7 @@ then a disable of an already disabled clock, at the GPU's first power-up (4 s an
 before, but the only change in r239 (`0121`) runs at about 30 s, after it, and 3 of
 14 against 0 of 11 is not a difference yet. Open, in `next-steps.md`.
 
-The audio patches remain unreviewed until audio resumes.
+The audio patches are pass 6.
 
 ## Pass 5: tools, userspace, recipes and docs
 
@@ -322,3 +323,29 @@ where a tool depends on it:
 | 8 | `convert_cmds.py` and `gen_all_variants.py` were near-copies; the second wrote into a fixed workspace path and dropped generic writes | one converter; both outputs byte-identical to before |
 | 9 | pstore and `THERMAL_EMULATION` in the kernel config serve nothing day to day | left for the next kernel change, which needs a build and test anyway |
 
+## Pass 6: audio
+
+One `/code-review` (medium) run over `0049`-`0068` and `0123`, against the patched
+tree and downstream's `wcd9320.c`, `wcd9xxx-slimslave.c` and `slim-msm-ngd.c`
+(LineageOS `android_kernel_sony_msm8974`). Ten findings, all real:
+
+| # | Finding | Done |
+|---|---|---|
+| 1 | Stop called `slim_stream_unprepare()` before `slim_stream_disable()`; unprepare frees the ports, so disable returned `-EINVAL` and no channel was ever removed. And the NGD drops the core's DEACTIVATE/REMOVE messages (0x40-0x5f) and had no `disable_stream`, so the ADSP never heard a stream stop | `0124`: NGD `disable_stream` sends downstream's `SLIM_USR_MC_CHAN_CTRL` remove + `RECONFIG_NOW`; `0125`: remove, wait, disconnect, in that order |
+| 2 | The close wait (port-closed interrupt) ran before anything closed the port | `0125`, downstream's order |
+| 3 | RX `port_mask` never reset: a changed subscription kept stale ports and read past `cfg->chs` | `0125` |
+| 4 | Every error on the data path dropped: hw_params, `slim_stream_prepare()`, `slim_stream_enable()` (always 0, even with a NULL runtime) | `0125` returns them from the DAPM events |
+| 5 | A new runtime and channel array per hw_params, never freed | `0125`: connect and activate in POST_PMU (as downstream), runtime once per DAI, freed at component remove |
+| 6 | The port IRQ skipped ports whose interrupt was disabled (from wcd9335); its own overflow branch disables it, so the port-closed event was lost | `0126`: no skip, as `taiko_slimbus_irq()`. Close timeouts went from every stop to 1 in 4 |
+| 7 | `0066` deferred only on the slim drvdata; the interface regmap comes later | `0126` waits for it too |
+| 8 | Component remove did not wait for a running IRQ thread | `0126`: `synchronize_irq()` |
+| 9 | The slim status callback ignored the status and redid everything (IRQ, regmap, populate) on every call, including the DOWN/UP of the ADSP restart this phone has on every boot; the IRQ came before the regmap its handler reads | `0126`: UP only, set up once, re-query the interface address after a restart, IRQ after the regmap, failure reported |
+| 10 | "SLIM RXn MUX" linked a port onto a second AIF's list while still on the first, and every RX mux read back the last value written to any of them | `0126`: the port moves; each mux reads its own AIF |
+
+Not covered by the run: Class-H (`0064`), most of the analog/DAPM code in `0049`, and the
+main regmap's `max_register = 0x400` against a last register of 0x3ff. Upstream's
+`qcom_slim_ngd_xfer_msg_sync()` also keeps a runtime-PM reference on success; left as it
+is (the controller is never suspended here).
+
+None of this makes sound: on r244 the RX ports still overflow from the first sample of
+the first playback of a boot. See `worklog.md`, "Phase 3: audio", 2026-10-22.

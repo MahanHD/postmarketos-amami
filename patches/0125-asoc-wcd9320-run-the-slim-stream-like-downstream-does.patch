@@ -1,0 +1,231 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] ASoC: wcd9320: run the slim stream like downstream does
+
+The stop path called slim_stream_unprepare() before slim_stream_disable().
+unprepare frees the ports, so disable returned -EINVAL at once and the
+channel was never removed. It also waited for the port-closed interrupt
+before anything closed a port. Downstream's taiko_codec_enable_slimrx()
+removes the channel, then waits for the close, and connects, defines and
+activates all from POST_PMU.
+
+Do the same: connect and activate in POST_PMU, remove, wait and
+disconnect in POST_PMD. hw_params now only records the format, so a
+restart without hw_params works, and the runtime is allocated once per
+DAI and freed with the component instead of leaking one per hw_params.
+
+Also reset the RX port mask before building it (a changed subscription
+kept stale ports and read past the channel array), free the channel
+array once slim_stream_prepare() has copied it, and pass errors up
+instead of reporting every start as a success.
+
+---
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -950,6 +950,23 @@
+ 			struct wcd_slim_codec_dai_data *dai_data);
+ static int wcd_slim_stream_prepare(struct wcd9320_priv *wcd,
+ 	struct wcd_slim_codec_dai_data *dai_data);
++static int wcd_slim_tx_stream_prepare(struct wcd9320_priv *wcd,
++				      struct wcd_slim_codec_dai_data *dai_data);
++
++/*
++ * Stop a stream the way downstream's POST_PMD does: remove the channel first,
++ * then wait for the port-closed interrupt that the removal raises, and only
++ * then disconnect the ports. The runtime stays allocated for the next start.
++ */
++static void wcd_slim_stream_close(struct wcd_slim_codec_dai_data *dai)
++{
++	if (!dai->sruntime)
++		return;
++
++	slim_stream_disable(dai->sruntime);
++	wcd9320_codec_enable_slim_chmask(dai, false);
++	slim_stream_unprepare(dai->sruntime);
++}
+ 
+ static int wcd9320_codec_enable_slimrx(struct snd_soc_dapm_widget *w,
+ 				     struct snd_kcontrol *kcontrol,
+@@ -984,16 +1001,16 @@
+ 		 * Downstream activates the channel from this same POST_PMU, as
+ 		 * the last thing taiko_codec_enable_slimrx() does
+ 		 * (wcd9xxx_cfg_slim_sch_rx), after the interrupt ports and the
+-		 * channel mask are set up. Match that ordering.
++		 * channel mask are set up. Match that ordering. The ports are
++		 * connected here too, not in hw_params: POST_PMD disconnects
++		 * them, and a restart need not run hw_params again.
+ 		 */
+-		wcd_slim_stream_enable(wcd->slim_data, dai);
++		ret = wcd_slim_stream_prepare(wcd, dai);
++		if (!ret)
++			ret = wcd_slim_stream_enable(wcd->slim_data, dai);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+-
+-		wcd9320_codec_enable_slim_chmask(dai, false);
+-		slim_stream_unprepare(dai->sruntime);
+-		slim_stream_disable(dai->sruntime);
+-
++		wcd_slim_stream_close(dai);
+ 		break;
+ 	}
+ 	return ret;
+@@ -1012,6 +1029,7 @@
+ 	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
+ 	struct wcd9320_priv *wcd = dev_get_drvdata(component->dev);
+ 	struct wcd_slim_codec_dai_data *dai;
++	int ret = 0;
+ 
+ 	if (wcd->intf_type != WCD_INTERFACE_TYPE_SLIMBUS)
+ 		return 0;
+@@ -1022,15 +1040,15 @@
+ 	case SND_SOC_DAPM_POST_PMU:
+ 		wcd9320_codec_enable_int_port(dai, component);
+ 		(void) wcd9320_codec_enable_slim_chmask(dai, true);
+-		wcd_slim_stream_enable(wcd->slim_data, dai);
++		ret = wcd_slim_tx_stream_prepare(wcd, dai);
++		if (!ret)
++			ret = wcd_slim_stream_enable(wcd->slim_data, dai);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+-		wcd9320_codec_enable_slim_chmask(dai, false);
+-		slim_stream_unprepare(dai->sruntime);
+-		slim_stream_disable(dai->sruntime);
++		wcd_slim_stream_close(dai);
+ 		break;
+ 	}
+-	return 0;
++	return ret;
+ }
+ 
+ static int wcd9320_get_compander(struct snd_kcontrol *kcontrol,
+@@ -2811,12 +2829,7 @@
+ 		}
+ 	}
+ #endif
+-	if (!dai_data->sruntime)
+-		pr_err("SLIM runtime is NULL...............................\n");
+-
+-	slim_stream_enable(dai_data->sruntime);
+-
+-	return 0;
++	return slim_stream_enable(dai_data->sruntime);
+ 
+ }
+ 
+@@ -2841,12 +2854,17 @@
+ 	int i =0;
+ 
+ 	cfg->ch_count = 0;
++	cfg->port_mask = 0;
+ 	/* Configure slave interface device */
+ 	list_for_each_entry(rx, wcd_slim_ch_list, list) {
+ 		payload |= 1 << rx->shift;
+ 		cfg->port_mask |= 1 << (rx->shift + 0x10);
+ 		cfg->ch_count++;
++	}
+ 
++	if (!cfg->ch_count) {
++		dev_err(wcd->dev, "no rx channels subscribed\n");
++		return -EINVAL;
+ 	}
+ 
+ 	cfg->chs = kcalloc(cfg->ch_count, sizeof(unsigned int), GFP_KERNEL);
+@@ -2876,7 +2894,7 @@
+ 				SB_PGD_RX_PORT_MULTI_CHANNEL_0(
+ 				wcd_sd->rx_port_ch_reg_base, codec_port),
+ 				payload, ret);
+-			return ret;
++			goto out;
+ 		}
+ 		/* configure the slave port for water mark and enable*/
+ 		ret = regmap_write(wcd_sd->if_regmap,
+@@ -2888,13 +2906,20 @@
+ 				__func__, codec_port, ret);
+ 		}
+ 	}
+-	dai_data->sruntime = slim_stream_allocate(wcd->slim, "WCD9320-SLIM");
+ 	if (!dai_data->sruntime)
+-		return -ENOMEM;
+-
+-	slim_stream_prepare(dai_data->sruntime, cfg);
++		dai_data->sruntime = slim_stream_allocate(wcd->slim,
++							  "WCD9320-SLIM");
++	if (!dai_data->sruntime) {
++		ret = -ENOMEM;
++		goto out;
++	}
+ 
+-	return 0;
++	/* slim_stream_prepare() copies the channels into its ports */
++	ret = slim_stream_prepare(dai_data->sruntime, cfg);
++out:
++	kfree(cfg->chs);
++	cfg->chs = NULL;
++	return ret;
+ 
+ }
+ 
+@@ -2977,15 +3002,15 @@
+ 				codec_port, ret);
+ 	}
+ 
+-	dai_data->sruntime = slim_stream_allocate(wcd->slim, "WCD9320-SLIM-TX");
++	if (!dai_data->sruntime)
++		dai_data->sruntime = slim_stream_allocate(wcd->slim,
++							  "WCD9320-SLIM-TX");
+ 	if (!dai_data->sruntime) {
+ 		ret = -ENOMEM;
+ 		goto err;
+ 	}
+ 
+-	slim_stream_prepare(dai_data->sruntime, cfg);
+-	return 0;
+-
++	ret = slim_stream_prepare(dai_data->sruntime, cfg);
+ err:
+ 	kfree(cfg->chs);
+ 	cfg->chs = NULL;
+@@ -3107,9 +3132,8 @@
+ 		break;
+ 	case SNDRV_PCM_STREAM_CAPTURE:
+ 		/*
+-		 * Capture returns early: the RX-only steps below it - the SB port
+-		 * sample width and the RX stream prepare - would address the wrong
+-		 * half of the codec.
++		 * Capture returns early: the RX-only step below it, the SB port
++		 * sample width, would address the wrong half of the codec.
+ 		 */
+ 		switch (params_width(params)) {
+ 		case 16:
+@@ -3120,14 +3144,13 @@
+ 			break;
+ 		}
+ 		wcd->dai[dai->id].rate = params_rate(params);
+-		return wcd_slim_tx_stream_prepare(wcd, &wcd->dai[dai->id]);
++		return 0;
+ 	default:
+ 		dev_err(wcd->dev, "Invalid stream type %d\n",
+ 			substream->stream);
+ 		return -EINVAL;
+ 	};
+ 	wcd9320_set_rxsb_port_format(params, dai);
+-	wcd_slim_stream_prepare(wcd, &wcd->dai[dai->id]);
+ 
+ 	return 0;
+ }
+@@ -3668,8 +3691,15 @@
+ static void wcd9320_codec_remove(struct snd_soc_component *comp)
+ {
+ 	struct wcd9320_priv *wcd = dev_get_drvdata(comp->dev);
++	int i;
+ 
+ 	smp_store_release(&wcd->slim_data->codec_priv, NULL);
++
++	for (i = 0; i < ARRAY_SIZE(wcd->dai); i++) {
++		if (wcd->dai[i].sruntime)
++			slim_stream_free(wcd->dai[i].sruntime);
++		wcd->dai[i].sruntime = NULL;
++	}
+ }
+ 
+ static struct snd_soc_component_driver wcd9320_component_drv = {

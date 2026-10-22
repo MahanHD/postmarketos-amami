@@ -1,0 +1,286 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] ASoC: wcd9320: fixes from the audio review
+
+From the code review of the audio patches (docs/review.md, audio pass):
+
+- The SLIMbus port interrupt skipped ports whose interrupt was disabled,
+  as wcd9335 does. Its own overflow branch disables the port, so the
+  port-closed event at the end of a stream was dropped and every close
+  waited out its timeout. taiko_slimbus_irq() has no such skip.
+- The platform probe deferred only until the slim drvdata existed; the
+  interface regmap arrives later, from the status callback. Wait for it.
+- Component remove now waits for a running interrupt thread before the
+  private data it uses is freed.
+- The slim status callback acted on every status and redid all of its
+  setup each time: on DOWN it talked to a dead bus, and on the UP after
+  an ADSP restart (every boot here) it leaked a regmap and requested the
+  interrupt again. It now acts on UP, sets up once, re-queries only the
+  interface device's address after a restart, requests the interrupt
+  only once the regmap its handler reads exists, and reports failure.
+- "SLIM RXn MUX" moved a port to a second AIF by linking it onto that
+  AIF's list while it was still on the first, and every RX mux read back
+  whatever value was written last to any of them. The port is moved now,
+  and each mux reads back its own AIF.
+
+---
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -678,24 +678,15 @@
+ 	return 0;
+ }
+ 
+-static int slim_rx_mux_get(struct snd_kcontrol *kcontrol,
+-			   struct snd_ctl_elem_value *ucontrol)
+-{
+-	printk("WCD: %s", __func__);
+-
+-        struct snd_soc_dapm_context *dapm = snd_soc_dapm_kcontrol_dapm(kcontrol);
+-	struct snd_soc_component *component = snd_soc_dapm_to_component(dapm);
+-	struct wcd9320_priv *wcd = dev_get_drvdata(component->dev);
+-
+-	ucontrol->value.enumerated.item[0] = wcd->rx_port_value;
+-
+-	return 0;
+-}
+-
+ static const char *const slim_rx_mux_text[] = {
+ 	"ZERO", "AIF1_PB", "AIF2_PB", "AIF3_PB", "AIF4_PB", "AIF_MIX1_PB"
+ };
+ 
++/* the DAI behind each slim_rx_mux_text[] entry after "ZERO" */
++static const int slim_rx_mux_aif[] = {
++	AIF1_PB, AIF2_PB, AIF3_PB, AIF4_PB, AIF_MIX1_PB
++};
++
+ static int wcd_slim_rx_vport_validation(u32 port_id,
+ 				struct list_head *codec_dai_list)
+ {
+@@ -713,6 +704,27 @@
+ 	return ret;
+ }
+ 
++static int slim_rx_mux_get(struct snd_kcontrol *kcontrol,
++			   struct snd_ctl_elem_value *ucontrol)
++{
++	printk("WCD: %s", __func__);
++
++        struct snd_soc_dapm_context *dapm = snd_soc_dapm_kcontrol_dapm(kcontrol);
++	struct snd_soc_component *component = snd_soc_dapm_to_component(dapm);
++	struct wcd9320_priv *wcd = dev_get_drvdata(component->dev);
++	u32 port = snd_soc_dapm_kcontrol_widget(kcontrol)->shift +
++		   WCD9320_RX_PORT_START_NUMBER;
++	int i;
++
++	ucontrol->value.enumerated.item[0] = 0;
++	for (i = 0; i < ARRAY_SIZE(slim_rx_mux_aif); i++)
++		if (wcd_slim_rx_vport_validation(port,
++				&wcd->dai[slim_rx_mux_aif[i]].wcd_slim_ch_list))
++			ucontrol->value.enumerated.item[0] = i + 1;
++
++	return 0;
++}
++
+ static int slim_rx_mux_put(struct snd_kcontrol *kcontrol,
+ 			   struct snd_ctl_elem_value *ucontrol)
+ {
+@@ -725,72 +737,33 @@
+ 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
+ 	struct snd_soc_dapm_update *update = NULL;
+ 	u32 port_id = widget->shift;
++	unsigned int value = ucontrol->value.enumerated.item[0];
++	struct list_head *node = &wcd->slim_data->rx_chs[port_id].list;
++	struct list_head *aif;
+ 
+-	wcd->rx_port_value = ucontrol->value.enumerated.item[0];
++	if (value > ARRAY_SIZE(slim_rx_mux_aif)) {
++		dev_err(wcd->dev, "Unknown AIF %u\n", value);
++		return -EINVAL;
++	}
+ 
+-	/* value need to match the Virtual port and AIF number */
+-	switch (wcd->rx_port_value) {
+-	case 0:
+-
+-		list_del_init(&wcd->slim_data->rx_chs[port_id].list);
+-		break;
+-	case 1:
+-		if (wcd_slim_rx_vport_validation(port_id +
+-			WCD9320_RX_PORT_START_NUMBER,
+-			&wcd->dai[AIF1_PB].wcd_slim_ch_list)) {
+-			printk("WCD VPORT FAIL");
+-			goto rtn;
+-		}
+-		list_add_tail(&wcd->slim_data->rx_chs[port_id].list,
+-			      &wcd->dai[AIF1_PB].wcd_slim_ch_list);
+-		break;
+-	case 2:
+-		if (wcd_slim_rx_vport_validation(port_id +
+-			WCD9320_RX_PORT_START_NUMBER,
+-			&wcd->dai[AIF2_PB].wcd_slim_ch_list)) {
+-			goto rtn;
+-		}
+-		list_add_tail(&wcd->slim_data->rx_chs[port_id].list,
+-			      &wcd->dai[AIF2_PB].wcd_slim_ch_list);
+-		break;
+-	case 3:
+-		if (wcd_slim_rx_vport_validation(port_id +
+-			WCD9320_RX_PORT_START_NUMBER,
+-			&wcd->dai[AIF3_PB].wcd_slim_ch_list)) {
+-			goto rtn;
+-		}
+-		list_add_tail(&wcd->slim_data->rx_chs[port_id].list,
+-			      &wcd->dai[AIF3_PB].wcd_slim_ch_list);
+-		break;
+-	case 4:
+-		if (wcd_slim_rx_vport_validation(port_id +
+-			WCD9320_RX_PORT_START_NUMBER,
+-			&wcd->dai[AIF4_PB].wcd_slim_ch_list)) {
+-			goto rtn;
+-		}
+-		list_add_tail(&wcd->slim_data->rx_chs[port_id].list,
+-			      &wcd->dai[AIF4_PB].wcd_slim_ch_list);
+-		break;
+-	case 5:
+-		if (wcd_slim_rx_vport_validation(port_id +
+-			WCD9320_RX_PORT_START_NUMBER,
+-			&wcd->dai[AIF_MIX1_PB].wcd_slim_ch_list)) {
+-			goto rtn;
++	/*
++	 * A port feeds one AIF at most. Move it, never link it a second time:
++	 * a node on two lists sends wcd9320_get_channel_map() round a cycle.
++	 */
++	if (!value) {
++		list_del_init(node);
++	} else {
++		aif = &wcd->dai[slim_rx_mux_aif[value - 1]].wcd_slim_ch_list;
++		if (!wcd_slim_rx_vport_validation(port_id +
++				WCD9320_RX_PORT_START_NUMBER, aif)) {
++			list_del_init(node);
++			list_add_tail(node, aif);
+ 		}
+-		list_add_tail(&wcd->slim_data->rx_chs[port_id].list,
+-			      &wcd->dai[AIF_MIX1_PB].wcd_slim_ch_list);
+-		break;
+-	default:
+-		dev_err(wcd->dev, "Unknown AIF %d\n", wcd->rx_port_value);
+-		goto err;
+ 	}
+-rtn:
+-	snd_soc_dapm_mux_update_power(widget->dapm, kcontrol,
+-					wcd->rx_port_value, e, update);
++
++	snd_soc_dapm_mux_update_power(widget->dapm, kcontrol, value, e, update);
+ 
+ 	return 0;
+-err:
+-	return -EINVAL;
+ }
+ 
+ static const struct soc_enum slim_rx_mux_enum =
+@@ -3532,24 +3505,14 @@
+ 	for_each_set_bit(j, &status, 32) {
+ 		tx = (j >= 16 ? true : false);
+ 		port_id = (tx ? j - 16 : j);
++		/*
++		 * No skipping ports whose interrupt is disabled, unlike
++		 * wcd9335: the overflow branch below disables it, and the
++		 * port-closed event that ends every stream would then be lost.
++		 * taiko_slimbus_irq() handles every pending port.
++		 */
+ 		regmap_read(wcd->if_regmap,
+ 				WCD9320_SLIM_PGD_PORT_INT_RX_SOURCE0 + j, &val);
+-		if (val) {
+-			if (!tx)
+-				reg = WCD9320_SLIM_PGD_PORT_INT_EN0 +
+-					(port_id / 8);
+-			else
+-				reg = WCD9320_SLIM_PGD_PORT_INT_TX_EN0 +
+-					(port_id / 8);
+-			regmap_read(
+-				wcd->if_regmap, reg, &int_val);
+-			/*
+-			 * Ignore interrupts for ports for which the
+-			 * interrupts are not specifically enabled.
+-			 */
+-			if (!(int_val & (1 << (port_id % 8))))
+-				continue;
+-		}
+ 		if (val & WCD9320_SLIM_IRQ_OVERFLOW)
+ 			pr_err_ratelimited(
+ 			   "%s: overflow error on %s port %d, value %x\n",
+@@ -3694,6 +3657,8 @@
+ 	int i;
+ 
+ 	smp_store_release(&wcd->slim_data->codec_priv, NULL);
++	synchronize_irq(container_of(wcd->slim_data, struct wcd9320,
++				     slim_data)->irq);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(wcd->dai); i++) {
+ 		if (wcd->dai[i].sruntime)
+@@ -3738,7 +3703,7 @@
+ 	 * Deferring is the whole fix: the slim probe that follows re-triggers
+ 	 * the deferred queue, and the second attempt finds what it needs.
+ 	 */
+-	if (!control)
++	if (!control || !control->slim_data.if_regmap)
+ 		return -EPROBE_DEFER;
+ 
+ 	//FIXME
+--- a/sound/soc/codecs/wcd9320-slim.c
++++ b/sound/soc/codecs/wcd9320-slim.c
+@@ -215,7 +215,7 @@
+ 				        IRQF_TRIGGER_HIGH | IRQF_ONESHOT, "wcd",
+ 					wcd);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int wcd9320_bring_up(struct wcd9320 *wcd)
+@@ -350,14 +350,21 @@
+ 	if (sdev->e_addr.dev_index == 0)
+ 		return 0;
+ 
++	if (s != SLIM_DEVICE_STATUS_UP)
++		return 0;
++
+ 	wcd = dev_get_drvdata(&sdev->dev);
+ 	np = wcd->dev->of_node;
+ 	dev = wcd->dev;
+ 
++	/*
++	 * Up again after an ADSP restart, which this phone has on every boot:
++	 * the codec kept its state, only the manager forgot the interface
++	 * device's address.
++	 */
++	if (wcd->ifd_regmap)
++		return slim_get_logical_addr(wcd->slim_ifd);
+ 
+-	printk("slim PING");
+-	// Interface device
+-	wcd9320_init(wcd);
+ 
+ 	printk("slim PING");
+ 	ifd_np = of_parse_phandle(np, "ifd", 0);
+@@ -417,6 +424,11 @@
+ 	wcd->slim_data.slim_slave = wcd->slim_ifd;
+ 	wcd->slim_data.if_regmap = wcd->ifd_regmap;
+ 
++	/* the handler reads ifd_regmap, so not before it exists */
++	ret = wcd9320_init(wcd);
++	if (ret)
++		return ret;
++
+ 	printk("slim statused");
+ 	printk("slim statused");
+ 	return of_platform_populate(wcd->dev->of_node, NULL, NULL, wcd->dev);
+--- a/sound/soc/codecs/wcd9320.h
++++ b/sound/soc/codecs/wcd9320.h
+@@ -183,7 +183,6 @@
+ 	/* to track the status */
+ 	unsigned long status_mask;
+ 	/* Port values for Rx and Tx codec_dai */
+-	unsigned int rx_port_value;
+ 	unsigned int tx_port_value;
+ 	/* Tasha Interpolator Mode Select for EAR, HPH_L and HPH_R */
+ 	u32 hph_mode;

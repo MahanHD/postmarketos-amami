@@ -5,8 +5,8 @@ Where the port stands and what comes next, in order. The settled findings are in
 
 ## Current state (2026-10-16)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 241 (`uname -v` prints
-`#242`), with boot image 241. The recipe applies exactly the patches in `patches/`; work
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 244 (`uname -v` prints
+`#245`), with boot image 244. The recipe applies exactly the patches in `patches/`; work
 out of the build with a way back is in `patches/parked/`, diagnostics in
 `patches/debug/`. There is no phone backup (`backups/README.md`).
 
@@ -51,18 +51,24 @@ layer that can be read matches a working reference (both register spaces against
 `golden-reference/`, the clock by substituting the internal RC oscillator, the supplies,
 the bus transactions, the DSP port configuration and the rate maths).
 
-Next: the one layer never compared. `slim_stream_enable()` goes through
-`qcom_slim_ngd_enable_stream()`, which sends a single `SLIM_USR_MC_DEF_ACT_CHAN` QMI
-message to the ADSP instead of DEFINE/ACTIVATE_CHANNEL on the bus. Check that the
-channel it defines matches what `CONNECT_SINK` bound on the codec side, by diffing its
-payload against downstream's `slim-msm-ngd.c`.
+The channel messages are compared now (2026-10-22, r242-r244): `CONNECT_SINK`,
+`DEF_ACT_CHAN` and `RECONFIG_NOW` match downstream byte for byte after `0123` (the data
+format bits), and streams are stopped as downstream stops them (`0124`-`0126`). The
+overflow is unchanged from the first sample of a boot's first playback.
+
+Next, in order: confirm the overflow is still continuous with the `INT_CLR` probe
+(needs `patches/debug/9000`; after a stop the status bit is only a latch); then look at
+the codec's own half of the port, which nothing so far has read during a stream: the
+interface device's per-port state, read live during playback here and in the golden
+reference, rather than the configuration registers. Measure with PulseAudio and
+PipeWire stopped before the codec loads, or the "first" playback is not the first.
 
 Where it is written down: `worklog.md`, "Phase 3: audio" (the latest state and this
 lead at "Where that leaves it", then the two leads closed on 2026-10-01); `notes.md`,
 "Audio". The codec stays off at boot (`userspace/amami-audio-off.conf`); for audio
 work load it by hand, and `0065`/`0066` make it reloadable without a reboot. The PM8941
 GPIO 15 MCLK pin mux is a known defect (review pass 3, finding 9), proven not to be the
-cause. The audio patches have not been through a review pass.
+cause. The audio patches were reviewed in pass 6 (`review.md`).
 
 ## 2. Sensors missing on some boots
 
@@ -76,8 +82,7 @@ enumerate, labelled as one.
 
 ## 3. After the review
 
-All five review passes are done (`review.md`); the audio patches, unreviewed while
-audio was parked, belong to item 1 now. Passes 3 and 4 left a list for upstreaming, not for this phone:
+All six review passes are done (`review.md`), audio as pass 6. Passes 3 and 4 left a list for upstreaming, not for this phone:
 shared-dtsi changes that need other boards' configs or voltages (MPM routing, the
 unvolted OPPs, the GPU SMMU), `0036`'s page alignment derived from the domain instead of
 fixed, and bindings for the new compatibles and properties. Pass 5 left pstore and

@@ -2754,6 +2754,41 @@ So the work splits into three milestones, and only the first two are small:
    this phone off is **Power + Volume Up**, not a ten-second power hold, which
    does nothing.
 
+   **2026-10-22: the channel definition is compared, one real difference fixed,
+   and it is not the cause.** A kprobe on `qcom_slim_ngd_xfer_msg` (entry,
+   `%r1` = txn: `mt` +1, `mc` +2, `la` +7, `msg` +8; in `msg`, `num_bytes` +2 and
+   `wbuf` +8) shows every non-register message of a playback:
+
+        CONNECT_SINK  la 0xcb  port 16 -> ch 144,  port 17 -> ch 145
+        DEF_ACT_CHAN  cb 24 20 83 <tid> 90 91
+        RECONFIG_NOW  <tid> cb
+
+   Against downstream's `ngd_allocbw()` for 48 kHz, 16 bit, `SLIM_AUTO_ISO` (which
+   becomes hard ISO): segment length 4 with coefficient 3 (`0x24`), exponent 2 and
+   protocol 0 (`0x20`), presence rate `0x83`, channels 144/145 - all identical, and
+   the channels are the ones `CONNECT_SINK` bound. The one difference is byte 0:
+   downstream sends `dataf << 5 | (laddr & 0x1f)`, mainline sent the whole address,
+   so `0xcb` asked the manager for data format 6. `0123` fixes it (`0x0b` now).
+   Measured on a fresh boot, the first playback, PulseAudio and PipeWire stopped
+   with SIGSTOP before the codec loads (they open the card the moment it appears,
+   and a run they have touched is not a first run): `INT_STATUS_RX_0` goes `00`
+   before the stream to `03` at once. Unchanged.
+
+   The review of the audio patches (`review.md`, pass 6) found the stream was never
+   stopped either: no channel removal ever reached the ADSP, so after the first
+   playback the channels stayed active. `0124`-`0126` stop it as downstream does
+   (`CHAN_CTRL` remove `8b <tid> 90 91`, then `RECONFIG_NOW`, seen in the trace);
+   the overflow at the start of the first playback is unaffected, so stale channels
+   were not the cause either. After a stop `INT_STATUS_RX_0` still reads `03`, but
+   that is the latch: the overflow branch disables the port's interrupt, so nothing
+   clears it, and telling a latch from a live overflow needs the `INT_CLR` write
+   (`patches/debug/9000`).
+
+   So the bus messages for the channel, on both sides, now match downstream byte
+   for byte, and the codec still consumes nothing. Left: what the ADSP sends the
+   codec on the bus in response (NEXT_DEFINE_CHANNEL/CONTENT/ACTIVATE), which
+   cannot be seen from Linux, and the codec's own side of the port.
+
 
    **Two leads chased and closed 2026-10-01, both recorded so nobody repeats them.**
 

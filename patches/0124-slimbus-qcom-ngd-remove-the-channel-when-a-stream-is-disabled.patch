@@ -1,0 +1,128 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] slimbus: qcom-ngd: remove the channel when a stream is disabled
+
+The NGD sets up a stream with one SLIM_USR_MC_DEF_ACT_CHAN to the ADSP,
+but had no disable_stream, and the core's own NEXT_DEACTIVATE_CHANNEL and
+NEXT_REMOVE_CHANNEL fall in the reconfiguration range that
+qcom_slim_ngd_xfer_msg() drops. So nothing ever told the manager a stream
+had stopped: its channels stayed active and kept filling the codec's
+ports long after playback ended.
+
+Send what downstream's ngd_allocbw() sends for its removal list:
+SLIM_USR_MC_CHAN_CTRL with SLIM_CH_REMOVE and the channels, then
+SLIM_USR_MC_RECONFIG_NOW, which is shared with enable_stream now.
+
+---
+--- a/drivers/slimbus/qcom-ngd-ctrl.c
++++ b/drivers/slimbus/qcom-ngd-ctrl.c
+@@ -74,6 +74,7 @@
+ #define SLIM_USR_MC_DEFINE_CHAN		0x20
+ #define SLIM_USR_MC_DEF_ACT_CHAN	0x21
+ #define SLIM_USR_MC_CHAN_CTRL		0x23
++#define SLIM_CH_CTRL_REMOVE		2
+ #define SLIM_USR_MC_RECONFIG_NOW	0x24
+ #define SLIM_USR_MC_REQ_BW		0x28
+ #define SLIM_USR_MC_CONNECT_SRC		0x2C
+@@ -993,6 +994,35 @@
+ 	return coef;
+ }
+ 
++static int qcom_slim_ngd_reconfig_now(struct slim_device *sdev,
++				      struct slim_msg_txn *txn)
++{
++	struct slim_controller *ctrl = sdev->ctrl;
++	u8 *wbuf = (u8 *)txn->msg->wbuf;
++	int ret;
++
++	txn->mc = SLIM_USR_MC_RECONFIG_NOW;
++	txn->msg->num_bytes = 2;
++	wbuf[1] = sdev->laddr;
++	txn->rl = txn->msg->num_bytes + 4;
++
++	ret = slim_alloc_txn_tid(ctrl, txn);
++	if (ret) {
++		dev_err(ctrl->dev, "Fail to allocate TID\n");
++		return ret;
++	}
++
++	wbuf[0] = txn->tid;
++	ret = qcom_slim_ngd_xfer_msg_sync(ctrl, txn);
++	if (ret) {
++		slim_free_txn_tid(ctrl, txn);
++		dev_err(&sdev->dev, "TX timed out:MC:0x%x,mt:0x%x", txn->mc,
++				txn->mt);
++	}
++
++	return ret;
++}
++
+ static int qcom_slim_ngd_enable_stream(struct slim_stream_runtime *rt)
+ {
+ 	struct slim_device *sdev = rt->dev;
+@@ -1066,26 +1096,50 @@
+ 		return ret;
+ 	}
+ 
+-	txn.mc = SLIM_USR_MC_RECONFIG_NOW;
+-	txn.msg->num_bytes = 2;
+-	wbuf[1] = sdev->laddr;
+-	txn.rl = txn.msg->num_bytes + 4;
++	return qcom_slim_ngd_reconfig_now(sdev, &txn);
++}
++
++/* Downstream's channel removal: SLIM_USR_MC_CHAN_CTRL with SLIM_CH_REMOVE */
++static int qcom_slim_ngd_disable_stream(struct slim_stream_runtime *rt)
++{
++	struct slim_device *sdev = rt->dev;
++	struct slim_controller *ctrl = sdev->ctrl;
++	struct slim_val_inf msg =  {0};
++	u8 wbuf[SLIM_MSGQ_BUF_LEN];
++	u8 rbuf[SLIM_MSGQ_BUF_LEN];
++	struct slim_msg_txn txn = {0,};
++	int i, ret;
++
++	txn.mt = SLIM_MSG_MT_DEST_REFERRED_USER;
++	txn.dt = SLIM_MSG_DEST_LOGICALADDR;
++	txn.la = SLIM_LA_MGR;
++	txn.msg = &msg;
++	txn.msg->wbuf = wbuf;
++	txn.msg->rbuf = rbuf;
+ 
+ 	ret = slim_alloc_txn_tid(ctrl, &txn);
+ 	if (ret) {
+-		dev_err(ctrl->dev, "Fail to allocate TID\n");
+-		return ret;
++		dev_err(&sdev->dev, "Fail to allocate TID\n");
++		return -ENXIO;
+ 	}
+ 
+-	wbuf[0] = txn.tid;
++	wbuf[txn.msg->num_bytes++] = SLIM_CH_CTRL_REMOVE << 6 |
++				     (sdev->laddr & 0x1f);
++	wbuf[txn.msg->num_bytes++] = txn.tid;
++	for (i = 0; i < rt->num_ports; i++)
++		wbuf[txn.msg->num_bytes++] = rt->ports[i].ch.id;
++
++	txn.mc = SLIM_USR_MC_CHAN_CTRL;
++	txn.rl = txn.msg->num_bytes + 4;
+ 	ret = qcom_slim_ngd_xfer_msg_sync(ctrl, &txn);
+ 	if (ret) {
+ 		slim_free_txn_tid(ctrl, &txn);
+ 		dev_err(&sdev->dev, "TX timed out:MC:0x%x,mt:0x%x", txn.mc,
+ 				txn.mt);
++		return ret;
+ 	}
+ 
+-	return ret;
++	return qcom_slim_ngd_reconfig_now(sdev, &txn);
+ }
+ 
+ static int qcom_slim_ngd_get_laddr(struct slim_controller *ctrl,
+@@ -1650,6 +1704,7 @@
+ 	ctrl->ctrl.clkgear = SLIM_MAX_CLK_GEAR;
+ 	ctrl->ctrl.get_laddr = qcom_slim_ngd_get_laddr;
+ 	ctrl->ctrl.enable_stream = qcom_slim_ngd_enable_stream;
++	ctrl->ctrl.disable_stream = qcom_slim_ngd_disable_stream;
+ 	ctrl->ctrl.xfer_msg = qcom_slim_ngd_xfer_msg;
+ 	ctrl->ctrl.wakeup = NULL;
+ 	ctrl->state = QCOM_SLIM_NGD_CTRL_DOWN;
