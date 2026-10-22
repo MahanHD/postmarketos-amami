@@ -2789,6 +2789,67 @@ So the work splits into three milestones, and only the first two are small:
    codec on the bus in response (NEXT_DEFINE_CHANNEL/CONTENT/ACTIVATE), which
    cannot be seen from Linux, and the codec's own side of the port.
 
+   **2026-10-22, later: live probes on a debug build (r245/r246, `debug/9000`).**
+
+   *The overflow is live, not a latch.* Clearing `INT_CLR_RX_0` mid-stream,
+   `INT_STATUS_RX_0` reads `03` again at once; after the stream stops (and since
+   `0124` the channel is removed) it clears to `00`, and so does `0x80/0x81`.
+
+   *Nothing in the interface device's port registers moves it.* Mid-stream, each
+   with clear-and-reread and a readback confirming the write landed: the RX channel
+   maps `0x180/0x184` (`03/03` -> `01/02`, `02/01`, `01/00`), the port config
+   `0x40/0x41` (watermark 6/12/15 bytes, and **disabled**, `04`), an enable bounce.
+   The overflow and `0x80 = 0x42` stay exactly as they are, even with the port
+   disabled. Whatever puts the port in that state is not in these registers.
+
+   *Our interface device equals golden byte for byte* in `0x00-0xBF`, idle and
+   playing, except what the overflow itself causes (`034`, `060/061`, the masked
+   `030`) and `0x80/0x81`; the PGD diff during playback (70 registers) is again
+   only MBHC, mic bias, TX, interrupt routing, gains, Class-H thresholds and fuse
+   readouts.
+
+   *The handset mic, by hand, captures exact zeros.* Stock's routing says AMIC1 is
+   the handset mic (MIC BIAS1), and ADC1 reaches the bus only as ADC1 -> DEC6 ->
+   SLIM TX port 6; the earlier capture tests used ADC6, which stock wires to an
+   "FB ANC" mic that may not be fitted. `0127` adds a `SLIM TX6 MUX`. With LDO_H,
+   CFILT1 (golden 0x98), MIC BIAS1, the ADC block clock, ADC1 (init-bit pulse,
+   golden gain bits), DEC6 (mux, clock, reset pulse, HPF, unmute) and TX6 <- DEC6
+   all set by hand from downstream's handlers, a playback open for MCLK, and the
+   laptop playing 1 kHz at the phone: every sample is 0. The TX port status never
+   asserts, and its port-closed event never arrives either (`ch_mask:0x21` close
+   timeout), while the RX side reports both. The TX ports look inert.
+
+   *The laptop's microphone is a working instrument* (`tools/mic-level.py`, a tone
+   from its own speaker reads -19 dB in its band against -50 dB). One transient at
+   a stream start in the first run was not reproduced over three timed starts, so
+   it was the room. With downstream's eight loudspeaker registers set by hand
+   during a stream, nothing is heard - expected while no data reaches the codec.
+
+   *The loudspeaker is RX7 -> SPK DRV, not bridged LINEOUT1-4.* The golden
+   loudspeaker capture changes eight registers from idle: `SPKR_DRV_EN` bit 7,
+   `CLK_RX_B1_CTL` 0x40 (RX7), `CONN_RX7_B1_CTL` 0x65 (RX1+RX2), the RX7 volume,
+   `RX_COM_BIAS` and the clock buffers - no line out. The "Ext Spk ... <- LINEOUTn"
+   entries in stock's `qcom,audio-routing` are the generic msm8974 template. (The
+   2026-10-01 list above says otherwise; this replaces it.) Our driver has no RX7
+   or SPK DRV widgets yet.
+
+   *The ADSP's first-run crash is not caused by SLIMbus.* It always lands 25-50 ms
+   after the NGD's capability exchange, which looked causal, but with
+   `slim_qcom_ngd_ctrl` blacklisted for one boot the ADSP still crashed, 280 ms
+   after coming up. A remoteproc coredump of it (udev rule enabling `coredump`) is
+   all zeros: the region is scrubbed by the PAS shutdown before it is copied.
+
+   *Restarting the ADSP with the codec loaded oopses in the codec driver.*
+   `echo stop/start > remoteproc/state`: first the card disconnect waits for every
+   open of the card to close - PulseAudio and PipeWire, which this test had frozen
+   with SIGSTOP, so resume them first or it hangs in `snd_card_disconnect_sync` -
+   then on the way back up `mywcd_slim_init_slimslave` writes through a stale
+   `rx_chs` (`r2 = 03010102`). `rx_chs` is reached through the slim device's
+   `slim_data` but allocated devm against the codec's platform device, so it dies
+   with the first unbind. Not fixed yet; only reachable by an ADSP restart with
+   the codec loaded, which boot does not do (the codec loads after the boot-time
+   restart).
+
 
    **Two leads chased and closed 2026-10-01, both recorded so nobody repeats them.**
 

@@ -239,6 +239,13 @@ cycle, so a SoC reset leaves the log behind. Run it after any change to
 check `dmesg` for "no SPM found": boot checks alone passed on a kernel where every
 core parked in WFI and none came back.
 
+`mic-level.py SECONDS [WAV|-] [HZ]` runs on the laptop and listens to the phone through
+the laptop's microphone (pw-record): one line per 250 ms with the level, the strongest
+frequency and the level in a 20 Hz band around HZ (440 by default). The mic's broadband
+floor is high (about -18 dBFS), so read the band column; a tone from the laptop's own
+speaker reads about -19 dB there against a -50 dB floor, which is the check that the
+instrument works. The vibrator is too quiet to register.
+
 `audio-playback-trace.sh` loads the codec on a fresh boot and plays twice to the
 headphone path, printing the codec's SLIMbus RX port status (`INT_STATUS_RX_0/1`, `03` =
 both ports in overflow) before, during and after each playback, and every SLIMbus message
