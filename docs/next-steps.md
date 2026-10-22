@@ -40,7 +40,31 @@ while the real fix is under way. And start from the other firmwares, above all s
 reverse engineer them, then use what they yield, combine it, and improve on it where we
 can.
 
-## 1. Sensors missing on some boots
+## 1. Audio (unparked 2026-10-22)
+
+The WCD9320 (Taiko) driver is in the series (`0049`-`0068`): the codec probes, every
+register reads and writes, the card enumerates, the whole DAPM path powers up, and the
+SLIMbus channel handshake completes. It is still silent. The one measured symptom: the
+codec's SLIMbus RX port sits in permanent overflow for the whole of a playback, so data
+arrives and the codec consumes none of it, and the same in the capture direction. Every
+layer that can be read matches a working reference (both register spaces against
+`golden-reference/`, the clock by substituting the internal RC oscillator, the supplies,
+the bus transactions, the DSP port configuration and the rate maths).
+
+Next: the one layer never compared. `slim_stream_enable()` goes through
+`qcom_slim_ngd_enable_stream()`, which sends a single `SLIM_USR_MC_DEF_ACT_CHAN` QMI
+message to the ADSP instead of DEFINE/ACTIVATE_CHANNEL on the bus. Check that the
+channel it defines matches what `CONNECT_SINK` bound on the codec side, by diffing its
+payload against downstream's `slim-msm-ngd.c`.
+
+Where it is written down: `worklog.md`, "Phase 3: audio" (the latest state and this
+lead at "Where that leaves it", then the two leads closed on 2026-10-01); `notes.md`,
+"Audio". The codec stays off at boot (`userspace/amami-audio-off.conf`); for audio
+work load it by hand, and `0065`/`0066` make it reloadable without a reboot. The PM8941
+GPIO 15 MCLK pin mux is a known defect (review pass 3, finding 9), proven not to be the
+cause. The audio patches have not been through a review pass.
+
+## 2. Sensors missing on some boots
 
 The ADSP's first run is bad on every boot: it raises an exception, and after the
 automatic restart the sensors come up (most boots), or it runs on and never brings
@@ -50,10 +74,10 @@ reset and the state the bootloader leaves) with `qcom_q6v5_pas`'s first start. A
 stopgap, if needed meanwhile, is restarting the ADSP when the sensors do not
 enumerate, labelled as one.
 
-## 2. After the review
+## 3. After the review
 
-All five review passes are done (`review.md`); the audio patches stay unreviewed until
-audio resumes. Passes 3 and 4 left a list for upstreaming, not for this phone:
+All five review passes are done (`review.md`); the audio patches, unreviewed while
+audio was parked, belong to item 1 now. Passes 3 and 4 left a list for upstreaming, not for this phone:
 shared-dtsi changes that need other boards' configs or voltages (MPM routing, the
 unvolted OPPs, the GPU SMMU), `0036`'s page alignment derived from the domain instead of
 fixed, and bindings for the new compatibles and properties. Pass 5 left pstore and
@@ -62,7 +86,7 @@ fixed, and bindings for the new compatibles and properties. Pass 5 left pstore a
 The charger's return from warm to normal derating (below 43C) has not been seen on the
 phone yet, only the switch to warm; `dmesg` logs "normal charging" when it happens.
 
-## 3. Camera, rear (IMX200)
+## 4. Camera, rear (IMX200)
 
 1. **A failed stream start wedges camss** until reboot (every later start returns
    EINVAL). Seen after a CCI timeout writing the lens position; the notes record the
@@ -94,7 +118,7 @@ phone yet, only the switch to warm; `dmesg` logs "normal charging" when it happe
    EEPROM's remaining bytes and stock's `exposure_ctrl.dat` may hold better starting
    points.
 
-## 4. CPU above 1.5 GHz
+## 5. CPU above 1.5 GHz
 
 `0112` runs the cores to 1497.6 MHz: VDD_APC (pm8841 s5, SID 5) sits at 900 mV, which
 covers this bin's PVS voltage up to 1497.6 MHz (895 mV). The chip is rated to 2150.4
@@ -106,7 +130,7 @@ Then widen s5's constraints and add the OPPs above 1497.6 MHz. Thermal already
 throttles four loaded cores at 1.5 GHz near 75 C, so sustained gains are modest;
 single-thread bursts gain most.
 
-## 5. GPU
+## 6. GPU
 
 1. kgsl escalates to a full stop and start when a soft reset fails; drm does not. No
    case of it has been seen, and `devcore-collect` would catch one.
@@ -119,7 +143,7 @@ single-thread bursts gain most.
    disable of an already disabled clock: 3 boots of 25 (`review.md`, pass 4). The GPU
    works afterwards. Count it over more boots before chasing it.
 
-## 6. Camera, front (IMX132)
+## 7. Camera, front (IMX132)
 
 Same method as the rear: its stock file is `SEM02BN1_IMX132.dat`. Its CCS limits are
 broken (PLL op minimum above maximum), so it needs a quirk of its own first; the CCS
@@ -132,7 +156,6 @@ fixes parked in `patches/parked/` and `patches/debug/9007` are the starting poin
 - The CAMSS IOMMU, which would let CAMSS use scattered buffers.
 - Small cleanups: `THERMAL_EMULATION`, the leftover half of the CPU wedge work, the
   cosmetic 307200 kHz warning, and `/boot` mounting as an unchecked filesystem.
-- Audio stays parked.
 
 ## Working rules on this phone
 
