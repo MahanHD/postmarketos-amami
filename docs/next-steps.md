@@ -66,6 +66,8 @@ RX7 -> SPK DRV (eight golden registers), which the driver has no widgets for yet
 
 An ADSP restart with the codec loaded now survives (r252, `0128`-`0131`): it used to oops
 or deadlock, because the restart re-registers the SLIMbus controller.
+`0128`-`0131` have not been through `/code-review` yet; `0129` and `0131` touch shared
+SLIMbus code (regmap-slimbus, the NGD), so review them before building on them.
 
 Next: the state byte is the one thing that differs at the moment it goes wrong, and
 nothing documents it. Find what writes or reports it: downstream's
