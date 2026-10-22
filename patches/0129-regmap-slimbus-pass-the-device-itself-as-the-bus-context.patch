@@ -1,0 +1,33 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] regmap: slimbus: pass the device itself as the bus context
+
+The bus callbacks take their context as a struct slim_device, but
+__devm_regmap_init_slimbus() passed &slimbus, the address of its own
+parameter on the stack, so every transfer of a devm slimbus regmap went
+through a dangling pointer. It oopsed in slim_do_transfer() on the first
+write. __regmap_init_slimbus() passed &slimbus->dev, which only works
+because dev is the first member of struct slim_device.
+
+Pass slimbus in both, as upstream has since done.
+
+---
+--- a/drivers/base/regmap/regmap-slimbus.c
++++ b/drivers/base/regmap/regmap-slimbus.c
+@@ -48,7 +48,7 @@
+ 	if (IS_ERR(bus))
+ 		return ERR_CAST(bus);
+ 
+-	return __regmap_init(&slimbus->dev, bus, &slimbus->dev, config,
++	return __regmap_init(&slimbus->dev, bus, slimbus, config,
+ 			     lock_key, lock_name);
+ }
+ EXPORT_SYMBOL_GPL(__regmap_init_slimbus);
+@@ -63,7 +63,7 @@
+ 	if (IS_ERR(bus))
+ 		return ERR_CAST(bus);
+ 
+-	return __devm_regmap_init(&slimbus->dev, bus, &slimbus, config,
++	return __devm_regmap_init(&slimbus->dev, bus, slimbus, config,
+ 				  lock_key, lock_name);
+ }
+ EXPORT_SYMBOL_GPL(__devm_regmap_init_slimbus);

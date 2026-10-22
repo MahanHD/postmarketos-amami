@@ -1,0 +1,64 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] debug: wcd9320: re-activate the RX channel once the chain is up
+
+With the module parameter reactivate_ms set, the RX channel is removed,
+disconnected, connected and activated again that long after POST_PMU,
+logging the port state at each step. Tests whether the RX port sits in
+overflow because it was activated before the codec's RX chain was
+running. Applies on top of 9023.
+
+---
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -955,6 +955,38 @@
+ 		tag, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+ }
+ 
++/*
++ * debug 9024: activate the channel a second time once the RX chain is up, to
++ * test whether the port is stuck because it was activated before the CDC side
++ * was running.
++ */
++static int reactivate_ms;
++module_param(reactivate_ms, int, 0644);
++
++static struct wcd9320_priv *dbg_re_wcd;
++static struct wcd_slim_codec_dai_data *dbg_re_dai;
++
++static void dbg_re_fn(struct work_struct *work)
++{
++	struct wcd9320_priv *wcd = dbg_re_wcd;
++	struct wcd_slim_codec_dai_data *dai = dbg_re_dai;
++	int ret;
++
++	wcd_dbg_ports(wcd, "re before");
++	ret = slim_stream_disable(dai->sruntime);
++	msleep(20);
++	wcd_dbg_ports(wcd, "re removed");
++	slim_stream_unprepare(dai->sruntime);
++	ret |= wcd_slim_stream_prepare(wcd, dai);
++	wcd_dbg_ports(wcd, "re connect");
++	ret |= wcd_slim_stream_enable(wcd->slim_data, dai);
++	wcd_dbg_ports(wcd, "re active");
++	msleep(50);
++	wcd_dbg_ports(wcd, "re +50ms");
++	pr_info("wcd9320 reactivate done, ret %d\n", ret);
++}
++static DECLARE_DELAYED_WORK(dbg_re_work, dbg_re_fn);
++
+ static int wcd9320_codec_enable_slimrx(struct snd_soc_dapm_widget *w,
+ 				     struct snd_kcontrol *kcontrol,
+ 				     int event)
+@@ -1002,6 +1034,12 @@
+ 		wcd_dbg_ports(wcd, "rx +2ms");
+ 		msleep(50);
+ 		wcd_dbg_ports(wcd, "rx +50ms");
++		if (reactivate_ms > 0) {
++			dbg_re_wcd = wcd;
++			dbg_re_dai = dai;
++			schedule_delayed_work(&dbg_re_work,
++					      msecs_to_jiffies(reactivate_ms));
++		}
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+ 		wcd_slim_stream_close(dai);

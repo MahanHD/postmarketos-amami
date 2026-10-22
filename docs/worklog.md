@@ -2844,11 +2844,68 @@ So the work splits into three milestones, and only the first two are small:
    open of the card to close - PulseAudio and PipeWire, which this test had frozen
    with SIGSTOP, so resume them first or it hangs in `snd_card_disconnect_sync` -
    then on the way back up `mywcd_slim_init_slimslave` writes through a stale
-   `rx_chs` (`r2 = 03010102`). `rx_chs` is reached through the slim device's
-   `slim_data` but allocated devm against the codec's platform device, so it dies
-   with the first unbind. Not fixed yet; only reachable by an ADSP restart with
-   the codec loaded, which boot does not do (the codec loads after the boot-time
-   restart).
+   pointer (`r2 = 03010102`). Only reachable by an ADSP restart with the codec
+   loaded, which boot does not do (the codec loads after the boot-time restart).
+
+   *Why, and the fix (`0129`-`0131`, r252).* An ADSP restart does not just report
+   the slim devices absent and present again: the NGD controller unregisters and
+   registers anew ("SLIM controller Registered" in the log), so both codec slim
+   devices are removed and probed from scratch. `wcd9320_slim_remove()` was
+   empty. The codec platform device it had populated stayed bound, pointing into
+   the slim device's freed devm data (`control`, hence `slim_data`), and the next
+   card probe wrote through it. On r249 the same restart oopsed somewhere else, a
+   NULL read in `slim_tx_mux_put()` when userspace restored the mixer. Each
+   re-probe also took the regmaps again (debugfs: "Directory '217:a0:1:0' ...
+   already present"), the supplies, the clock GPIO and a reference on the
+   interface device, and released none of them. `0130` depopulates the codec on
+   remove and hands the rest to devm, releasing the interface regmap after the
+   IRQ whose handler reads it.
+
+   Getting there turned up two bugs underneath:
+
+   - `__devm_regmap_init_slimbus()` passes `&slimbus`, the address of its own
+     stack parameter, as the bus context, so the first write through a devm
+     slimbus regmap oopsed in `slim_do_transfer()` (r250, at modprobe; the probe
+     died holding the device lock and the next ADSP stop hung on it). The non-devm
+     version passes `&slimbus->dev`, which only works because `dev` is the first
+     member. `0129` passes `slimbus` in both, as upstream has since done.
+   - The NGD's SSR notifier held `tx_lock` while it unregistered the controller
+     (r251). Removing the codec now tears down its card, the card waits for
+     PulseAudio to close the PCM, the close powers DAPM down with register
+     writes, and each write waited on `tx_lock`: three tasks in D state for
+     good. `0131` takes the lock only to drain the transfer in flight and mark the
+     controller down, removes the slaves without it, and fails transfers at once
+     once the QMI link to the manager is gone (the `failed:-19` lines during a
+     restart are those teardown writes).
+
+   On r252, three ADSP stop/start cycles with the codec loaded and PulseAudio
+   running: the card is back within a second each time, no oops, no leak
+   warnings, and a playback afterwards runs.
+
+   *A separate overflow, found looking for it (`0128`).* apq8096 passes
+   `set_channel_map()` a 16-slot RX map and the codec copied all of it into
+   `rx_chs[]`, 13 entries: 84 bytes past a devm allocation on every card probe.
+   Real, but not what crashed: r249 had `0128` and still oopsed.
+
+   *The rest of the live probes (r247/r248, `debug/9023`, `debug/9024`).* The
+   interface device's per-port state byte `0x80` goes `00 -> 42` exactly at
+   `DEF_ACT_CHAN` + `RECONFIG_NOW`, and the overflow bit sets in the same
+   instant; it is not something that develops during the stream. Every user
+   message is ACKed with success (`GENERIC_ACK`, kprobe on
+   `slim_msg_response()`). Re-running disable/unprepare/prepare/enable later in a
+   stream (`9024`) lands on `42` again, so activation timing is not it. The TX
+   port's byte `0x95` stays `00` through a capture: the TX side never activates
+   at all.
+
+   *MCLK, once more, and why not to trust the pin readback.* PM8941 GPIO 15 was
+   sampled over SPMI during playback in every mux setting. `STATUS1` (0x08) is
+   not the pin level; the driver reads `RT_STS` (0x10). But `RT_STS` also reads
+   `0` with the pin driven high in input/output mode, because the pad sits on
+   `VIN0` (`DIG_VIN_CTL = 00`, downstream `2`): the probe fails its own control
+   and says nothing about the clock. Settled anyway by the r114 RC-oscillator
+   test above; the pin config stays a known defect (review pass 3, finding 9).
+   Reading the full `regmap/0-00/registers` with `grep` takes hours; seek with
+   `dd` (see "A single PMIC register can be read").
 
 
    **Two leads chased and closed 2026-10-01, both recorded so nobody repeats them.**

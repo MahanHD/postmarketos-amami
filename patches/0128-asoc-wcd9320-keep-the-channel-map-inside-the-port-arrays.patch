@@ -1,0 +1,28 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] ASoC: wcd9320: keep the channel map inside the port arrays
+
+apq8096's machine driver passes set_channel_map() a generic 16-slot RX
+map, and the codec copied every slot into rx_chs[], which holds only
+WCD9320_RX_MAX (13) ports. Three entries were written past the end of
+the devm allocation on every card probe.
+
+Take no more slots than the codec has ports.
+
+---
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -2613,6 +2613,14 @@
+ 	int ret = 0;
+ 	int i;
+ 
++	/*
++	 * The machine driver hands over a generic 16-slot map, but rx_chs has
++	 * only WCD9320_RX_MAX (13) entries: the excess was written past the
++	 * end of the allocation on every card probe.
++	 */
++	rx_num = min_t(unsigned int, rx_num, WCD9320_RX_MAX);
++	tx_num = min_t(unsigned int, tx_num, WCD9320_TX_MAX);
++
+ 	if (wcd->rx_chs) {
+ 		wcd->num_rx_port = rx_num;
+ 		for (i = 0; i < rx_num; i++) {

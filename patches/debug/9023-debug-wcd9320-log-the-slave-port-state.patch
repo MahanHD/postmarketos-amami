@@ -1,0 +1,67 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] debug: wcd9320: log the slave port state at each step of a stream start
+
+Reads the interface device's port status (0x34/0x36), the RX interrupt
+sources of ports 16/17 (0x60/0x61) and TX port 6 (0x75), and the per-port
+state bytes 0x80/0x81 (RX ports 16/17) and 0x95 (TX port 6): before the
+ports are connected, after CONNECT, after DEF_ACT_CHAN + RECONFIG_NOW, and
+2 ms and 50 ms later. For decoding what 0x80+p means.
+
+---
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -941,6 +941,20 @@
+ 	slim_stream_unprepare(dai->sruntime);
+ }
+ 
++/* debug 9023: the port state bytes at each step of a stream start */
++static void wcd_dbg_ports(struct wcd9320_priv *wcd, const char *tag)
++{
++	static const unsigned int regs[] = { 0x34, 0x36, 0x60, 0x61, 0x75,
++					     0x80, 0x81, 0x95 };
++	unsigned int v[ARRAY_SIZE(regs)];
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(regs); i++)
++		regmap_read(wcd->slim_data->if_regmap, regs[i], &v[i]);
++	pr_info("wcd9320 ports %-10s 034=%02x 036=%02x 060=%02x 061=%02x 075=%02x 080=%02x 081=%02x 095=%02x\n",
++		tag, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
++}
++
+ static int wcd9320_codec_enable_slimrx(struct snd_soc_dapm_widget *w,
+ 				     struct snd_kcontrol *kcontrol,
+ 				     int event)
+@@ -978,9 +992,16 @@
+ 		 * connected here too, not in hw_params: POST_PMD disconnects
+ 		 * them, and a restart need not run hw_params again.
+ 		 */
++		wcd_dbg_ports(wcd, "rx before");
+ 		ret = wcd_slim_stream_prepare(wcd, dai);
++		wcd_dbg_ports(wcd, "rx connect");
+ 		if (!ret)
+ 			ret = wcd_slim_stream_enable(wcd->slim_data, dai);
++		wcd_dbg_ports(wcd, "rx active");
++		usleep_range(2000, 2100);
++		wcd_dbg_ports(wcd, "rx +2ms");
++		msleep(50);
++		wcd_dbg_ports(wcd, "rx +50ms");
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+ 		wcd_slim_stream_close(dai);
+@@ -1013,9 +1034,16 @@
+ 	case SND_SOC_DAPM_POST_PMU:
+ 		wcd9320_codec_enable_int_port(dai, component);
+ 		(void) wcd9320_codec_enable_slim_chmask(dai, true);
++		wcd_dbg_ports(wcd, "tx before");
+ 		ret = wcd_slim_tx_stream_prepare(wcd, dai);
++		wcd_dbg_ports(wcd, "tx connect");
+ 		if (!ret)
+ 			ret = wcd_slim_stream_enable(wcd->slim_data, dai);
++		wcd_dbg_ports(wcd, "tx active");
++		usleep_range(2000, 2100);
++		wcd_dbg_ports(wcd, "tx +2ms");
++		msleep(50);
++		wcd_dbg_ports(wcd, "tx +50ms");
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+ 		wcd_slim_stream_close(dai);

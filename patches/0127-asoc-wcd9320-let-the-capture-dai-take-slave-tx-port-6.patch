@@ -1,0 +1,91 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] ASoC: wcd9320: let the capture DAI take slave TX port 6
+
+The capture path had one slave TX port, 1, which only DEC1 can feed, and
+DEC1 takes DMIC1 or ADC6 - neither of them a microphone on the Xperia Z1
+Compact, whose handset mic is AMIC1. ADC1 reaches the bus only through
+DEC6 and slave TX port 6, so add a "SLIM TX6 MUX" beside TX1.
+
+Each TX mux now reads back its own port's subscription instead of one
+value shared by all of them.
+
+---
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -1875,8 +1875,10 @@
+ 	struct snd_soc_component *component =
+ 		snd_soc_dapm_kcontrol_component(kcontrol);
+ 	struct wcd9320_priv *wcd = dev_get_drvdata(component->dev);
++	u32 port_id = snd_soc_dapm_kcontrol_widget(kcontrol)->shift;
+ 
+-	ucontrol->value.enumerated.item[0] = wcd->tx_port_value;
++	ucontrol->value.enumerated.item[0] =
++		!list_empty(&wcd->slim_data->tx_chs[port_id].list);
+ 	return 0;
+ }
+ 
+@@ -1896,12 +1898,11 @@
+ 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
+ 	struct snd_soc_dapm_update *update = NULL;
+ 	u32 port_id = widget->shift;
++	unsigned int value = ucontrol->value.enumerated.item[0];
+ 
+ 	if (port_id >= WCD9320_TX_MAX)
+ 		return -EINVAL;
+ 
+-	wcd->tx_port_value = ucontrol->value.enumerated.item[0];
+-
+ 	/*
+ 	 * Unlink first, unconditionally. Setting this control twice used to
+ 	 * list_add_tail() a node that was already on the list, which splices
+@@ -1918,12 +1919,11 @@
+ 	if (!list_empty(&wcd->slim_data->tx_chs[port_id].list))
+ 		list_del_init(&wcd->slim_data->tx_chs[port_id].list);
+ 
+-	if (wcd->tx_port_value)
++	if (value)
+ 		list_add_tail(&wcd->slim_data->tx_chs[port_id].list,
+ 			      &wcd->dai[AIF1_CAP].wcd_slim_ch_list);
+ 
+-	snd_soc_dapm_mux_update_power(widget->dapm, kcontrol,
+-				      wcd->tx_port_value, e, update);
++	snd_soc_dapm_mux_update_power(widget->dapm, kcontrol, value, e, update);
+ 	return 0;
+ }
+ 
+@@ -1934,10 +1934,17 @@
+ 	SOC_DAPM_ENUM_EXT("SLIM TX1 Mux", slim_tx_mux_enum,
+ 			  slim_tx_mux_get, slim_tx_mux_put);
+ 
++/* port 5, the one DEC6 and so ADC1, the handset mic, can reach */
++static const struct snd_kcontrol_new slim_tx6_mux =
++	SOC_DAPM_ENUM_EXT("SLIM TX6 Mux", slim_tx_mux_enum,
++			  slim_tx_mux_get, slim_tx_mux_put);
++
+ static const struct snd_soc_dapm_route wcd9320_audio_map[] = {
+ 	/* Capture, for the SLIMbus TX port bisection */
+ 	{"SLIM TX1 MUX", "AIF1_CAP", "TX SRC"},
+ 	{"AIF1 CAP", NULL, "SLIM TX1 MUX"},
++	{"SLIM TX6 MUX", "AIF1_CAP", "TX SRC"},
++	{"AIF1 CAP", NULL, "SLIM TX6 MUX"},
+ 
+ 	/* Headset (RX MIX1 and RX MIX2) */
+ 	{"HEADPHONE", NULL, "HPHL"},
+@@ -2440,6 +2447,7 @@
+ 
+ 	SND_SOC_DAPM_INPUT("TX SRC"),
+ 	SND_SOC_DAPM_MUX("SLIM TX1 MUX", SND_SOC_NOPM, 0, 0, &slim_tx1_mux),
++	SND_SOC_DAPM_MUX("SLIM TX6 MUX", SND_SOC_NOPM, 5, 0, &slim_tx6_mux),
+ 	SND_SOC_DAPM_AIF_OUT_E("AIF1 CAP", "AIF1 Capture", 0, SND_SOC_NOPM,
+ 			       AIF1_CAP, 0, wcd9320_codec_enable_slimtx,
+ 			       SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
+--- a/sound/soc/codecs/wcd9320.h
++++ b/sound/soc/codecs/wcd9320.h
+@@ -183,7 +183,6 @@
+ 	/* to track the status */
+ 	unsigned long status_mask;
+ 	/* Port values for Rx and Tx codec_dai */
+-	unsigned int tx_port_value;
+ 	/* Tasha Interpolator Mode Select for EAR, HPH_L and HPH_R */
+ 	u32 hph_mode;
+ 	u16 prim_int_users[WCD9320_NUM_INTERPOLATORS];

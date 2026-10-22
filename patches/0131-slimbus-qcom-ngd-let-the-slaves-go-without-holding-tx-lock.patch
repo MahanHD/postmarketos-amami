@@ -1,0 +1,59 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] slimbus: qcom-ngd: let the slaves go without holding tx_lock
+
+When the ADSP shuts down, the SSR notifier took tx_lock and, still
+holding it, unregistered the controller. That removes every slave, and a
+slave's remove path can transfer: removing the WCD9320 codec tears down
+its sound card, which waits for userspace to close the PCM, and the close
+powers DAPM down with register writes. Each write blocked on tx_lock,
+the card waited for the close, and the notifier waited for the card. An
+ADSP restart with the codec loaded hung in D state for good.
+
+Take tx_lock only to wait out the transfer in flight and mark the
+controller down, remove the slaves without it, and take it again to free
+the DMA. A transfer made once the QMI link to the manager is gone fails
+at once instead of timing out against an ADSP that is not there.
+
+---
+--- a/drivers/slimbus/qcom-ngd-ctrl.c
++++ b/drivers/slimbus/qcom-ngd-ctrl.c
+@@ -798,6 +798,10 @@
+ 	u8 la = txn->la;
+ 	bool usr_msg = false;
+ 
++	/* no QMI link to the manager: it is going down, nothing can answer */
++	if (!ctrl->qmi.handle)
++		return -ENODEV;
++
+ 	if (txn->mt == SLIM_MSG_MT_CORE &&
+ 		(txn->mc >= SLIM_MSG_MC_BEGIN_RECONFIGURATION &&
+ 		 txn->mc <= SLIM_MSG_MC_RECONFIGURE_NOW))
+@@ -1531,12 +1535,23 @@
+ 	case SERVREG_SERVICE_STATE_DOWN:
+ 		/* Make sure the last dma xfer is finished */
+ 		mutex_lock(&ctrl->tx_lock);
+-		if (ctrl->state != QCOM_SLIM_NGD_CTRL_DOWN) {
+-			pm_runtime_get_noresume(ctrl->ctrl.dev);
+-			ctrl->state = QCOM_SLIM_NGD_CTRL_DOWN;
+-			qcom_slim_ngd_down(ctrl);
+-			qcom_slim_ngd_exit_dma(ctrl);
++		if (ctrl->state == QCOM_SLIM_NGD_CTRL_DOWN) {
++			mutex_unlock(&ctrl->tx_lock);
++			break;
+ 		}
++		pm_runtime_get_noresume(ctrl->ctrl.dev);
++		ctrl->state = QCOM_SLIM_NGD_CTRL_DOWN;
++		mutex_unlock(&ctrl->tx_lock);
++
++		/*
++		 * Not under tx_lock: this unregisters the controller, and the
++		 * slaves' remove paths transfer (a codec's card teardown writes
++		 * its registers). Holding the lock deadlocked them.
++		 */
++		qcom_slim_ngd_down(ctrl);
++
++		mutex_lock(&ctrl->tx_lock);
++		qcom_slim_ngd_exit_dma(ctrl);
+ 		mutex_unlock(&ctrl->tx_lock);
+ 		break;
+ 	case QCOM_SSR_AFTER_POWERUP:

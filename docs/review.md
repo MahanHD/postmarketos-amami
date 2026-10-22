@@ -327,7 +327,7 @@ where a tool depends on it:
 
 One `/code-review` (medium) run over `0049`-`0068` and `0123`, against the patched
 tree and downstream's `wcd9320.c`, `wcd9xxx-slimslave.c` and `slim-msm-ngd.c`
-(LineageOS `android_kernel_sony_msm8974`). Ten findings, all real:
+(LineageOS `android_kernel_sony_msm8974`). Ten findings, all real, plus four found later:
 
 | # | Finding | Done |
 |---|---|---|
@@ -341,11 +341,15 @@ tree and downstream's `wcd9320.c`, `wcd9xxx-slimslave.c` and `slim-msm-ngd.c`
 | 8 | Component remove did not wait for a running IRQ thread | `0126`: `synchronize_irq()` |
 | 9 | The slim status callback ignored the status and redid everything (IRQ, regmap, populate) on every call, including the DOWN/UP of the ADSP restart this phone has on every boot; the IRQ came before the regmap its handler reads | `0126`: UP only, set up once, re-query the interface address after a restart, IRQ after the regmap, failure reported |
 | 10 | "SLIM RXn MUX" linked a port onto a second AIF's list while still on the first, and every RX mux read back the last value written to any of them | `0126`: the port moves; each mux reads its own AIF |
+| 11 | Found after the run: `set_channel_map()` copied apq8096's 16-slot RX map into `rx_chs[]`, which has 13 entries, so every card probe wrote 84 bytes past a devm allocation | `0128`: no more slots than ports |
+| 12 | Found after the run, from an oops on ADSP restart: the restart re-registers the NGD controller, and the slim half's remove was empty, so the codec platform device outlived the data it points into; regmaps, supplies, the clock GPIO and the interface device reference leaked on every re-probe | `0130`: depopulate on remove, the rest devm |
+| 13 | Under 12: `__devm_regmap_init_slimbus()` passed the address of its own stack parameter as the bus context | `0129`, as upstream |
+| 14 | Under 12: the NGD held `tx_lock` while unregistering the controller, so any slave that transfers on remove (the codec's card teardown) deadlocked an ADSP restart | `0131`: lock only to drain and mark down; transfers fail without the QMI link |
 
 Not covered by the run: Class-H (`0064`), most of the analog/DAPM code in `0049`, and the
 main regmap's `max_register = 0x400` against a last register of 0x3ff. Upstream's
 `qcom_slim_ngd_xfer_msg_sync()` also keeps a runtime-PM reference on success; left as it
 is (the controller is never suspended here).
 
-None of this makes sound: on r244 the RX ports still overflow from the first sample of
+None of this makes sound: the RX ports still overflow (last measured on r248; `0127`-`0131` do not touch the data path) from the first sample of
 the first playback of a boot. See `worklog.md`, "Phase 3: audio", 2026-10-22.

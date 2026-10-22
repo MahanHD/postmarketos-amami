@@ -1,0 +1,186 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] ASoC: wcd9320: tear the slim half down with its device
+
+An ADSP restart unregisters the NGD controller and registers it again, so
+both codec slim devices are removed and probed afresh. The slim driver's
+remove did nothing: the codec platform device it had populated stayed
+bound with pointers into the slim device's freed devm data, and the next
+card probe oopsed writing through them (in mywcd_slim_init_slimslave(),
+and on another run in slim_tx_mux_put()). The regmaps, the supplies, the
+clock GPIO and the interface device reference were all taken again on
+every probe and never released.
+
+Depopulate the codec on remove, and give everything else to devm: the
+main regmap, the supplies (disabled again on the way out), the clock GPIO,
+and the interface device's regmap and reference, released after the IRQ
+whose handler reads them.
+
+---
+--- a/sound/soc/codecs/wcd9320-slim.c
++++ b/sound/soc/codecs/wcd9320-slim.c
+@@ -63,8 +63,10 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	gpio_request(wcd->clk_gpio, "WCD CLK");
+-	gpio_direction_output(wcd->clk_gpio, 1);
++	ret = devm_gpio_request_one(dev, wcd->clk_gpio, GPIOF_OUT_INIT_HIGH,
++				    "WCD CLK");
++	if (ret)
++		return ret;
+ 
+ 	//FIXME should go in to machine driver 
+ 	ret = of_property_read_u32(np, "qcom,codec-clk-rate", &wcd->codec_clk_rate);
+@@ -96,6 +98,13 @@
+ 	msleep(20);
+ }
+ 
++static void wcd9320_power_down(void *data)
++{
++	struct wcd9320 *wcd = data;
++
++	regulator_bulk_disable(wcd->num_of_supplies, wcd->supplies);
++}
++
+ int wcd9320_power_up(struct wcd9320 *wcd)
+ {
+ 	struct device *dev = wcd->dev;
+@@ -110,7 +119,7 @@
+ 	wcd->supplies[5].supply = "vddcx-1";
+ 	wcd->supplies[6].supply = "vddcx-2";
+ 
+-	ret = regulator_bulk_get(dev, wcd->num_of_supplies, wcd->supplies);
++	ret = devm_regulator_bulk_get(dev, wcd->num_of_supplies, wcd->supplies);
+ 	if (ret != 0) {
+ 		dev_err(dev, "Failed to get supplies: err = %d\n", ret);
+ 		return ret;
+@@ -122,6 +131,10 @@
+ 		return ret;
+ 	}
+ 
++	ret = devm_add_action_or_reset(dev, wcd9320_power_down, wcd);
++	if (ret)
++		return ret;
++
+ 	/*
+ 	 * For WCD9335, it takes about 600us for the Vout_A and
+ 	 * Vout_D to be ready after BUCK_SIDO is powered up.
+@@ -303,7 +316,7 @@
+ 		return ret;
+ 	}
+ 
+-	wcd->regmap = regmap_init_slimbus(slim, &wcd9320_regmap_config);
++	wcd->regmap = devm_regmap_init_slimbus(slim, &wcd9320_regmap_config);
+ 
+ 	if (IS_ERR(wcd->regmap)) {
+ 		ret = PTR_ERR(wcd->regmap);
+@@ -334,6 +347,20 @@
+ 	return 0;
+ }
+ 
++/*
++ * The interface device's regmap is made from this device's status callback,
++ * and its handle comes from of_slim_get_device(), which holds a reference.
++ */
++static void wcd9320_release_ifd(void *data)
++{
++	struct wcd9320 *wcd = data;
++
++	regmap_exit(wcd->ifd_regmap);
++	wcd->ifd_regmap = NULL;
++	put_device(&wcd->slim_ifd->dev);
++	wcd->slim_ifd = NULL;
++}
++
+ static int wcd9320_slim_status(struct slim_device *sdev,
+ 				 enum slim_device_status s)
+ {
+@@ -344,6 +371,8 @@
+ 	struct device_node *np;
+ 	struct device *dev;
+ 	struct device_node *ifd_np = NULL;
++	struct slim_device *ifd;
++	struct regmap *map;
+ 
+ 	printk("slim PING \n");
+ 	// Interface device
+@@ -374,20 +403,29 @@
+ 	}
+ 
+ 	printk("slim PING");
+-	wcd->slim_ifd = of_slim_get_device(sdev->ctrl, ifd_np);
+-	if (!wcd->slim_ifd) {
++	ifd = of_slim_get_device(sdev->ctrl, ifd_np);
++	of_node_put(ifd_np);
++	if (!ifd) {
+ 		dev_err(wcd->dev, "UNable to get SLIM Interface device\n");
+ 		return 0;
+ 	}
+ 
+ 	printk("slim PING");
+-	wcd->ifd_regmap = regmap_init_slimbus(wcd->slim_ifd, &wcd9320_ifd_regmap_config);
+-	if (IS_ERR(wcd->ifd_regmap)) {
+-		ret = PTR_ERR(wcd->ifd_regmap);
++	map = regmap_init_slimbus(ifd, &wcd9320_ifd_regmap_config);
++	if (IS_ERR(map)) {
++		put_device(&ifd->dev);
++		ret = PTR_ERR(map);
+ 		dev_err(dev, "%s: Failed to allocate register map: %d\n",
+ 			__func__, ret);
+ 		return ret;
+ 	}
++	wcd->slim_ifd = ifd;
++	wcd->ifd_regmap = map;
++
++	/* added before the IRQ is requested, so devm frees the handler first */
++	ret = devm_add_action_or_reset(dev, wcd9320_release_ifd, wcd);
++	if (ret)
++		return ret;
+ 
+ 
+ 	printk("slim PING");
+@@ -434,8 +472,17 @@
+ 	return of_platform_populate(wcd->dev->of_node, NULL, NULL, wcd->dev);
+ }
+ 
++/*
++ * Runs whenever the controller goes away, which an ADSP restart does: the NGD
++ * unregisters and registers again, and both slim devices are removed and
++ * probed afresh. The codec platform device below points into this device's
++ * devm data, so it has to be gone before that is freed; left in place, it
++ * outlived it, and the next card probe wrote through the freed memory.
++ * Everything else here is devm.
++ */
+ static void wcd9320_slim_remove(struct slim_device *sdev)
+ {
++	of_platform_depopulate(&sdev->dev);
+ }
+ 
+ static const struct slim_device_id wcd9320_slim_id[] = {
+--- a/sound/soc/codecs/wcd9320.c
++++ b/sound/soc/codecs/wcd9320.c
+@@ -3706,18 +3706,12 @@
+ 	printk("WCDPROBESTART \n");
+ 
+ 	/*
+-	 * Wait for the slim device above us to have probed.
+-	 *
+-	 * This device is created by of_platform_populate() from the slim
+-	 * device's status callback, and nothing depopulates it on the way out,
+-	 * so it outlives a module unload. On the next load the platform driver
+-	 * registers first and is matched against that leftover device straight
+-	 * away - before the slim device has probed and set its drvdata - and
+-	 * every use of `control` below is then a write through NULL. That
+-	 * oopsed at wcd9320_probe+0x68 on the first modprobe after an rmmod.
+-	 *
+-	 * Deferring is the whole fix: the slim probe that follows re-triggers
+-	 * the deferred queue, and the second attempt finds what it needs.
++	 * Wait for the slim device above us to have set up its interface
++	 * regmap. This device is created by of_platform_populate() from the
++	 * slim device's status callback, after that, and removed again by the
++	 * slim device's remove; the check is what keeps a device left over
++	 * from an earlier load (it oopsed at wcd9320_probe+0x68 before the
++	 * slim half depopulated on remove) from running against no `control`.
+ 	 */
+ 	if (!control || !control->slim_data.if_regmap)
+ 		return -EPROBE_DEFER;

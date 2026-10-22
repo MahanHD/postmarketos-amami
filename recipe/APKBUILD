@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=244
+pkgrel=252
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -127,6 +127,11 @@ source="
 	0124-slimbus-qcom-ngd-remove-the-channel-when-a-stream-is-disabled.patch
 	0125-asoc-wcd9320-run-the-slim-stream-like-downstream-does.patch
 	0126-asoc-wcd9320-fixes-from-the-audio-review.patch
+	0127-asoc-wcd9320-let-the-capture-dai-take-slave-tx-port-6.patch
+	0128-asoc-wcd9320-keep-the-channel-map-inside-the-port-arrays.patch
+	0129-regmap-slimbus-pass-the-device-itself-as-the-bus-context.patch
+	0130-asoc-wcd9320-tear-the-slim-half-down-with-its-device.patch
+	0131-slimbus-qcom-ngd-let-the-slaves-go-without-holding-tx-lock.patch
 	a330_pm4.fw
 	a330_pfp.fw
 "
@@ -258,6 +263,11 @@ c17639c9d110ff62031a65e63c4d51bfaa1fe61b3444ecfc77ee92bd477f9b3095a9c25c1bdc8f41
 cf9dfd06e26cd34463da109de4fd807f636cb6566dc091a7534b3e97b3b451c4b3f4adb25a94c854500d25d6cf39a5199dffede48790f42db0d4d1c2a35b19af  0124-slimbus-qcom-ngd-remove-the-channel-when-a-stream-is-disabled.patch
 28d0f63520582a54d5d5155f32e33259b99628c2e32bf33f10f245a54026e6fb69f1ca167b8e52d6fb8a9b22d8a4f2bda667392478057bb3c84f72e3fa1e70cf  0125-asoc-wcd9320-run-the-slim-stream-like-downstream-does.patch
 7bc98d49d7f439aeb6e317872d68797ccb5bfbbf300fe38afacad273eadef1618fb5cbdede7d31aae58fe13e2a5c98275ce72b529230c5c59685688384e39d3e  0126-asoc-wcd9320-fixes-from-the-audio-review.patch
+22ff6963ef5f4f5d363ce07d065cac98fc09e08d5b8178caeb7c5cdb5ab183587bfd0c2f5651850c8623588e8cbaca6e7aa53f31e8e0faab1d3c46a9349ed556  0127-asoc-wcd9320-let-the-capture-dai-take-slave-tx-port-6.patch
+918e62cfab6d3c94401b621d55ecf64d50a7fa435b5bc9d05d0517c33cfded20cf9e46079cf1e1bb5d8d489957bc87b1a95dc5d3a2dfefabed730936dc488929  0128-asoc-wcd9320-keep-the-channel-map-inside-the-port-arrays.patch
+d1a2b908cda27fff67b655b5a4763dd377593a29027697029a7f184da5acbf2b28f36d4eb81253e1140b73c9ced9357508606a23280c62e710b82043d1e4005c  0129-regmap-slimbus-pass-the-device-itself-as-the-bus-context.patch
+59515e2ca9d2f29072c99f7ad4fbcc6ff88a94aea509be76633da5e0e1781e22dba0796115473812eb721e00ee9f4810ab79fda8ff6690dd088b8fb895c90b00  0130-asoc-wcd9320-tear-the-slim-half-down-with-its-device.patch
+37465705a9802e02c064626090196e59157ef5750b6360895fe911232f87b7a81831201323925b646ca797dbf9061f5b5e080698ee14a634b96bf635ac8ae6cf  0131-slimbus-qcom-ngd-let-the-slaves-go-without-holding-tx-lock.patch
 999e3e0777b8dffc0e0d20b214c8217dab577a31753b6a29af2fae57293693196e992a905265e35a586a7978c04547aa8c88496dbe6f836b74ed39026eaa5f05  a330_pm4.fw
 a642584990333d62ba6a985eeaddc6898c37a8e80aabb61121f93a90d5076861eb698422101e7b00706b7d3dfc00f9f358ea5e44a70fda7369931eb58b455931  a330_pfp.fw
 "

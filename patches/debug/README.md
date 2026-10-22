@@ -77,3 +77,16 @@ address, 8-bit value) written after the mode tables and before the controls:
 This is how 0x3004-0x3005 was pinned down (review pass 2). It was written against
 the driver order of r223 (mode before stream-on), so it needs rebasing onto the
 current `0103` before it goes back into a build.
+
+## 9023-9024 - WCD9320 slave port state, and re-activating the RX channel
+
+`9023` logs the interface device's port interrupt, source and per-port state bytes
+(`034`/`036`, `060`/`061`/`075`, `080`/`081`/`095`) at each step of a stream: before,
+after connect, after activation, then 2 ms and 50 ms later. It showed the RX port
+byte going `00 -> 42` at the moment of `DEF_ACT_CHAN` + `RECONFIG_NOW`, with the
+overflow at once, and the TX port byte never leaving `00`.
+
+`9024` (on top of `9023`) adds a module parameter, `reactivate_ms`: that long after
+the stream starts, a delayed work disables, unprepares, prepares and enables the RX
+channel again, logging each step. A late re-activation gave the same `42`, which
+ruled out activation timing.

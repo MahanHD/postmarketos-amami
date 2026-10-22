@@ -3,10 +3,10 @@
 Where the port stands and what comes next, in order. The settled findings are in
 `notes.md`, the history behind every item in `worklog.md`.
 
-## Current state (2026-10-16)
+## Current state (2026-10-22)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 244 (`uname -v` prints
-`#245`), with boot image 244. The recipe applies exactly the patches in `patches/`; work
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 252 (`uname -v` prints
+`#253`), with boot image 252. The recipe applies exactly the patches in `patches/`; work
 out of the build with a way back is in `patches/parked/`, diagnostics in
 `patches/debug/`. There is no phone backup (`backups/README.md`).
 
@@ -56,12 +56,23 @@ The channel messages are compared now (2026-10-22, r242-r244): `CONNECT_SINK`,
 format bits), and streams are stopped as downstream stops them (`0124`-`0126`). The
 overflow is unchanged from the first sample of a boot's first playback.
 
-Next, in order: confirm the overflow is still continuous with the `INT_CLR` probe
-(needs `patches/debug/9000`; after a stop the status bit is only a latch); then look at
-the codec's own half of the port, which nothing so far has read during a stream: the
-interface device's per-port state, read live during playback here and in the golden
-reference, rather than the configuration registers. Measure with PulseAudio and
-PipeWire stopped before the codec loads, or the "first" playback is not the first.
+Measured live since (r245-r248, worklog 2026-10-22 "later"): the overflow is
+continuous, not a latch; the interface device's per-port state byte goes `00 -> 42` at
+the instant of `DEF_ACT_CHAN` + `RECONFIG_NOW`, every message is ACKed with success,
+and re-activating later lands on `42` again; no port register moves it, even with the
+port disabled. The TX side never activates (`0x95` stays `00`), and the handset mic set
+up by hand (ADC1 -> DEC6 -> TX6, `0127`) captures exact zeros. The loudspeaker is
+RX7 -> SPK DRV (eight golden registers), which the driver has no widgets for yet.
+
+An ADSP restart with the codec loaded now survives (r252, `0128`-`0131`): it used to oops
+or deadlock, because the restart re-registers the SLIMbus controller.
+
+Next: the state byte is the one thing that differs at the moment it goes wrong, and
+nothing documents it. Find what writes or reports it: downstream's
+`wcd9xxx-slimslave.c` and `slim-msm-ngd.c` for any per-port step between connect and
+activate that this port does not do, and the ADSP-side channel state if it can be read.
+Then the loudspeaker widgets (RX7, SPK DRV), so the first data that flows can be heard
+with `tools/mic-level.py`.
 
 Where it is written down: `worklog.md`, "Phase 3: audio" (the latest state and this
 lead at "Where that leaves it", then the two leads closed on 2026-10-01); `notes.md`,
