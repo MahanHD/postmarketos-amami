@@ -2882,6 +2882,24 @@ So the work splits into three milestones, and only the first two are small:
    running: the card is back within a second each time, no oops, no leak
    warnings, and a playback afterwards runs.
 
+   *Reviewed and revised (r253, 2026-10-25).* `/code-review` on `0128`-`0131` found
+   ten things (`review.md`, pass 6). Folded back into the same patches: the NGD
+   teardown now holds `ssr_lock` throughout, so a second DOWN (SSR and PDR both
+   send one) or the up worker cannot interleave; a failed user message frees its
+   TID; the codec's reset and clock pins go low before its supplies; the channel
+   list nodes are initialised once at probe instead of on every
+   `set_channel_map()`. The series was regenerated against a base rebuilt from
+   the pristine tarball plus `0001`-`0127`, and checked to reproduce the tree
+   exactly. Same three-restart test on r253: passes.
+
+   *Open: a bad boot-time ADSP recovery leaves the codec without an address.* On
+   one r253 boot the recovery from the ADSP's first-run crash logged `QMI TXN wait
+   fail: -110` and `slim resource not idle: -110`; afterwards the codec's PGD
+   (`217:a0:1:0`) failed `slim_get_logical_addr()` on every probe, so the card
+   never registered, and three full ADSP restarts did not clear it. A reboot did.
+   The same QMI failure appears on an r252 boot, so it predates r253. Probably the
+   same race as next-steps item 2 (sensors missing on some boots).
+
    *A separate overflow, found looking for it (`0128`).* apq8096 passes
    `set_channel_map()` a 16-slot RX map and the codec copied all of it into
    `rx_chs[]`, 13 entries: 84 bytes past a devm allocation on every card probe.

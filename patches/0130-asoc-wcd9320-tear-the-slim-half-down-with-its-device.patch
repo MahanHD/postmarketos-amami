@@ -13,7 +13,9 @@ every probe and never released.
 Depopulate the codec on remove, and give everything else to devm: the
 main regmap, the supplies (disabled again on the way out), the clock GPIO,
 and the interface device's regmap and reference, released after the IRQ
-whose handler reads them.
+whose handler reads them. Before the supplies go, hold the codec in
+reset and drive its clock pin low, as downstream does, so it is not
+powered through its IO.
 
 ---
 --- a/sound/soc/codecs/wcd9320-slim.c
@@ -104,7 +106,21 @@ whose handler reads them.
  
  	printk("slim PING \n");
  	// Interface device
-@@ -374,20 +403,29 @@
+@@ -358,9 +387,10 @@
+ 	dev = wcd->dev;
+ 
+ 	/*
+-	 * Up again after an ADSP restart, which this phone has on every boot:
+-	 * the codec kept its state, only the manager forgot the interface
+-	 * device's address.
++	 * Up again without having been removed: the codec kept its state, only
++	 * the manager's view of the interface device's address may be stale.
++	 * (An ADSP restart is not this case: it re-registers the controller,
++	 * so the codec is removed and probed afresh.)
+ 	 */
+ 	if (wcd->ifd_regmap)
+ 		return slim_get_logical_addr(wcd->slim_ifd);
+@@ -374,20 +404,29 @@
  	}
  
  	printk("slim PING");
@@ -139,7 +155,7 @@ whose handler reads them.
  
  
  	printk("slim PING");
-@@ -434,8 +472,17 @@
+@@ -434,8 +473,27 @@
  	return of_platform_populate(wcd->dev->of_node, NULL, NULL, wcd->dev);
  }
  
@@ -153,13 +169,23 @@ whose handler reads them.
 + */
  static void wcd9320_slim_remove(struct slim_device *sdev)
  {
++	struct wcd9320 *wcd = dev_get_drvdata(&sdev->dev);
++
 +	of_platform_depopulate(&sdev->dev);
++
++	/* the interface device holds nothing */
++	if (!wcd)
++		return;
++
++	/* as downstream: reset and clock down before devm cuts the supplies */
++	gpio_direction_output(wcd->reset_gpio, 0);
++	gpio_direction_output(wcd->clk_gpio, 0);
  }
  
  static const struct slim_device_id wcd9320_slim_id[] = {
 --- a/sound/soc/codecs/wcd9320.c
 +++ b/sound/soc/codecs/wcd9320.c
-@@ -3706,18 +3706,12 @@
+@@ -3703,18 +3703,12 @@
  	printk("WCDPROBESTART \n");
  
  	/*

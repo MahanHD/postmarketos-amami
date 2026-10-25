@@ -11,8 +11,17 @@ ADSP restart with the codec loaded hung in D state for good.
 
 Take tx_lock only to wait out the transfer in flight and mark the
 controller down, remove the slaves without it, and take it again to free
-the DMA. A transfer made once the QMI link to the manager is gone fails
-at once instead of timing out against an ADSP that is not there.
+the DMA. Hold ssr_lock across the whole teardown instead, so a second
+DOWN (SSR and PDR both send one) waits for the first to finish rather
+than returning while it is half done, and the up worker cannot bring the
+controller back between the two halves. A transfer made once the QMI
+link to the manager is gone fails at once instead of timing out against
+an ADSP that is not there.
+
+A user message that failed or timed out also kept its TID, so a late
+reply would have completed a completion on a stack frame that had
+returned, and the TIDs ran out over repeated restarts. Free it on every
+error path.
 
 ---
 --- a/drivers/slimbus/qcom-ngd-ctrl.c
@@ -22,15 +31,86 @@ at once instead of timing out against an ADSP that is not there.
  	bool usr_msg = false;
  
 +	/* no QMI link to the manager: it is going down, nothing can answer */
-+	if (!ctrl->qmi.handle)
++	if (!READ_ONCE(ctrl->qmi.handle))
 +		return -ENODEV;
 +
  	if (txn->mt == SLIM_MSG_MT_CORE &&
  		(txn->mc >= SLIM_MSG_MC_BEGIN_RECONFIGURATION &&
  		 txn->mc <= SLIM_MSG_MC_RECONFIGURE_NOW))
-@@ -1531,12 +1535,23 @@
+@@ -887,17 +891,15 @@
+ 
+ 	mutex_lock(&ctrl->tx_lock);
+ 	ret = qcom_slim_ngd_tx_msg_post(ctrl, pbuf, txn->rl);
+-	if (ret) {
+-		mutex_unlock(&ctrl->tx_lock);
+-		return ret;
+-	}
++	if (ret)
++		goto err_unlock;
+ 
+ 	time_left = wait_for_completion_timeout(&tx_sent, HZ);
+ 	if (!time_left) {
+ 		dev_err(sctrl->dev, "TX timed out:MC:0x%x,mt:0x%x", txn->mc,
+ 					txn->mt);
+-		mutex_unlock(&ctrl->tx_lock);
+-		return -ETIMEDOUT;
++		ret = -ETIMEDOUT;
++		goto err_unlock;
+ 	}
+ 
+ 	if (usr_msg) {
+@@ -905,13 +907,20 @@
+ 		if (!time_left) {
+ 			dev_err(sctrl->dev, "TX timed out:MC:0x%x,mt:0x%x",
+ 				txn->mc, txn->mt);
+-			mutex_unlock(&ctrl->tx_lock);
+-			return -ETIMEDOUT;
++			ret = -ETIMEDOUT;
++			goto err_unlock;
+ 		}
+ 	}
+ 
+ 	mutex_unlock(&ctrl->tx_lock);
+ 	return 0;
++
++err_unlock:
++	mutex_unlock(&ctrl->tx_lock);
++	/* a late reply must not find the TID: it would complete `done` on a dead stack */
++	if (usr_msg)
++		slim_free_txn_tid(sctrl, txn);
++	return ret;
+ }
+ 
+ static int qcom_slim_ngd_xfer_msg_sync(struct slim_controller *ctrl,
+@@ -1496,13 +1505,12 @@
+ 
+ MODULE_DEVICE_TABLE(of, qcom_slim_ngd_dt_match);
+ 
++/* Called with ssr_lock held. */
+ static void qcom_slim_ngd_down(struct qcom_slim_ngd_ctrl *ctrl)
+ {
+-	mutex_lock(&ctrl->ssr_lock);
+ 	device_for_each_child(ctrl->ctrl.dev, NULL,
+ 			      qcom_slim_ngd_update_device_status);
+ 	qcom_slim_ngd_enable(ctrl, false);
+-	mutex_unlock(&ctrl->ssr_lock);
+ }
+ 
+ static void qcom_slim_ngd_up_worker(struct work_struct *work)
+@@ -1529,15 +1537,31 @@
+ 	switch (action) {
+ 	case QCOM_SSR_BEFORE_SHUTDOWN:
  	case SERVREG_SERVICE_STATE_DOWN:
- 		/* Make sure the last dma xfer is finished */
+-		/* Make sure the last dma xfer is finished */
++		/*
++		 * ssr_lock for the whole teardown, so a second DOWN (SSR and
++		 * PDR both report one) waits for it and the up worker cannot
++		 * run in the middle of it. tx_lock only to wait out the last
++		 * DMA transfer and to free the DMA: the slaves' remove paths,
++		 * which run below, transfer (a codec's card teardown writes its
++		 * registers), and holding tx_lock across them deadlocked.
++		 */
++		mutex_lock(&ctrl->ssr_lock);
  		mutex_lock(&ctrl->tx_lock);
 -		if (ctrl->state != QCOM_SLIM_NGD_CTRL_DOWN) {
 -			pm_runtime_get_noresume(ctrl->ctrl.dev);
@@ -39,21 +119,19 @@ at once instead of timing out against an ADSP that is not there.
 -			qcom_slim_ngd_exit_dma(ctrl);
 +		if (ctrl->state == QCOM_SLIM_NGD_CTRL_DOWN) {
 +			mutex_unlock(&ctrl->tx_lock);
++			mutex_unlock(&ctrl->ssr_lock);
 +			break;
  		}
 +		pm_runtime_get_noresume(ctrl->ctrl.dev);
 +		ctrl->state = QCOM_SLIM_NGD_CTRL_DOWN;
 +		mutex_unlock(&ctrl->tx_lock);
 +
-+		/*
-+		 * Not under tx_lock: this unregisters the controller, and the
-+		 * slaves' remove paths transfer (a codec's card teardown writes
-+		 * its registers). Holding the lock deadlocked them.
-+		 */
 +		qcom_slim_ngd_down(ctrl);
 +
 +		mutex_lock(&ctrl->tx_lock);
 +		qcom_slim_ngd_exit_dma(ctrl);
  		mutex_unlock(&ctrl->tx_lock);
++		mutex_unlock(&ctrl->ssr_lock);
  		break;
  	case QCOM_SSR_AFTER_POWERUP:
+ 	case SERVREG_SERVICE_STATE_UP:

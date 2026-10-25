@@ -351,5 +351,21 @@ main regmap's `max_register = 0x400` against a last register of 0x3ff. Upstream'
 `qcom_slim_ngd_xfer_msg_sync()` also keeps a runtime-PM reference on success; left as it
 is (the controller is never suspended here).
 
+Review of `0128`-`0131` (`/code-review` medium, 2026-10-25), checked by hand; ten
+findings:
+
+| # | Finding | Done |
+|---|---|---|
+| 1 | A second DOWN (SSR and PDR both send one) saw state DOWN and returned while the first was still removing the slaves | `0131`: `ssr_lock` held across the whole teardown |
+| 2 | The up worker could re-enable between the two halves of the teardown and have its DMA freed under it | `0131`, same |
+| 3 | Transfers between "state DOWN" and the QMI handle clearing still post to the ADSP | Kept: a state check would break bring-up, whose capability exchange runs while still DOWN; during `BEFORE_SHUTDOWN` the ADSP still answers. `READ_ONCE` added |
+| 4 | Supplies cut with the codec's reset and clock pins still driven high | `0130`: reset and clock low first, as downstream |
+| 5 | If the status callback fails after the interface regmap exists, a later UP never retries | Not fixed: needs an IRQ or populate failure, never seen |
+| 6 | An UP during probe would find no drvdata | Not fixed: cannot happen in this sequence (devices are created by `slim_register_controller()` after the capability exchange, and probe reports UP itself). A NULL check would lose the UP, since the core skips an unchanged status |
+| 7 | `set_channel_map()` re-initialised list nodes a mixer may already have linked | `0128`: initialised once at probe |
+| 8 | Stale comment: an ADSP restart does not keep the codec's state | `0130` |
+| 9 | The RX clamp is silent; the TX clamp does nothing | Kept: apq8096's map is generic, a warning would fire every boot |
+| 10 | A failed or timed-out user message kept its TID (late reply onto a dead stack, TIDs exhausted) | `0131` frees it |
+
 None of this makes sound: the RX ports still overflow (last measured on r248; `0127`-`0131` do not touch the data path) from the first sample of
 the first playback of a boot. See `worklog.md`, "Phase 3: audio", 2026-10-22.

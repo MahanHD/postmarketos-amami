@@ -5,8 +5,8 @@ Where the port stands and what comes next, in order. The settled findings are in
 
 ## Current state (2026-10-22)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 252 (`uname -v` prints
-`#253`), with boot image 252. The recipe applies exactly the patches in `patches/`; work
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 253 (`uname -v` prints
+`#254`), with boot image 253. The recipe applies exactly the patches in `patches/`; work
 out of the build with a way back is in `patches/parked/`, diagnostics in
 `patches/debug/`. There is no phone backup (`backups/README.md`).
 
@@ -66,8 +66,7 @@ RX7 -> SPK DRV (eight golden registers), which the driver has no widgets for yet
 
 An ADSP restart with the codec loaded now survives (r252, `0128`-`0131`): it used to oops
 or deadlock, because the restart re-registers the SLIMbus controller.
-`0128`-`0131` have not been through `/code-review` yet; `0129` and `0131` touch shared
-SLIMbus code (regmap-slimbus, the NGD), so review them before building on them.
+`0128`-`0131` were reviewed and revised on 2026-10-25 (r253, `review.md` pass 6).
 
 Next: the state byte is the one thing that differs at the moment it goes wrong, and
 nothing documents it. Find what writes or reports it: downstream's
@@ -87,7 +86,9 @@ cause. The audio patches were reviewed in pass 6 (`review.md`).
 
 The ADSP's first run is bad on every boot: it raises an exception, and after the
 automatic restart the sensors come up (most boots), or it runs on and never brings
-them up (no sensor devices that boot, about one in four to six). The registry being
+them up (no sensor devices that boot, about one in four to six). The same bad recovery can also
+leave the SLIMbus without working QMI (`QMI TXN wait fail: -110`), after which the
+codec never gets a bus address (worklog, 2026-10-25). The registry being
 late is ruled out (`review.md`, pass 4). Next: compare stock's ADSP bring-up (PIL, its
 reset and the state the bootloader leaves) with `qcom_q6v5_pas`'s first start. A
 stopgap, if needed meanwhile, is restarting the ADSP when the sensors do not

@@ -8,10 +8,15 @@ the devm allocation on every card probe.
 
 Take no more slots than the codec has ports.
 
+It also re-initialised each port's list node on every call, and it runs
+once per DAI link: a node a mixer had already put on a DAI's channel
+list was reset in place and that list corrupted. Initialise the nodes
+once, at probe.
+
 ---
 --- a/sound/soc/codecs/wcd9320.c
 +++ b/sound/soc/codecs/wcd9320.c
-@@ -2613,6 +2613,14 @@
+@@ -2613,12 +2613,18 @@
  	int ret = 0;
  	int i;
  
@@ -25,4 +30,48 @@ Take no more slots than the codec has ports.
 +
  	if (wcd->rx_chs) {
  		wcd->num_rx_port = rx_num;
- 		for (i = 0; i < rx_num; i++) {
+-		for (i = 0; i < rx_num; i++) {
++		for (i = 0; i < rx_num; i++)
+ 			wcd->rx_chs[i].ch_num = rx_slot[i];
+-			INIT_LIST_HEAD(&wcd->rx_chs[i].list);
+-		}
+ #if 0
+ 		ret = wcd_slim_alloc_slim_sh_ch(wcd->slim, wcd_slim_pgd_la,
+ 						wcd->num_rx_port,
+@@ -2639,10 +2645,8 @@
+ 
+ 	if (wcd->tx_chs) {
+ 		wcd->num_tx_port = tx_num;
+-		for (i = 0; i < tx_num; i++) {
++		for (i = 0; i < tx_num; i++)
+ 			wcd->tx_chs[i].ch_num = tx_slot[i];
+-			INIT_LIST_HEAD(&wcd->tx_chs[i].list);
+-		}
+ #if 0
+ 		ret = wcd_slim_alloc_slim_sh_ch(wcd->slim, wcd_slim_pgd_la,
+ 						wcd->num_tx_port,
+@@ -3694,6 +3698,7 @@
+ 	int ret = 0;
+ 	struct wcd9320_priv *wcd;
+ 	int clk1_gpio;
++	int i;
+ 
+ 	printk("WCDPROBESTART \n");
+ 
+@@ -3738,6 +3743,16 @@
+ 
+ 	memcpy(wcd->slim_data->tx_chs, wcd9320_tx_chs, sizeof(wcd9320_tx_chs));
+ 
++	/*
++	 * Once, here: set_channel_map() runs for every DAI link, and
++	 * re-initialising a node a mixer has already put on a DAI's list
++	 * would corrupt that list.
++	 */
++	for (i = 0; i < WCD9320_RX_MAX; i++)
++		INIT_LIST_HEAD(&wcd->slim_data->rx_chs[i].list);
++	for (i = 0; i < WCD9320_TX_MAX; i++)
++		INIT_LIST_HEAD(&wcd->slim_data->tx_chs[i].list);
++
+ 	dev_set_drvdata(dev, wcd);
+ 
+ 	wcd->regmap = control->regmap;
