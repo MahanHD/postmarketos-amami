@@ -3,7 +3,7 @@
 Where the port stands and what comes next, in order. The settled findings are in
 `notes.md`, the history behind every item in `worklog.md`.
 
-## Current state (2026-10-22)
+## Current state (2026-10-25)
 
 The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 258 (`uname -v` prints
 `#259`), with boot image 258. The recipe applies exactly the patches in `patches/`; work
@@ -63,6 +63,11 @@ and re-activating later lands on `42` again; no port register moves it, even wit
 port disabled. The TX side never activates (`0x95` stays `00`), and the handset mic set
 up by hand (ADC1 -> DEC6 -> TX6, `0127`) captures exact zeros. The loudspeaker is
 RX7 -> SPK DRV (eight golden registers), which the driver has no widgets for yet.
+
+Since `0132` (r257) the ADSP no longer faults at boot, and on such a clean boot the
+overflow is unchanged, so the boot-time fault was never part of it. Static comparison
+is exhausted: what is left is a live downstream capture (one LineageOS boot, which
+wipes userdata, so a backup and restore) or a sibling device's kernel source.
 
 An ADSP restart with the codec loaded now survives (r252, `0128`-`0131`): it used to oops
 or deadlock, because the restart re-registers the SLIMbus controller.
