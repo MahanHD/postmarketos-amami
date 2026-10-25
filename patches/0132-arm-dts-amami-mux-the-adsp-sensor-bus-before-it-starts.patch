@@ -1,0 +1,41 @@
+From: MahanHD <mahanheidari2003@gmail.com>
+Subject: [PATCH] ARM: dts: amami: mux the ADSP's sensor bus before it starts
+
+The ADSP's first run failed on every boot. With the sensor registry's
+accelerometer configuration it raised an exception about 50 ms after the
+registry exchange; without it, it ran on but never found the
+accelerometer. Either way the sensors came up only after a restart, and
+on some boots not at all.
+
+The sensors sit on BLSP2 QUP6 (GPIO 87/88), which the ADSP drives. The
+bootloader leaves those pins as GPIO outputs driven low, and the ADSP
+switches them to the I2C function only at its first transfer, so the
+first sensor it probed always failed: swapping the accelerometer and
+gyroscope slots in the registry moved the failure to the gyroscope.
+Muxing the pins by hand before the start brought all four sensors up on
+the first run, with no fault.
+
+Give the ADSP node the bus's default pin state, so the pins are muxed
+when the remoteproc probes, before the first start.
+
+---
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974-sony-xperia-rhine-amami.dts
+@@ -997,3 +997,17 @@
+ 		/delete-property/ touchscreen-inverted-x;
+ 	};
+ };
++
++/*
++ * The sensors hang off the ADSP on BLSP2 QUP6 (GPIO 87/88, "i2c_bus 12" in the
++ * sensor registry), and the bootloader leaves those pins as GPIO outputs driven
++ * low. The ADSP muxes them itself only at its first transfer, so whichever
++ * sensor it probed first failed on every cold start: the accelerometer went
++ * missing, or with the registry data of 0007 the ADSP faulted, and the sensors
++ * came up only after its restart. Mux them before it starts.
++ * blsp2_i2c6 itself stays disabled: the bus belongs to the ADSP.
++ */
++&remoteproc_adsp {
++	pinctrl-0 = <&blsp2_i2c6_default>;
++	pinctrl-names = "default";
++};

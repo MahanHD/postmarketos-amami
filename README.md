@@ -21,7 +21,7 @@ that makes mainline do the same.
 | WiFi, Bluetooth | Work, with factory MAC addresses |
 | USB networking, SSH | Work |
 | Charging, battery percentage and temperature | Work |
-| Sensors | Accelerometer, gyroscope, magnetometer, proximity and light all work, on most boots: on some the DSP never brings them up (open) |
+| Sensors | Accelerometer, gyroscope, magnetometer, proximity and light all work, on every boot |
 | Notification LED, vibrator | Work |
 | CPU frequency scaling (300-1497.6 MHz) and thermal throttling | Works |
 | GPU frequency scaling and throttling | Works |
@@ -132,8 +132,9 @@ with a known way back is in `patches/parked/`, and diagnostic patches are in
 
 **Sensors**
 
-- `0007` maps the sensor registry group the DSP needs before it will bring up the
-  accelerometer.
+- `0007` maps sensor registry group 2691, without which the accelerometer reads about
+  2% low. `0132` muxes the DSP's sensor I2C pins before it starts; the bootloader
+  leaves them driven low, and the first sensor the DSP probed used to fail.
 - `0028`, `0045`, `0047` and `0048` fix the sensor manager: duplicate sensor IDs,
   sample rates for every data type, a second subscription that proximity needs to
   report anything, and ambient light as its own device. `0121` enumerates the sensors

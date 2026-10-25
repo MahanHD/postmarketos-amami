@@ -4305,6 +4305,50 @@ matrix is right. A photo at 22:40 on r5 saved; the next one hit the shrinker bug
   folders removed, none made on restart. The panel generators reproduce their old
   output byte for byte from Sony's `dsi-panel-amami.dtsi`.
 
+### The ADSP's first run, solved, 2026-10-25
+
+The ADSP raised an exception on every boot about half a second after starting, and
+the sensors came up only after remoteproc restarted it (or, one boot in four to six,
+never). Found by narrowing what the first run gets that the restarted one does not,
+one variable per boot, with the ADSP driver blacklisted so the first start could be
+staged by hand (`modprobe qcom_q6v5_pas`) and `/dev/mem` reads (`tools/mmio.py`):
+
+- **Not the AXI clock.** Downstream's LPASS PIL enables `gcc_lpass_q6_axi_clk` before
+  `pas_auth_and_reset`; mainline does not, and the CBCR reads `80000000` (off) before
+  the first start and `00000001` after the recovery. Enabling it by hand first: still
+  crashed. A full GCC dump before and after differs only in that clock and the eMMC's.
+- **Triggered by a Linux client.** With `/sys/bus/rpmsg/drivers_autoprobe` at 0 the
+  ADSP ran 25 s without a fault. Binding its channels one at a time: `sys_mon` and APR
+  harmless, `IPCRTR` (QRTR) crashed it. Within QRTR, only the sensor registry server
+  (`qcom_sns_reg`): without it, no crash.
+- **The registry data, but not the cause.** A kprobe on the request handler: the first
+  run asks for 17 groups in 9 ms (2800, 2690, 2691, 0, 10, 1000-1040) and faults 48 ms
+  after the last; the restarted run asks for the same 17, gets the same answers, and
+  runs. Not timing either: serving them 45 s after the start still crashed.
+- **Group 2691.** Without `0007`'s mapping the first run did not crash, and only the
+  accelerometer was missing. Zeroes: the same. With zeroes and a clean manual restart,
+  the accelerometer came up. So `0007`'s data only turned a missed accelerometer into a
+  fault, which the recovery then papered over. (The ADSP's own group list,
+  `adsp.b10`+0x5812, pairs 2690 and 2691 ahead of the devinfo groups: 2691 is the
+  second SSI SMGR config group, configs 5-9.)
+- **The first device on the bus, not the accelerometer.** Swapping the accelerometer's
+  and gyroscope's slots in a copy of `sns.reg`: the gyroscope went missing instead.
+  Holding L18 on from boot (`debug/9025`, not kept) changed nothing.
+- **The pins.** The sensors are on BLSP2 QUP6, GPIO 87/88 (`i2c_bus 12`). Before the
+  first start their TLMM config reads `0x200`: GPIO function, output enabled, driven
+  low. The ADSP muxes them to `blsp_i2c12` only at its first transfer. Writing the
+  running config (`0x20c`) by hand before the first start: all four sensors on the
+  first run, no fault, with or without 2691. GPIO 10/11 alone: no effect.
+
+`0132` gives the ADSP node the existing `blsp2_i2c6_default` pin state, so the pins
+are muxed when the remoteproc probes. r257, five boots: no fault, one ADSP start, all
+four sensors on the first run, the accelerometer at 9.78-9.79 m/s^2, GPIO 87 claimed
+by `fe200000.remoteproc`. `0007` stays for accuracy (2691 unserved reads about 2%
+low); its comment is corrected.
+
+On a boot where the ADSP never faulted, audio is unchanged: `034=03`, `080/081=42`.
+So the boot-time fault was never part of the audio problem.
+
 ## Parked patches
 
 Moved to `patches/parked/README.md` in the 2026-10-16 cleanup, which also deleted

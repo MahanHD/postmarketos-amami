@@ -2,7 +2,7 @@ maintainer="Luca Weiss <luca@lucaweiss.eu>"
 _flavor="postmarketos-qcom-msm8974"
 pkgname=linux-$_flavor
 pkgver=6.16.12
-pkgrel=253
+pkgrel=258
 pkgdesc="Mainline Kernel fork for MSM8974 devices"
 arch="armv7"
 _carch="arm"
@@ -132,6 +132,7 @@ source="
 	0129-regmap-slimbus-pass-the-device-itself-as-the-bus-context.patch
 	0130-asoc-wcd9320-tear-the-slim-half-down-with-its-device.patch
 	0131-slimbus-qcom-ngd-let-the-slaves-go-without-holding-tx-lock.patch
+	0132-arm-dts-amami-mux-the-adsp-sensor-bus-before-it-starts.patch
 	a330_pm4.fw
 	a330_pfp.fw
 "
@@ -174,7 +175,7 @@ sha512sums="
 cac16a2d3ca1f896c60f84e8b0076d44b39dbf059f8312770e4af5339391ff34d9f50e9b8a1b37b5c376f85e2ab230631628f3363f6d48a93b6db6bf49854bba  0003-drm-panel-add-sony-amami-novatek.patch
 62e79b72f684d72cdcc306d20564e033366d1d35455c086eb56d2252691acdc69bb7ba53e72e87d16c06d65ca664c13abe1a2dab424f451868c2c758e01b7191  0004-arm-dts-amami-enable-display.patch
 4342dd57191ab893aecb064c19ccbc5fc7573039ab876b812450cc7e26b1bed81c45045d3f14ebc1418e3fd873c69b8244f7f29db4da8e6256e0eb48db6e6c02  0005-power-smbb-report-battery-voltage-and-capacity.patch
-231823334cb849d0477c689d6b5ba24a02f7b7ace24b1e8ce418d64f7fe5b340634bdcaf2eda532d377b517891d8776cf12f03e43d25e037152218ae3e8a9e58  0007-soc-qcom-sns-reg-map-group-2691.patch
+c0bad2e9873611ff4f844490dd2ef1eaae955b9daffdae54d7254ae7971b22c8ac142676c5fe571b2b17f52d674fbe15b0487451ae6a10791fe8a4d0c5298235  0007-soc-qcom-sns-reg-map-group-2691.patch
 242cdf8fbb98f1475d9aed7170960334dbda686de2a935184dc4ce0ce0bf79dc07c89646dc5e7679cff0ee0350415a88a6eaa812c741644fe986051262cc2da3  0008-arm-dts-msm8974-fix-wcnss-wifi-irq-type.patch
 c85a05c0d7ff3055e069601d06f552d412422cfd69d8f394827cfe28880d457b50ee582663a03cd6322dffaa2b81424fad2ed12e7baaaadb97488101d8554272  0009-wcn36xx-fix-active-scan-type-value.patch
 d911b98d5e1e149b5393f196bb005f7bdbdae1fb94efac33b674f21b034c2ac554f975e602dc89a96cc5f3d823e345b5fdab0c8c2970445e2e9487a2261105e7  0010-wcn36xx-require-wlan-scan-offload-cap.patch
@@ -268,6 +269,7 @@ f15624e071aff491eb219789d73eb75fe0b888aee1d30f70b1f15899a6b0d1573d18badf53757d12
 d1a2b908cda27fff67b655b5a4763dd377593a29027697029a7f184da5acbf2b28f36d4eb81253e1140b73c9ced9357508606a23280c62e710b82043d1e4005c  0129-regmap-slimbus-pass-the-device-itself-as-the-bus-context.patch
 826c88aef1bdadf3bf5aefa5852aff3499d16f05aae2c7507b2242f46b0c5465dfc8aaf79d1ff8647735c4b45a779c2cb4a5da6b1cda2dd693233be7fc990ef3  0130-asoc-wcd9320-tear-the-slim-half-down-with-its-device.patch
 6b97ad48ae394667c7d3cec43d0a2faf6a03f6fe40ac964d5a8bc1e237b84661506153e2a5f88c4af97853ccfad5b2c3566c67b21f5e1c3908607d728d8692e3  0131-slimbus-qcom-ngd-let-the-slaves-go-without-holding-tx-lock.patch
+2d983a88f84be26017c8a372d7d9ed820155086137c138afa28d381d2d8970d44390f9a9f6d45dec9bd099cdc1d232d2c9e699b1d8ca57c3134eff11536b6b0b  0132-arm-dts-amami-mux-the-adsp-sensor-bus-before-it-starts.patch
 999e3e0777b8dffc0e0d20b214c8217dab577a31753b6a29af2fae57293693196e992a905265e35a586a7978c04547aa8c88496dbe6f836b74ed39026eaa5f05  a330_pm4.fw
 a642584990333d62ba6a985eeaddc6898c37a8e80aabb61121f93a90d5076861eb698422101e7b00706b7d3dfc00f9f358ea5e44a70fda7369931eb58b455931  a330_pfp.fw
 "

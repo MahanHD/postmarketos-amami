@@ -295,7 +295,8 @@ boots the sensors came up exactly when the ADSP had crashed ("Exception detected
 and restarted. The first ADSP run is bad on every boot: it faults, or it runs on
 without bringing the sensors up. It is not the registry being late: a test patch
 loading the registry driver before the DSP (r240) had it serving first in six boots
-of six and changed nothing, so it was dropped. Open, in `next-steps.md`.
+of six and changed nothing, so it was dropped. Solved 2026-10-25 by `0132`: the
+ADSP's sensor I2C pins were left as GPIO outputs driven low (`worklog.md`).
 
 Three boots of 25 in the journal logged `oxili_gfx3d_clk status stuck at 'off'` and
 then a disable of an already disabled clock, at the GPU's first power-up (4 s and

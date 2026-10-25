@@ -577,8 +577,17 @@ index.
 carries the individual device's factory sensor calibration. Harvest your own,
 as described in the build notes.
 
+**Solved 2026-10-25 (`0132`): the sensor bus pins.** The bootloader leaves the ADSP's
+sensor I2C pins (BLSP2 QUP6, GPIO 87/88) as GPIO outputs driven low, and the ADSP
+muxes them only at its first transfer, so the first sensor it probed failed on every
+cold start: the accelerometer went missing, or, with `0007`'s data for group 2691, the
+ADSP faulted and recovery restarted it. `0132` gives the ADSP node the bus's pin state
+so they are muxed before it starts. Every boot now brings all four sensors up on the
+first run. How it was found is in `worklog.md` ("The ADSP's first run, solved"). The
+paragraph below is the state before.
+
 **Some boots come up without sensors, and the ADSP's first run is why (2026-10-16,
-open).** In 14 of 15 boots in the journal the accelerometer appeared exactly when the
+open then).** In 14 of 15 boots in the journal the accelerometer appeared exactly when the
 ADSP had raised an exception ("Exception detected", `crash detected in adsp`) about
 0.7 s after starting and been restarted by remoteproc recovery. When the first run
 does not crash, it never brings the sensors up: `qcom_smgr` is refused (0x701 for the

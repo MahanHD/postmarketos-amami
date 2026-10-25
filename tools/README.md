@@ -260,3 +260,14 @@ interrupt on overflow). `sudo sh ~/audio-playback-trace.sh`.
 same data again and again and compares each sum with a reference; a wrong sum is what an
 undervolted core gives. Every 10 s it logs each core's clock and the CPU temperatures to
 `~/cpu-load-check.log`. Run it with `sudo systemd-run ~/cpu-load-check.sh 10`.
+
+`mmio.py ADDR [VALUE]` reads (or writes) one 32-bit register through `/dev/mem`;
+`mmio.py dump BASE LEN` prints a range. The kernel has `STRICT_DEVMEM` off, so this
+reaches any block; read only ones that are clocked (GCC and TLMM are; an unclocked
+peripheral can hang the bus). TLMM GPIO n's config is at `0xfd511000 + n*0x10`, its
+in/out at `+4`; GCC is at `0xfc400000`. Run with sudo. This is how the ADSP's sensor
+bus pins were found driven low before its first start (`0132`).
+
+`accel.py` reads about 2 s from the `qcom-smgr-accel` IIO buffer (found by name, not
+number) and prints the mean |g| in m/s^2: about 9.79 at rest. "not enumerated" means
+the DSP did not bring the accelerometer up. Run with sudo.

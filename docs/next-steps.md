@@ -5,8 +5,8 @@ Where the port stands and what comes next, in order. The settled findings are in
 
 ## Current state (2026-10-22)
 
-The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 253 (`uname -v` prints
-`#254`), with boot image 253. The recipe applies exactly the patches in `patches/`; work
+The phone runs kernel 6.16.12 built from `recipe/` at pkgrel 258 (`uname -v` prints
+`#259`), with boot image 258. The recipe applies exactly the patches in `patches/`; work
 out of the build with a way back is in `patches/parked/`, diagnostics in
 `patches/debug/`. There is no phone backup (`backups/README.md`).
 
@@ -82,17 +82,14 @@ work load it by hand, and `0065`/`0066` make it reloadable without a reboot. The
 GPIO 15 MCLK pin mux is a known defect (review pass 3, finding 9), proven not to be the
 cause. The audio patches were reviewed in pass 6 (`review.md`).
 
-## 2. Sensors missing on some boots
+## 2. Sensors missing on some boots (solved 2026-10-25)
 
-The ADSP's first run is bad on every boot: it raises an exception, and after the
-automatic restart the sensors come up (most boots), or it runs on and never brings
-them up (no sensor devices that boot, about one in four to six). The same bad recovery can also
-leave the SLIMbus without working QMI (`QMI TXN wait fail: -110`), after which the
-codec never gets a bus address (worklog, 2026-10-25). The registry being
-late is ruled out (`review.md`, pass 4). Next: compare stock's ADSP bring-up (PIL, its
-reset and the state the bootloader leaves) with `qcom_q6v5_pas`'s first start. A
-stopgap, if needed meanwhile, is restarting the ADSP when the sensors do not
-enumerate, labelled as one.
+`0132`: the ADSP's sensor I2C pins (GPIO 87/88) were left by the bootloader as GPIO
+outputs driven low, so the first sensor it probed failed on every cold start and the
+sensors only came up after a restart. Five boots on r257: no ADSP fault, all four
+sensors on the first run. The bad recovery that could leave SLIMbus without QMI went
+with it, since there is no recovery at boot any more. `worklog.md`, "The ADSP's first
+run, solved".
 
 ## 3. After the review
 
